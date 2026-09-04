@@ -102,10 +102,42 @@ export const screen = {
           <div class="tx-tenders">
             ${(t.tenders || []).map((td) => `<div class="hx-tender"><span>${esc(td.label || td.type)}</span><b>${fmt(td.amount)}</b></div>`).join('')}
           </div>
+          <div id="txSend" class="receipt-send-host"></div>
         </div>`);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
       modalEl.addEventListener('click', (e) => { if (e.target.classList.contains('modal-backdrop') || e.target.closest('[data-close]')) closeModal(); });
       modalEl.parentElement.querySelector('.modal-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeModal(); });
+
+      import('../receipt-send.js').then(({ mountSendButtons }) => {
+        const host = modalEl.querySelector('#txSend');
+        if (!host) return;
+        mountSendButtons(host, {
+          lines: txReceiptLines(t),
+          title: 'Orison POS — Receipt',
+          filename: 'orison-receipt-' + (t.clientTxId || t.id),
+        });
+      });
+    }
+
+    function txReceiptLines(t) {
+      const d = t.createdAt ? new Date(t.createdAt) : new Date();
+      const dateStr = isNaN(d) ? '' : d.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+      const timeStr = isNaN(d) ? '' : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const lines = [
+        'ORISON ELECTRONICS',
+        t.storeName || '',
+        `${dateStr} ${timeStr}`.trim(),
+        `Cashier: ${t.cashier || '—'}`, '—',
+      ];
+      for (const i of (t.items || [])) {
+        const name = i.serialNumber ? `${i.name} [${i.serialNumber}]` : i.name;
+        const qty = i.quantity > 1 ? ` x${i.quantity}` : '';
+        lines.push(`${name}${qty} — ${fmt((i.unitPrice || 0) * (i.quantity || 1))}`);
+      }
+      lines.push('—', `Total — ${fmt(t.total)}`);
+      for (const td of (t.tenders || [])) lines.push(`${td.label || td.type} — ${fmt(td.amount)}`);
+      lines.push('Thank you for shopping at Orison!', `# ${t.clientTxId || t.id}`);
+      return lines;
     }
 
     function mergeById(list) {

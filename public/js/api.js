@@ -1,48 +1,72 @@
 'use strict';
 
 /* API client + auth token handling for Orison POS.
+   Talks to the Google Apps Script Web App backend. Every request is a POST
+   carrying { action, method, params, payload, appToken, session }. The
+   response is an envelope { ok, data } or { ok:false, status, error }.
+
    Everything here treats the network as optional: callers decide whether the
    request is a hard requirement (login, admin) or best-effort (sync). */
 
 import { idb } from './db.js';
 
+async function getConfig() {
+  return (await idb.get('meta', 'config')) || {};
+}
+
 async function getBaseUrl() {
-  const meta = await idb.get('meta', 'config');
-  if (meta && meta.serverUrl) return meta.serverUrl;
-  return '';
+  const m = await getConfig();
+  return m.serverUrl || '';
 }
 
 async function getToken() {
-  const meta = await idb.get('meta', 'config');
-  return meta && meta.token ? meta.token : null;
+  const m = await getConfig();
+  return m.token || null;
+}
+
+async function getAppToken() {
+  const m = await getConfig();
+  return m.appToken || '';
 }
 
 async function setToken(token) {
-  const meta = (await idb.get('meta', 'config')) || {};
-  meta.token = token;
-  await idb.put('meta', meta, 'config');
+  const m = await getConfig();
+  m.token = token;
+  await idb.put('meta', m, 'config');
 }
 
 async function clearToken() {
-  const meta = (await idb.get('meta', 'config')) || {};
-  delete meta.token;
-  delete meta.user;
-  await idb.put('meta', meta, 'config');
+  const m = await getConfig();
+  delete m.token;
+  delete m.user;
+  await idb.put('meta', m, 'config');
 }
 
-async function request(path, { method = 'GET', body, timeout = 12000 } = {}) {
+async function request(path, { method = 'GET', body, timeout = 15000 } = {}) {
   const base = await getBaseUrl();
   const token = await getToken();
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const appToken = await getAppToken();
+
+  const [action, query = ''] = path.split('?');
+  const params = {};
+  for (const [k, v] of new URLSearchParams(query)) params[k] = v;
+
+  const envelope = {
+    action,
+    method,
+    params,
+    payload: body || null,
+    appToken,
+    session: token,
+  };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const res = await fetch(base + path, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
+    const res = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(envelope),
       signal: controller.signal,
       cache: 'no-store',
     });
@@ -54,7 +78,13 @@ async function request(path, { method = 'GET', body, timeout = 12000 } = {}) {
       err.data = data;
       throw err;
     }
-    return data;
+    if (data && data.ok === false) {
+      const err = new Error(data.error || 'Request failed');
+      err.status = data.status || 400;
+      err.data = data;
+      throw err;
+    }
+    return data ? data.data : data;
   } catch (err) {
     if (err.name === 'AbortError') {
       const e = new Error('Request timed out (offline?)');
@@ -79,6 +109,7 @@ const api = {
   getToken,
   setToken,
   clearToken,
+  getAppToken,
 };
 
 export { api };

@@ -60,7 +60,7 @@ export const screen = {
           <button id="loginBtn" class="btn btn-block" disabled>Sign in</button>
           <p id="loginErr" class="login-err" role="alert"></p>
 
-          <button class="linklike" id="serverCfg">Server: ${esc((m && m.serverUrl) || '(this device)')}</button>
+          <button class="linklike" id="serverCfg">Backend: ${esc((m && m.serverUrl) || '(not configured)')}</button>
         </div>
       </div>`;
 
@@ -104,12 +104,14 @@ export const screen = {
 
     root.querySelector('#serverCfg').addEventListener('click', async () => {
       const m = (await idb.get('meta', 'config')) || {};
-      const url = window.prompt('Server URL (blank = this device):', m.serverUrl || '');
+      const url = window.prompt('Apps Script deployment URL (ends in /exec):', m.serverUrl || '');
       if (url !== null) {
         const cfg = (await idb.get('meta', 'config')) || {};
         cfg.serverUrl = url.trim();
+        const token = window.prompt('App token (matches Script Properties APP_TOKEN):', cfg.appToken || '');
+        if (token !== null) cfg.appToken = token.trim();
         await idb.put('meta', cfg, 'config');
-        this.render(ctx, root);
+        screen.render(ctx, root);
       }
     });
 
@@ -168,7 +170,7 @@ export const screen = {
       beep('ok');
       try { await pull(); } catch (_) { /* offline — app is fully functional */ }
       ctx.state.user = user;
-      ctx.router.show('register');
+      ctx.router.show('dashboard');
     }
   },
 };

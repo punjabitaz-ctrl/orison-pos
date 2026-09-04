@@ -1,83 +1,104 @@
 # Orison POS
 
-A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. Replace Base44 per-seat POS costs with a lean server you run in-store, and a web app cashiers install on their own phones/tablets. Works fully offline — sales are queued locally and sync when a connection returns.
+A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. Replace Base44 per-seat POS costs with a lean, zero-cost stack and a web app cashiers install on their own phones/tablets. Works fully offline — sales are queued locally and sync when a connection returns.
 
 ## Features
 
 - **Offline-first**: products, users, and every sale are stored in the browser (IndexedDB). Cashiers can sell with zero connectivity; completed sales sync automatically when online.
-- **Sync with First-Committed-Wins**: synchronized devices reconcile against the SQLite server. Double-selling the same IMEI is rejected; the losing device is marked **VOIDED** and its stock restored locally.
+- **Sync with First-Committed-Wins**: devices reconcile against the backend. Double-selling the same IMEI is rejected; the losing device is marked **VOIDED** and its stock restored locally.
 - **Serialized (IMEI) inventory**: scan or type a serial per unit. Serialized items are tracked individually through stock, sale, history, and receipt.
 - **Split tender**: Cash / Store Credit / Net-30, with change calculation and quick-round keypad.
 - **Receipts**: 80mm thermal-friendly print (CSS `@media print`), plus Share via Web Share API or clipboard.
 - **Scanning**: HID barcode scanner via the search field, with camera barcode fallback where supported.
+- **Role-gated dashboard**: admin/manager see store KPIs, a 14-day revenue chart, top sellers, low-stock alerts, and one-tap Drive export; cashiers get their own daily numbers.
 - **Admin tools** (in-app): create products, adjust non-serialized stock, add serials.
-- **POS lock**: staff sign in with a PIN pad (hashed at rest/PIN forward).
+- **POS lock**: staff sign in with a PIN pad.
 
 ## Stack
 
-- **Server**: Node.js, Fastify, better-sqlite3 (single-file SQLite at `data/orison.db`).
+- **Backend**: Google Apps Script Web App backed by **Google Sheets** + **Drive**. API bridge, sync, serial tracking, and admin mutations all run server-side. Zero hosting cost.
 - **Client**: Vanilla ES modules PWA — no build step. Service worker caches the shell (API is never cached).
-- **Auth**: server-issued HMAC bearer token for the session; PIN stored as an scrypt hash server-side.
+- **Auth**: shared `APP_TOKEN` (Script Property) on every call, plus an HMAC-signed 12-hour session token issued at login.
 
 ## Setup
 
-```bash
-npm install
-npm start
-```
+### 1. Deploy the backend (once, ~5 minutes)
 
-The server listens on `0.0.0.0:8080` and **auto-seeds** a demo catalog + users on first boot. Open `http://<your-server-LAN-ip>:8080` from any phone/tablet on the same network.
+See [`backend/README.md`](backend/README.md) for the full Apps Script deploy guide. In short:
 
-> On Windows after a fresh start, the service worker may be served from the old page. Do a hard reload (Ctrl+Shift+R) once after updating `public/`.
+1. Create a new Apps Script project, paste `backend/Code.gs`.
+2. Add Script Properties: `APP_TOKEN` (choose a long secret) and optionally `SPREADSHEET_ID` / `FOLDER_ID`.
+3. Run `setup` once (authorizes + seeds users, products, serials). Call it again later to reset the sheet to a clean seed.
+4. Deploy as a **Web App** — Execute as Me, access: Anyone.
+5. Copy the `/exec` URL.
 
-### Demo logins (auto-seeded)
+### 2. Point the app at it
+
+Serve `public/` statically anywhere (GitHub Pages, a local web server, or an intranet box). On first launch, tap **Backend** on the login screen and paste the `/exec` URL + `APP_TOKEN`. Each app install remembers it.
+
+> After a fresh start, the old service worker may serve a cached page. Hard reload (Ctrl+Shift+R) once after updating `public/`.
+
+## Demo logins (seeded by the backend)
 
 | Role | Email | PIN |
 | ---- | ----- | --- |
 | Admin | `tariq@orisonigt.com` | `1234` |
+| Manager | `sarah@orisonigt.com` | `3456` |
 | Cashier | `amara@orisonigt.com` | `5678` |
 | Cashier | `diego@orisonigt.com` | `9012` |
 
-Store name: **Orison Electronics — Main Street**
-
-> To start clean (drop the demo sales/serials), delete `data/orison.db` and restart — it reseeds.
+Store: **Orison Electronics — Main Street** (code `ORSTN-01`)
 
 ## Install as an app
 
-1. Open the server URL in Chrome/Edge on the Android device.
+1. Open the app URL in Chrome/Edge on the Android device.
 2. Menu → **Add to Home screen** (or the browser's "Install App" prompt).
-3. Launch the installed icon once offline-verified; it opens standalone with no browser chrome.
+3. Launch the installed icon; it opens standalone with no browser chrome.
+
+## Hosting at pos.orisonigt.com (Google login · worldwide · near-real-time)
+
+The app is a static PWA, so it can live on any HTTPS host. For a subdomain
+secured behind Google sign-in, see **[DEPLOY.md](DEPLOY.md)** (recommended:
+Cloudflare Pages + Cloudflare Access, $0 for ≤50 users). Sales sync to the
+backend **the moment they're completed when the device is online**; the
+**30-minute window (configurable in Settings) is only the offline fallback**
+— offline terminals queue sales and catch up on reconnect and on that window.
+Set an owner device to 2–5 min for a near-live view.
 
 ## Development
 
 ```bash
-# Run an end-to-end test against a fresh DB (drive real headless Edge)
-node tests/e2e.mjs
+# Backend logic against an in-memory mock of Apps Script (no network, fast)
+npm run test:backend
 
-# Smoke-test the admin API routes
-powershell -File tests/admin-smoke.ps1
+# Headless-browser E2E against a deployed backend
+#   $env:E2E_GAS_URL='https://…/exec';  $env:E2E_APP_TOKEN='secret'
+npm run test:e2e
+
+# Local static serve of the PWA shell (backend still comes from the /exec URL)
+npm run serve   # http://127.0.0.1:8080
 ```
 
-Both tests assume a freshly-seeded server is already running on `http://127.0.0.1:8080`, and they mutate the DB (deleting `data/orison.db` and reseeding is recommended between runs).
+The browser E2E (tests/e2e.mjs) also runs against any same-origin backend when you host the app yourself (`E2E_BASE`). It needs a **freshly seeded** backend because it sells specific serials.
 
 ## Layout
 
 ```
-server/index.js      Entry: Fastify, static serve, auto-seed, HMAC auth
-server/routes.js     All API + sync logic (auth gate, commitTransaction, admin)
-server/db.js         Schema, PIN scrypt hash/verify, secret management
-server/seed.js       Demo catalog, users, serialized IMEI stock
+backend/Code.gs      Google Apps Script backend (API bridge, sync, seed)
+backend/README.md    Deploy guide for the Apps Script backend
 public/index.html    PWA shell
-public/js/app.js     Router/boot, tab bar, session restore
+public/js/app.js     Router/boot, tab bar, role-gated tabs, session restore
+public/js/api.js     GAS transport (envelope, token, session, offline flag)
 public/js/sync.js    Outbox push/pull, First-Committed-Wins + VOIDED handling
-public/js/screens/*.js  login, register, checkout, history, inventory, settings
+public/js/screens/*.js  login, register, checkout, history, inventory, settings, dashboard
 public/css/style.css Full UI + @media print receipt mode
-tests/e2e.mjs        Headless-browser end-to-end test
-tests/admin-smoke.ps1 Admin route smoke test
+tests/backend-sim.mjs  Backend logic tests vs an in-memory Apps Script mock
+tests/e2e.mjs          Headless-browser end-to-end test
 ```
 
 ## Notes / known constraints
 
-- Auth/session data lives in your browser's IndexedDB; it is **not** shared across devices. Each device syncs to the same server DB.
-- The server is single-instance and single-file (SQLite); it is not built for horizontal scaling.
-- Admin capability (create products, adjust stock, add serials) requires an `admin` role login.
+- Auth/session data lives in each browser's IndexedDB; it is **not** shared across devices. Every device syncs to the same backend.
+- The dashboard sync clock (`watermark`) is sheet-based; keep your seeded sheet as the single source of truth.
+- Sheet-level writes are serialized with Apps Script `LockService` (single instance) — not built for extreme horizontal scaling.
+- Admin + manager roles can create products, adjust stock, and add serials; cashiers cannot.

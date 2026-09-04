@@ -12,8 +12,9 @@ import { screen as checkout } from './screens/checkout.js';
 import { screen as history } from './screens/history.js';
 import { screen as inventory } from './screens/inventory.js';
 import { screen as settings } from './screens/settings.js';
+import { screen as dashboard } from './screens/dashboard.js';
 
-const SCREENS = { login, register, checkout, history, inventory, settings };
+const SCREENS = { dashboard, login, register, checkout, history, inventory, settings };
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -30,6 +31,30 @@ const state = {
 
 let current = null;
 let cleanup = null;
+let syncTimer = null;
+
+async function armSync() {
+  if (syncTimer) clearTimeout(syncTimer);
+  const m = await idb.get('meta', 'config').catch(() => ({})) || {};
+  const minutes = Math.max(1, Number(m.syncIntervalMin || 30) || 30);
+  syncTimer = setTimeout(async () => {
+    /* The periodic window is only a fallback. Online terminals already
+       synced the sale at completion; offline ones catch up on the online
+       event. So skip the sweep while offline. */
+    if (navigator.onLine) await syncNow().catch(() => {});
+    armSync();
+  }, minutes * 60000);
+}
+
+function refreshOnFocus() {
+  window.addEventListener('focus', () => {
+    if (!navigator.onLine) return;
+    idb.get('meta', 'config').then((m) => {
+      const last = m && m.lastSyncAt ? new Date(m.lastSyncAt).getTime() : 0;
+      if (Date.now() - last > 60000) syncNow().catch(() => {});
+    }).catch(() => {});
+  });
+}
 
 const router = {
   async show(name) {
@@ -42,9 +67,19 @@ const router = {
     document.querySelectorAll('[data-tab]').forEach((t) => {
       t.classList.toggle('on', t.dataset.tab === def.tab);
     });
+    applyRoleTabs();
     window.scrollTo(0, 0);
   },
 };
+
+function applyRoleTabs() {
+  const role = (state.user || {}).role || 'cashier';
+  const canManage = role === 'admin' || role === 'manager';
+  document.querySelectorAll('[data-tab]').forEach((t) => {
+    const restricted = t.dataset.tab === 'inventory' && !canManage;
+    t.classList.toggle('hidden', restricted);
+  });
+}
 
 const ctx = { idb, api, state, router };
 
@@ -77,7 +112,11 @@ async function boot() {
     if (pill) { pill.classList.remove('online'); pill.classList.add('offline'); }
   });
 
-  await router.show(state.user ? 'register' : 'login');
+  window.addEventListener('orison:sync-interval', armSync);
+  armSync();
+  refreshOnFocus();
+
+  await router.show(state.user ? 'dashboard' : 'login');
 }
 
 boot().catch((err) => {

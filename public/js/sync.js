@@ -33,6 +33,19 @@ export async function setServerUrl(url) {
   await idb.put('meta', m, 'config');
 }
 
+export async function setAppToken(token) {
+  const m = await meta();
+  m.appToken = token || '';
+  await idb.put('meta', m, 'config');
+}
+
+export async function setSyncInterval(minutes) {
+  const m = await meta();
+  m.syncIntervalMin = Math.max(1, Number(minutes) || 30);
+  await idb.put('meta', m, 'config');
+  window.dispatchEvent(new CustomEvent('orison:sync-interval'));
+}
+
 export async function getSyncState() {
   const m = await meta();
   const outbox = await idb.getAll('outbox');
@@ -91,6 +104,7 @@ export async function push() {
   }
 
   let voided = 0;
+  let flagged = 0;
   const results = res.results || [];
   const byClientTxId = {};
   for (const r of results) byClientTxId[r.clientTxId] = r;
@@ -99,8 +113,12 @@ export async function push() {
     const r = byClientTxId[entry.payload.clientTxId];
     if (!r) continue;
     if (r.accepted) {
-      await idb.put('outbox', { ...entry, status: 'SYNCED', serverId: r.transactionId }, entry.clientTxId);
-      await markTransaction(entry.clientTxId, { status: 'SYNCED', serverId: r.transactionId });
+      const flags = (r.conflicts || [])
+        .map((c) => c.conflictId ? c.reason : null)
+        .filter(Boolean);
+      if (flags.length) flagged += 1;
+      await idb.put('outbox', { ...entry, status: 'SYNCED', serverId: r.transactionId, flags }, entry.clientTxId);
+      await markTransaction(entry.clientTxId, { status: 'SYNCED', serverId: r.transactionId, flags });
     } else {
       voided += 1;
       await restoreLocalStock(entry.payload);
@@ -115,8 +133,9 @@ export async function push() {
   }
 
   await touchMeta();
+  if (flagged > 0) emit({ kind: 'conflict', flagged });
   emit({ kind: 'push', pushed: results.filter((r) => r.accepted).length, voided });
-  return { pushed: results.filter((r) => r.accepted).length, voided };
+  return { pushed: results.filter((r) => r.accepted).length, voided, flagged };
 }
 
 async function touchMeta() {
@@ -186,6 +205,15 @@ export async function outboxStats() {
     synced: outbox.filter((o) => o.status === 'SYNCED').length,
     voided: outbox.filter((o) => o.status === 'VOIDED').length,
   };
+}
+
+/* Push the local outbox right now, but only when connected. Prefer this over
+   syncNow() at sale completion: no pull round-trip, no toast, just ship the
+   just-completed sale. Offline devices skip it and catch up via the online
+   event + the periodic window. */
+export async function pushImmediate() {
+  if (!navigator.onLine) return { pushed: 0, voided: 0, offline: true };
+  return push();
 }
 
 export async function syncNow() {

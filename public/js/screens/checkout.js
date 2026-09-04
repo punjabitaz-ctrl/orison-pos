@@ -4,7 +4,7 @@
    completes the sale offline-first, then offers receipt print/share. */
 
 import { fmt, esc, toast, beep } from '../ui.js';
-import { enqueueTransaction, syncNow, getSyncState } from '../sync.js';
+import { enqueueTransaction, pushImmediate } from '../sync.js';
 
 const TENDERS = [
   { id: 'cash', label: 'Cash' },
@@ -196,8 +196,9 @@ export const screen = {
         items: txItems,
       });
 
-      // Fire-and-forget push; safe offline.
-      syncNow().catch(() => {});
+      // Ship the sale immediately when connected; offline terminals queue it
+      // and catch up on the online event / periodic window.
+      pushImmediate().catch(() => {});
 
       // Clear cart for the next sale.
       state.cart = new Map();
@@ -211,13 +212,24 @@ export const screen = {
       root.innerHTML = `
         <div class="receipt-wrap">
           <div class="receipt-actions">
-            <button class="btn btn-ghost" id="printBtn">Print / PDF</button>
+            <button class="btn btn-ghost" id="printBtn">Print</button>
             <button class="btn btn-ghost" id="shareBtn">Share</button>
             <button class="btn" id="doneBtn">New Sale</button>
           </div>
           <div id="printRoot" class="print-root"></div>
+          <div id="receiptSend" class="receipt-send-host"></div>
         </div>`;
       renderReceiptDoc(cashier, clientTxId);
+
+      import('../receipt-send.js').then(({ mountSendButtons }) => {
+        const sendHost = root.querySelector('#receiptSend');
+        if (!sendHost) return;
+        mountSendButtons(sendHost, {
+          lines: receiptText(cashier, clientTxId).split('\n'),
+          title: 'Orison POS — Receipt',
+          filename: 'orison-receipt-' + clientTxId,
+        });
+      });
 
       root.querySelector('#doneBtn').addEventListener('click', () => router.show('register'));
       root.querySelector('#printBtn').addEventListener('click', () => {

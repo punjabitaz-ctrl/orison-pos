@@ -1,21 +1,16 @@
 {
   "name": "orison-pos",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Offline-first, mobile-first Point of Sale (PWA) for a small electronics retailer. Self-hosted, zero per-seat fees.",
+  "description": "Offline-first, mobile-first Point of Sale (PWA) for a small electronics retailer. Backend: Google Apps Script + Sheets + Drive. Zero per-seat fees.",
   "scripts": {
-    "start": "node server/index.js",
-    "seed": "node server/seed.js",
-    "dev": "node --watch server/index.js"
+    "test": "node tests/backend-sim.mjs && node tests/e2e.mjs",
+    "test:backend": "node tests/backend-sim.mjs",
+    "test:e2e": "node tests/e2e.mjs",
+    "serve": "npx --yes local-web-server --port 8080 --directory public --spa index.html"
   },
   "engines": {
     "node": ">=20"
-  },
-  "dependencies": {
-    "@fastify/cors": "^9.0.1",
-    "@fastify/static": "^7.0.4",
-    "better-sqlite3": "^11.3.0",
-    "fastify": "^4.28.1"
   },
   "devDependencies": {
     "puppeteer-core": "^25.10.0"

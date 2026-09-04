@@ -30,7 +30,7 @@ export const screen = {
   async render(ctx, root) {
     document.getElementById('tabbar').classList.remove('hidden');
     const { state } = ctx;
-    const isAdmin = state.user && state.user.role === 'admin';
+    const isAdmin = state.user && (state.user.role === 'admin' || state.user.role === 'manager');
 
     await this.refreshProducts();
     const stats = await getSyncState();
