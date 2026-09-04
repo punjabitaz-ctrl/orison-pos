@@ -6,9 +6,10 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
-import { fmt, esc, toast, beep } from '../ui.js';
+import { fmt, esc, toast, beep, openModal, closeModal } from '../ui.js';
 import { SYNC_EVENT } from '../sync.js';
 import { inventoryAlerts } from '../alerts.js';
+import { createPayout } from '../money.js';
 
 const MANAGER_ROLES = ['admin', 'manager'];
 
@@ -80,8 +81,16 @@ export const screen = {
       const relevant = scope();
       const now = new Date();
       const todayTx = relevant.filter((t) => dayKeyOf(t.createdAt) === today);
-      const todayRevenue = todayTx.reduce((s, t) => s + (t.grandTotal || 0), 0);
-      const todayUnits = todayTx.reduce((s, t) => s + (t.items || []).reduce((a, i) => a + (i.quantity || 1), 0), 0);
+      const kindOf = (t) => t.kind || 'sale';
+      const salesTx = todayTx.filter((t) => kindOf(t) === 'sale');
+      const refundsTx = todayTx.filter((t) => kindOf(t) === 'refund');
+      const payoutsTx = todayTx.filter((t) => kindOf(t) === 'payout');
+      const sumTx = (arr) => arr.reduce((s, t) => s + (t.grandTotal || 0), 0);
+      const todaySales = sumTx(salesTx);
+      const todayRefunds = sumTx(refundsTx);
+      const todayPayouts = sumTx(payoutsTx);
+      const todayRevenue = todaySales - todayRefunds - todayPayouts;
+      const todayUnits = salesTx.reduce((s, t) => s + (t.items || []).reduce((a, i) => a + (i.quantity || 1), 0), 0);
 
       const recent = [...relevant].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 4);
       const alerts = inventoryAlerts(products);
@@ -103,6 +112,9 @@ export const screen = {
           <div class="dash-kpi"><span>Revenue today</span><strong>${money(todayRevenue)}</strong></div>
           <div class="dash-kpi"><span>Sales today</span><strong>${todayTx.length}</strong></div>
           <div class="dash-kpi"><span>Units today</span><strong>${todayUnits}</strong></div>
+          ${isManager ? `
+          <div class="dash-kpi warn"><span>Refunds</span><strong>−${money(todayRefunds)}</strong></div>
+          <div class="dash-kpi warn"><span>Paid out</span><strong>−${money(todayPayouts)}</strong></div>` : ''}
         </div>
 
         ${isManager ? `
@@ -164,6 +176,7 @@ export const screen = {
         <div class="row dash-actions">
           <button class="btn" id="dashExport">Export today → Drive</button>
           <button class="btn" id="dashInventory">Inventory</button>
+          <button class="btn btn-ghost" id="dashPayout">Record paid out</button>
         </div>
         ` : `
         <section class="dash-section">
@@ -203,6 +216,8 @@ export const screen = {
       if (invBtn) invBtn.addEventListener('click', () => router.show('inventory'));
       const alertBtn = root.querySelector('#dashAlerts');
       if (alertBtn) alertBtn.addEventListener('click', () => router.show('alerts'));
+      const payoutBtn = root.querySelector('#dashPayout');
+      if (payoutBtn) payoutBtn.addEventListener('click', () => openPayoutModal());
       const expBtn = root.querySelector('#dashExport');
       if (expBtn) expBtn.addEventListener('click', () => exportDay(expBtn));
       root.querySelectorAll('[data-go-history]').forEach((b) => b.addEventListener('click', () => router.show('history')));
@@ -234,7 +249,7 @@ export const screen = {
       btn.textContent = 'Exporting…';
       try {
         const res = await api.post('/api/drive/export', { date: today }, { timeout: 25000 });
-        toast(`Exported ${res.rows} sales → Drive`, 'ok');
+        toast(`Exported ${res.rows} transactions → Drive`, 'ok');
         beep('ok');
         if (res.url) window.open(res.url, '_blank');
       } catch (err) {
@@ -242,6 +257,46 @@ export const screen = {
       }
       btn.disabled = false;
       btn.textContent = 'Export today → Drive';
+    }
+
+    function openPayoutModal() {
+      const modalEl = openModal(`
+        <div class="tx-detail payout-modal">
+          <button class="icon-btn abs-close" data-x>✕</button>
+          <h3>Record paid out</h3>
+          <p class="muted">Cash leaving the business — vendor payment, cash pick-up, expense. Managers and admins only.</p>
+          <label class="field-label">To / reason
+            <input class="field" id="po-to" placeholder="e.g. Vendor, cash pick-up">
+          </label>
+          <label class="field-label">Amount (₦)
+            <input class="field" id="po-amt" type="number" min="0" step="0.01" placeholder="0.00">
+          </label>
+          <label class="field-label">Note (optional)
+            <input class="field" id="po-note" placeholder="e.g. restock — keyboards">
+          </label>
+          <button class="btn" id="po-confirm" style="--bg:#c62828">Confirm paid out</button>
+        </div>`);
+      modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
+      const confirm = modalEl.querySelector('#po-confirm');
+      confirm.addEventListener('click', async () => {
+        const amount = Number(modalEl.querySelector('#po-amt').value);
+        if (!(amount > 0)) { toast('Enter an amount', 'warn'); return; }
+        confirm.disabled = true;
+        try {
+          await createPayout({
+            counterparty: modalEl.querySelector('#po-to').value.trim(),
+            grandTotal: amount,
+            note: modalEl.querySelector('#po-note').value.trim(),
+            user,
+          });
+          closeModal();
+          toast('Paid out queued', 'ok', 1800);
+          await load();
+        } catch (_) {
+          confirm.disabled = false;
+          toast('Failed — try again', 'warn', 2400);
+        }
+      });
     }
 
     const onSync = () => { load(); };
@@ -286,6 +341,7 @@ function openStr(open) {
 }
 
 function last14(txs) {
+  const kindOf = (t) => t.kind || 'sale';
   const buckets = [];
   for (let i = 13; i >= 0; i--) {
     const key = todayKey(i);
@@ -296,7 +352,13 @@ function last14(txs) {
   for (const t of txs) {
     const k = dayKeyOf(t.createdAt);
     for (const b of buckets) {
-      if (b.key === k) { b.total += t.grandTotal || 0; b.count += 1; break; }
+      if (b.key === k) {
+        const v = t.grandTotal || 0;
+        if (kindOf(t) === 'sale') b.total += v;
+        else b.total -= v; // refunds and payouts reduce net cash
+        b.count += 1;
+        break;
+      }
     }
   }
   return buckets;
@@ -335,6 +397,7 @@ function last30(txs) {
 function topSellers(txs) {
   const tally = new Map();
   for (const t of txs) {
+    if ((t.kind || 'sale') !== 'sale') continue; // refund/payout lines aren't units sold
     for (const it of t.items || []) {
       const name = String(it.name || 'Item');
       const e = tally.get(name) || { name, units: 0, rev: 0 };

@@ -482,6 +482,154 @@ check('manager unlocks + keeps reorder point', unpatch.ok === true);
 const lastSold = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'CB-USBC-1M');
 check('product lastSoldAt stamped after sale', !!lastSold.lastSoldAt);
 
+section('refunds — full/partial, serialized, guards');
+const spkR = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'TS-SPK-01');
+const saleRef = req('/api/sync/push', {
+  deviceId: 'dev-R',
+  batch: [{
+    clientTxId: 'tx-spk-1', userId: pin.data.user.id, grandTotal: 50,
+    tenders: [{ type: 'cash', amount: 50 }], note: '',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: spkR.id, quantity: 2, unitPrice: 25 }],
+  }],
+}, { session: cashierToken });
+check('sale accepted before refund', saleRef.ok && saleRef.data.results[0].accepted === true, JSON.stringify(saleRef));
+
+const rf1 = req('/api/sync/push', {
+  deviceId: 'dev-R',
+  batch: [{
+    clientTxId: 'tx-spk-1-rf1', kind: 'refund', originalClientTx: 'tx-spk-1', counterparty: '',
+    userId: pin.data.user.id, grandTotal: 25, tenders: [{ type: 'cash', amount: 25 }],
+    note: 'partial refund', createdAt: new Date().toISOString(),
+    items: [{ productId: spkR.id, quantity: 1, unitPrice: 25 }],
+  }],
+}, { session: cashierToken });
+check('partial refund accepted + COMPLETED', rf1.ok && rf1.data.results[0].accepted === true && rf1.data.results[0].status === 'COMPLETED', JSON.stringify(rf1));
+let spkR1 = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'TS-SPK-01');
+check('stock restored after partial refund (3 → 4)', spkR1.onHand === 4);
+
+const rf2 = req('/api/sync/push', {
+  deviceId: 'dev-R',
+  batch: [{
+    clientTxId: 'tx-spk-1-rf2', kind: 'refund', originalClientTx: 'tx-spk-1',
+    userId: pin.data.user.id, grandTotal: 20, tenders: [], note: '',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: spkR.id, quantity: 2, unitPrice: 10 }],
+  }],
+}, { session: cashierToken });
+check('refund exceeding outstanding per-line → VOIDED', rf2.ok && rf2.data.results[0].accepted === false && rf2.data.results[0].conflicts[0].reason === 'refund_exceeds_sale_lines', JSON.stringify(rf2));
+
+const rf3 = req('/api/sync/push', {
+  deviceId: 'dev-R',
+  batch: [{
+    clientTxId: 'tx-spk-1-rf3', kind: 'refund', originalClientTx: 'tx-spk-1',
+    userId: pin.data.user.id, grandTotal: 25, tenders: [], note: '',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: spkR.id, quantity: 1, unitPrice: 25 }],
+  }],
+}, { session: cashierToken });
+check('remaining outstanding refunded back to original stock', rf3.ok && rf3.data.results[0].accepted === true, JSON.stringify(rf3));
+spkR1 = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'TS-SPK-01');
+check('stock fully restored (5)', spkR1.onHand === 5);
+
+const rf4 = req('/api/sync/push', {
+  deviceId: 'dev-R',
+  batch: [{
+    clientTxId: 'tx-spk-1-rf4', kind: 'refund', originalClientTx: 'tx-spk-1',
+    userId: pin.data.user.id, grandTotal: 25, tenders: [], note: '',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: spkR.id, quantity: 1, unitPrice: 25 }],
+  }],
+}, { session: cashierToken });
+check('refund beyond sale total → VOIDED refund_exceeds_sale', rf4.ok && rf4.data.results[0].accepted === false && rf4.data.results[0].conflicts[0].reason === 'refund_exceeds_sale', JSON.stringify(rf4));
+
+const rfSerial = req('/api/sync/push', {
+  deviceId: 'dev-R',
+  batch: [{
+    clientTxId: 'tx-abc-1-rf1', kind: 'refund', originalClientTx: 'tx-abc-1',
+    userId: pin.data.user.id, grandTotal: 1299, tenders: [{ type: 'store_credit', amount: 1299 }],
+    note: 'serialized refund', createdAt: new Date().toISOString(),
+    items: [{ productId: s24.id, serialNumber: serial, quantity: 1, unitPrice: 1299 }],
+  }],
+}, { session: cashierToken });
+check('serialized refund accepted', rfSerial.ok && rfSerial.data.results[0].accepted === true, JSON.stringify(rfSerial));
+const s24r = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'PH-S24U-256');
+check('serial returned to IN_STOCK and stock restored', s24r.onHand === 5 && s24r.serials.includes(serial));
+
+const rfOfRefund = req('/api/sync/push', {
+  deviceId: 'dev-R',
+  batch: [{
+    clientTxId: 'tx-rf-rof', kind: 'refund', originalClientTx: 'tx-spk-1-rf1',
+    userId: pin.data.user.id, grandTotal: 10, tenders: [], note: '',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: spkR.id, quantity: 1, unitPrice: 10 }],
+  }],
+}, { session: cashierToken });
+check('cannot refund a refund → original_not_found', rfOfRefund.ok && rfOfRefund.data.results[0].accepted === false && rfOfRefund.data.results[0].conflicts[0].reason === 'original_not_found', JSON.stringify(rfOfRefund));
+
+const rfGhost = req('/api/sync/push', {
+  deviceId: 'dev-R',
+  batch: [{
+    clientTxId: 'tx-rf-ghost', kind: 'refund', originalClientTx: 'tx-does-not-exist',
+    userId: pin.data.user.id, grandTotal: 10, tenders: [], note: '',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: spkR.id, quantity: 1, unitPrice: 10 }],
+  }],
+}, { session: cashierToken });
+check('refund with no original → original_not_found', rfGhost.ok && rfGhost.data.results[0].conflicts[0].reason === 'original_not_found', JSON.stringify(rfGhost));
+
+const rfUnsold = req('/api/sync/push', {
+  deviceId: 'dev-R',
+  batch: [{
+    clientTxId: 'tx-rf-unsold', kind: 'refund', originalClientTx: 'tx-abc-1',
+    userId: pin.data.user.id, grandTotal: 10, tenders: [], note: '',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: s24.id, serialNumber: 'NEW-SN-0001', quantity: 1, unitPrice: 10 }],
+  }],
+}, { session: cashierToken });
+check('refund of unsold serial → VOIDED serial_not_sold', rfUnsold.ok && rfUnsold.data.results[0].accepted === false && rfUnsold.data.results[0].conflicts[0].reason === 'serial_not_sold', JSON.stringify(rfUnsold));
+
+section('cash payouts');
+const payoutCashier = req('/api/sync/push', {
+  deviceId: 'dev-P',
+  batch: [{
+    clientTxId: 'tx-po-1', kind: 'payout', counterparty: 'Nike Official',
+    userId: pin.data.user.id, grandTotal: 500, tenders: [], note: '',
+    createdAt: new Date().toISOString(),
+  }],
+}, { session: cashierToken });
+check('cashier payout → VOIDED unauthorized_role', payoutCashier.ok && payoutCashier.data.results[0].accepted === false && payoutCashier.data.results[0].conflicts[0].reason === 'unauthorized_role', JSON.stringify(payoutCashier));
+
+const payoutMgr = req('/api/sync/push', {
+  deviceId: 'dev-P',
+  batch: [{
+    clientTxId: 'tx-po-2', kind: 'payout', counterparty: 'Nike Official',
+    userId: pin.data.user.id, grandTotal: 2000, tenders: [{ type: 'cash', amount: 2000 }],
+    note: 'vendor restock', createdAt: new Date().toISOString(),
+  }],
+}, { session: mgrToken });
+check('manager payout accepted + COMPLETED', payoutMgr.ok && payoutMgr.data.results[0].accepted === true && payoutMgr.data.results[0].status === 'COMPLETED', JSON.stringify(payoutMgr));
+
+const txAll = req('/api/transactions', {}, { session: adminToken }).data.transactions;
+check('transactions expose refund kind + originalClientTx', txAll.some((t) => t.kind === 'refund' && t.originalClientTx === 'tx-abc-1') && txAll.some((t) => t.kind === 'refund' && t.originalClientTx === 'tx-spk-1'), JSON.stringify(txAll.slice(0, 3)));
+check('transactions expose payout kind + counterparty', txAll.some((t) => t.kind === 'payout' && t.counterparty === 'Nike Official'), JSON.stringify(txAll.slice(0, 3)));
+check('legacy rows still read as kind sale', txAll.some((t) => (t.kind || 'sale') === 'sale' && t.clientTxId === 'tx-abc-1'));
+
+section('drive export — cash summary');
+const expAll = req('/api/drive/export', { date: new Date().toISOString().slice(0, 10) }, { session: mgrToken });
+check('export rows count includes refunds + payouts', expAll.ok && expAll.data.rows === 7, JSON.stringify(expAll));
+const expAllFile = driveFiles.find((f) => f.id === expAll.data.fileId);
+check('CSV has kind column + refund/payout values', !!expAllFile && expAllFile.content.includes('kind') && expAllFile.content.includes('refund') && expAllFile.content.includes('Nike Official'));
+check('CSV cash summary correct', !!expAllFile && expAllFile.content.includes('NET CASH') && expAllFile.content.includes('-1939') && expAllFile.content.includes('PAID OUT') && expAllFile.content.includes('SALES'));
+
+section('schema migration — append new TX columns');
+const txGridFull = ss._sheets.get('Transactions')._grid;
+txGridFull[0] = txGridFull[0].slice(0, 11);
+sandbox.sheet_('Transactions', sandbox.TX_HEADERS);
+const txHdr = txGridFull[0];
+check('migration appends kind/original_client_tx/counterparty', txHdr.includes('kind') && txHdr.includes('original_client_tx') && txHdr.includes('counterparty'), JSON.stringify(txHdr));
+check('migration preserves existing columns', txHdr[0] === 'id' && txHdr[8] === 'grand_total' && txHdr[9] === 'status');
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

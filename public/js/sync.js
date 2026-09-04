@@ -134,14 +134,14 @@ export async function push() {
       await markTransaction(entry.clientTxId, { status: 'SYNCED', serverId: r.transactionId, flags });
     } else {
       voided += 1;
-      await restoreLocalStock(entry.payload);
+      await rollbackLocal(entry.payload);
       await idb.put('outbox', {
         ...entry,
         status: 'VOIDED',
         voidedAt: new Date().toISOString(),
         reason: (r.conflicts || []).map((c) => `${c.serialNumber || ''} ${c.reason}`.trim()).join(', ') || r.reason || 'rejected',
       }, entry.clientTxId);
-      await markTransaction(entry.clientTxId, { status: 'VOIDED', voidReason: 'Server rejected sale' });
+      await markTransaction(entry.clientTxId, { status: 'VOIDED', voidReason: 'Server rejected transaction' });
     }
   }
 
@@ -178,11 +178,43 @@ async function restoreLocalStock(payload) {
   emit({ kind: 'stock-restored' });
 }
 
+/* Reverse whatever the local optimistic application did when the server rejects
+   a queued transaction. Refunds un-restored stock; sales re-restore it; payouts
+   only ever touch money records, never stock. */
+async function rollbackLocal(payload) {
+  const kind = payload.kind || 'sale';
+  if (kind === 'payout') {
+    emit({ kind: 'payout-rolled-back' });
+    return;
+  }
+  for (const item of payload.items || []) {
+    const prod = await idb.get('products', item.productId);
+    if (!prod) continue;
+    if (prod.isSerialized) {
+      if (kind === 'refund') {
+        const i = prod.serials.indexOf(item.serialNumber);
+        if (i >= 0) prod.serials.splice(i, 1);
+      } else if (item.serialNumber && !prod.serials.includes(item.serialNumber)) {
+        prod.serials.push(item.serialNumber);
+      }
+    } else if (kind === 'refund') {
+      if (prod.onHand || prod.onHand === 0) prod.onHand = Math.max(0, prod.onHand - (item.quantity || 1));
+    } else {
+      prod.onHand = (prod.onHand || 0) + (item.quantity || 1);
+    }
+    await idb.put('products', prod, prod.id);
+  }
+  emit({ kind: 'stock-restored' });
+}
+
 export async function enqueueTransaction(tx) {
   const clientTxId = crypto.randomUUID ? crypto.randomUUID() : 'tx-' + Date.now();
   const payload = {
     clientTxId,
     userId: tx.userId,
+    kind: tx.kind || 'sale',
+    originalClientTx: tx.originalClientTx || '',
+    counterparty: tx.counterparty || '',
     deviceId: await getDeviceId(),
     grandTotal: tx.grandTotal,
     tenders: tx.tenders,
@@ -200,6 +232,9 @@ export async function enqueueTransaction(tx) {
   await idb.put('transactions', {
     id: clientTxId,
     status: 'PENDING',
+    kind: payload.kind,
+    originalClientTx: payload.originalClientTx,
+    counterparty: payload.counterparty,
     items: tx.items,
     tenders: tx.tenders,
     total: tx.grandTotal,

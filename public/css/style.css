@@ -729,3 +729,26 @@ button:disabled { cursor: default; }
 .lock-dot { font-size: 12px; vertical-align: middle; }
 
 .dash-alert-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+/* ---- v1.2.0: refunds, cash payouts, cash reporting ---- */
+
+.k-chip { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.k-sale { background: #e3eefb; color: #1c5d99; }
+.k-refund { background: #fdecec; color: #c62828; }
+.k-payout { background: #fbe9e7; color: #b35500; }
+
+.dash-kpi.warn strong { color: #c62828; }
+
+.refund-modal .refund-lines { display: flex; flex-direction: column; gap: 12px; margin: 12px 0; }
+.rf-group { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.rf-gname { font-weight: 700; }
+.rf-serial { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.rf-serial b { margin-left: auto; }
+.rf-stepper { display: flex; align-items: center; gap: 10px; }
+.rf-stepper .icon-btn { width: 34px; height: 34px; }
+.rf-qty { font-weight: 700; min-width: 24px; text-align: center; }
+.rf-method { display: flex; gap: 14px; margin: 10px 0; }
+.rf-radio { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.rf-total { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); margin-top: 10px; font-weight: 700; }
+.rf-total b { font-size: 20px; }
+
+.field-label { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 6px; font-size: 13px; font-weight: 600; }

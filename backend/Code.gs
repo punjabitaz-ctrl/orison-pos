@@ -163,7 +163,7 @@ var META_HEADERS    = ['key', 'value'];
 var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
-var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at'];
+var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 
 function spreadSheet_() {
@@ -188,6 +188,20 @@ function sheet_(name, headers) {
     if (headers) {
       sh.getRange(1, 1, 1, headers.length).setValues([headers.slice()]);
       sh.setFrozenRows(1);
+    }
+  } else if (headers) {
+    /* migration: a schema bump appends any new columns to the existing header
+       row so readRows_/appendRows_/applyPatches_ keep mapping correctly. */
+    var existing = sh.getDataRange().getValues();
+    var haveRow = existing.length ? (existing[0] || []) : [];
+    var haveLen = 0;
+    for (var hx = 0; hx < haveRow.length; hx++) {
+      if (String(haveRow[hx] == null ? '' : haveRow[hx]).length) haveLen = hx + 1;
+    }
+    var toAdd = [];
+    for (var h = haveLen; h < headers.length; h++) toAdd.push(headers[h]);
+    if (toAdd.length) {
+      sh.getRange(1, haveLen + 1, 1, toAdd.length).setValues([toAdd]);
     }
   }
   return sh;
@@ -620,6 +634,18 @@ function syncPush_(session, payload) {
         continue;
       }
 
+      var kind = String(tx.kind || 'sale');
+      if (kind === 'payout') {
+        pushResult_(results, tx, processPayout_(session, store, newTxRows, tx, deviceId, userRows));
+        continue;
+      }
+      if (kind === 'refund') {
+        pushResult_(results, tx, processRefund_(
+          txRows, prodRows, serialRows, store, newTxRows, newConflictRows,
+          serialPatches, productPatches, session, deviceId, tx, userRows));
+        continue;
+      }
+
       for (var k = 0; k < items.length; k++) {
         var item = items[k];
         var product = prodById[String(item.productId || '')];
@@ -785,6 +811,201 @@ function canonicalJson_(s) {
   try { return JSON.stringify(JSON.parse(s || '[]')); } catch (_) { return String(s); }
 }
 
+function pushResult_(results, tx, outcome) {
+  var errors = (outcome && outcome.errors) || [];
+  results.push({
+    clientTxId: String(tx.clientTxId || ''),
+    transactionId: (outcome && outcome.transactionId) || '',
+    accepted: errors.length === 0,
+    status: errors.length ? 'VOIDED' : 'COMPLETED',
+    conflicts: errors.map(function (er) {
+      return { reason: er.reason, serialNumber: er.serialNumber ? String(er.serialNumber) : '' };
+    }),
+  });
+}
+
+/* Cash payout ("money out"): vendor payment, cash pick-up, or expense. Only
+   admin/manager. Recorded like any transaction for the cash audit trail. */
+function processPayout_(session, store, newTxRows, tx, deviceId, userRows) {
+  var role = session ? String(session.role || '') : '';
+  if (role !== 'admin' && role !== 'manager') {
+    return { errors: [{ reason: 'unauthorized_role' }] };
+  }
+  var amount = num_(tx.grandTotal);
+  if (amount <= 0) return { errors: [{ reason: 'invalid_amount' }] };
+
+  var userIds = {};
+  for (var u = 0; u < userRows.length; u++) userIds[String(userRows[u].id)] = true;
+  var txId = Utilities.getUuid();
+  newTxRows.push({
+    id: txId,
+    store_id: store.id,
+    user_id: userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows),
+    device_id: deviceId,
+    client_tx_id: String(tx.clientTxId || ''),
+    kind: 'payout',
+    original_client_tx: '',
+    counterparty: String(tx.counterparty || ''),
+    grand_total: amount,
+    status: 'COMPLETED',
+    tenders_json: JSON.stringify(Array.isArray(tx.tenders) && tx.tenders.length ? tx.tenders : [{ type: 'cash', amount: amount }]),
+    items_json: '[]',
+    note: String(tx.note || ''),
+    created_at: String(tx.createdAt || new Date().toISOString()),
+  });
+  return { transactionId: txId, errors: [] };
+}
+
+/* Refund: reverses part or all of a completed sale. Serialized units return
+   to IN_STOCK; non-serialized products regain stock. Guards: the original
+   sale must exist, refund amount can't exceed the outstanding balance, and
+   returned quantities/serials must still be outstanding. Idempotent via the
+   normal device+clientTxId duplicate check. */
+function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConflictRows,
+                        serialPatches, productPatches, session, deviceId, tx, userRows) {
+  var errors = [];
+  var originalClientTx = String(tx.originalClientTx || '');
+  var original = null;
+  for (var i = 0; i < txRows.length; i++) {
+    var r = txRows[i];
+    if (String(r.client_tx_id) === originalClientTx
+        && String(r.status) === 'COMPLETED'
+        && (String(r.kind || '') === '' || String(r.kind) === 'sale')) {
+      original = r;
+      break;
+    }
+  }
+  if (!original) return { errors: [{ reason: 'original_not_found' }] };
+
+  var refundAmount = num_(tx.grandTotal);
+  if (refundAmount <= 0) return { errors: [{ reason: 'invalid_amount' }], original: original };
+
+  var priorTotal = 0;
+  for (var p = 0; p < txRows.length; p++) {
+    var pr = txRows[p];
+    if (String(pr.kind) === 'refund'
+        && String(pr.original_client_tx) === originalClientTx
+        && String(pr.status) === 'COMPLETED') {
+      priorTotal += num_(pr.grand_total);
+    }
+  }
+  var remaining = Math.max(0, num_(original.grand_total) - priorTotal);
+  if (refundAmount > remaining + 0.005) {
+    return { errors: [{ reason: 'refund_exceeds_sale', refundedTotal: priorTotal }], original: original };
+  }
+
+  /* outstanding quantity + serials still returnable per product */
+  var byProduct = {};
+  var origItems = itobjs_(original.items_json);
+  for (var oi = 0; oi < origItems.length; oi++) {
+    var o = origItems[oi];
+    var opk = String(o.productId || '');
+    if (!byProduct[opk]) byProduct[opk] = { qty: 0, serials: [] };
+    byProduct[opk].qty += o.quantity || 1;
+    if (o.serialNumber) byProduct[opk].serials.push(String(o.serialNumber));
+  }
+  for (var pr2 = 0; pr2 < txRows.length; pr2++) {
+    var pr2r = txRows[pr2];
+    if (String(pr2r.kind) === 'refund'
+        && String(pr2r.original_client_tx) === originalClientTx
+        && String(pr2r.status) === 'COMPLETED') {
+      var priorItems = itobjs_(pr2r.items_json);
+      for (var qi = 0; qi < priorItems.length; qi++) {
+        var pq = priorItems[qi];
+        var ppk = String(pq.productId || '');
+        if (!byProduct[ppk]) byProduct[ppk] = { qty: 0, serials: [] };
+        byProduct[ppk].qty -= pq.quantity || 1;
+        if (pq.serialNumber) {
+          var idx = byProduct[ppk].serials.indexOf(String(pq.serialNumber));
+          if (idx >= 0) byProduct[ppk].serials.splice(idx, 1);
+        }
+      }
+    }
+  }
+
+  var serialBySn = {};
+  for (var s2 = 0; s2 < serialRows.length; s2++) serialBySn[String(serialRows[s2].serial_number)] = serialRows[s2];
+  var prodById = {};
+  for (var p2 = 0; p2 < prodRows.length; p2++) prodById[String(prodRows[p2].id)] = prodRows[p2];
+
+  var items = Array.isArray(tx.items) ? tx.items : [];
+  var resolved = [];
+  for (var k = 0; k < items.length; k++) {
+    var item = items[k];
+    var product = prodById[String(item.productId || '')];
+    if (!product || String(product.active) !== '1') {
+      errors.push({ productId: item.productId, reason: 'unknown_product' });
+      continue;
+    }
+    var unitPrice = typeof item.unitPrice === 'number' ? item.unitPrice : num_(product.retail_price);
+    if (String(product.is_serialized) === '1') {
+      var sn = item.serialNumber != null ? String(item.serialNumber).trim() : '';
+      var serial = serialBySn[sn] || null;
+      if (!sn || !serial || String(serial.product_id) !== String(product.id)) {
+        errors.push({ productId: String(product.id), serialNumber: sn, reason: 'serial_not_found' });
+        continue;
+      }
+      if (String(serial.status) !== 'SOLD') {
+        errors.push({ productId: String(product.id), serialNumber: sn, reason: 'serial_not_sold' });
+        continue;
+      }
+      var line = byProduct[String(product.id)];
+      if (!line || line.serials.indexOf(sn) < 0) {
+        errors.push({ productId: String(product.id), serialNumber: sn, reason: 'serial_not_in_original' });
+        continue;
+      }
+      line.serials.splice(line.serials.indexOf(sn), 1);
+      resolved.push({ product: product, serial: serial, quantity: 1, unitPrice: unitPrice });
+    } else {
+      var qty = Math.max(1, item.quantity || 1);
+      var line2 = byProduct[String(product.id)];
+      var availQty = line2 ? Math.max(0, line2.qty) : 0;
+      if (qty > availQty) {
+        errors.push({ productId: String(product.id), quantity: qty, reason: 'refund_exceeds_sale_lines' });
+        continue;
+      }
+      line2.qty -= qty;
+      var restoreStock = String(product.item_type) !== 'service';
+      resolved.push({ product: product, serial: null, quantity: qty, unitPrice: unitPrice, restoreStock: restoreStock });
+    }
+  }
+  if (errors.length) return { errors: errors, original: original };
+
+  var stamp = new Date().toISOString();
+  for (var m = 0; m < resolved.length; m++) {
+    var re = resolved[m];
+    if (re.serial) {
+      serialPatches[String(re.serial.id)] = { status: 'IN_STOCK', tx_id: '', updated_at: stamp };
+      re.serial.status = 'IN_STOCK';
+    } else if (re.restoreStock) {
+      var next = num_(re.product.on_hand) + re.quantity;
+      productPatches[String(re.product.id)] = Object.assign({}, productPatches[String(re.product.id)], { on_hand: next, updated_at: stamp });
+      re.product.on_hand = next;
+    }
+  }
+
+  var userIds = {};
+  for (var u2 = 0; u2 < userRows.length; u2++) userIds[String(userRows[u2].id)] = true;
+  var txId = Utilities.getUuid();
+  newTxRows.push({
+    id: txId,
+    store_id: store.id,
+    user_id: userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows),
+    device_id: deviceId,
+    client_tx_id: String(tx.clientTxId || ''),
+    kind: 'refund',
+    original_client_tx: originalClientTx,
+    counterparty: String(tx.counterparty || ''),
+    grand_total: refundAmount,
+    status: 'COMPLETED',
+    tenders_json: JSON.stringify(Array.isArray(tx.tenders) ? tx.tenders : []),
+    items_json: JSON.stringify(resolvedItems_(resolved)),
+    note: String(tx.note || ''),
+    created_at: String(tx.createdAt || new Date().toISOString()),
+  });
+  return { transactionId: txId, errors: [], original: original };
+}
+
 function conflictRow_(openSet, newRows, store, type, serialNumber, deviceId, loserClient, winnerTx, summary, uid) {
   var key = type + '::' + deviceId + '::' + String(loserClient || '');
   if (openSet[key]) return '';
@@ -852,6 +1073,9 @@ function transactions_(params) {
       user_id: String(t.user_id),
       deviceId: String(t.device_id),
       clientTxId: String(t.client_tx_id || ''),
+      kind: String(t.kind || 'sale'),
+      originalClientTx: String(t.original_client_tx || ''),
+      counterparty: String(t.counterparty || ''),
       cashier: nameById[String(t.user_id)] || '',
       grandTotal: num_(t.grand_total),
       tenders: tenders,
@@ -1120,9 +1344,16 @@ function driveExport_(session, payload, params) {
     nameById[String(userRows[i].id)] = (String(userRows[i].first_name || '') + ' ' + String(userRows[i].last_name || '')).trim();
   }
 
-  var csv = 'created_at,id,cashier,grand_total,items,tenders,note\n';
+  var csv = 'created_at,id,kind,counterparty,cashier,grand_total,items,tenders,note\n';
+  var sales = 0, refunds = 0, payouts = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
+    var k = String(t.kind || 'sale');
+    var v = num_(t.grand_total);
+    if (k === 'refund') refunds += v;
+    else if (k === 'payout') payouts += v;
+    else sales += v;
+
     var items = [];
     try { items = JSON.parse(t.items_json || '[]'); } catch (_) {}
     var itemSummary = items
@@ -1131,13 +1362,26 @@ function driveExport_(session, payload, params) {
     csv += [
       csvCell_(t.created_at),
       csvCell_(t.client_tx_id),
+      csvCell_(k),
+      csvCell_(t.counterparty),
       csvCell_(nameById[String(t.user_id)] || ''),
-      String(num_(t.grand_total)),
+      String(v),
       csvCell_(itemSummary),
       csvCell_(t.tenders_json),
       csvCell_(t.note),
     ].join(',') + '\n';
   }
+
+  /* Cash summary block appended after the detail rows so managers/admins
+     can reconcile drawer cash in one glance. */
+  var net = sales - refunds - payouts;
+  csv += '\n';
+  csv += ',,SUMMARY,,,,\n';
+  csv += ',,SALES,,' + String(sales) + ',\n';
+  csv += ',,REFUNDS,,' + String(refunds) + ',\n';
+  csv += ',,PAID OUT,,' + String(payouts) + ',\n';
+  csv += ',,NET CASH,,' + String(net) + ',\n';
+  csv += ',,TRANSACTIONS,,' + String(dayRows.length) + ',\n';
 
   var folder = getDriveFolder_();
   var suffix = isStore ? '' : '-' + ownerId.slice(0, 8);
