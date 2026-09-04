@@ -21,26 +21,38 @@ shared `APP_TOKEN` (never exposed to end users beyond the one terminal setup).
 
 ## Recommended: Cloudflare (Pages + Access) — $0, Google SSO at the edge
 
-1. **Push the static app** to Cloudflare Pages connected to your repo
-   (`public/` is the build output, no build step). Custom domain
-   `pos.orisonigt.com` → create a `CNAME` in your DNS (or use Cloudflare as
-   your nameserver; TLS is automatic — orange cloud on means Workers/Access
-   protect it).
+### A. Stand up the static site — Git-connected auto-deploy
 
-2. **Enable Cloudflare Access** for that hostname:
+1. **Connect the repo**:
+   - Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git**.
+   - Authorize GitHub, pick **orison-pos**, branch **main**.
+   - **Production branch:** `main` · **Framework preset:** None · **Build command:**
+     *(leave empty)* · **Build output directory:** `public`.
+   - Project name suggestion: `orison-pos`.
+   - First deploy finishes in ~1 minute. Your site is instantly live at
+     `<project-name>.pages.dev` with free TLS, no DNS work — hardware staff
+     terminals can start using that URL today.
+
+2. **Wiring the custom domain** (do this when you're ready — not required to start):
+   - Pages → project → **Custom domains → Set up a custom domain** →
+     `pos.orisonigt.com` → create the `CNAME` Cloudflare shows you (or point
+     the whole zone at Cloudflare so TLS is automatic).
+   - **Desired:** enable **Always Use HTTPS**; Universal SSL covers the zone.
+
+3. **Optional: Cloudflare Access** (free ≤50 users) — gate `pos.orisonigt.com`
+   behind **Google sign-in** so no uninvited device ever gets the PWA shell:
    - Zero Trust dashboard → **Access → Applications** → add application:
      domain `pos.orisonigt.com`, path **`/*`**, session duration (e.g. 24 h).
    - **Add a policy** → Include → **Select Google** as the identity provider
      (or "Emails containing `@orisonigt.com`", stricter).
-   - Access is **free for up to 50 users** — plenty for the whole staff.
    - Result: visiting `pos.orisonigt.com` forces a Google sign-in before any
      byte of the app or its cached shell is delivered.
 
-3. **Optional deep control**: protect only the owner path with a stricter
+4. **Optional deep control**: protect only the owner path with a stricter
    policy (e.g. `/` open to staff, `/dashboard` admin-only), or split paths:
    `Access → Policies` — each path can have its own rule.
 
-4. **Lock down the backend on top**: the Apps Script stays a Web App with
+5. **Lock down the backend on top**: the Apps Script stays a Web App with
    *Execute as Me / Anyone* access but the `APP_TOKEN` is set as a Script
    Property. Anyone with the URL but no token gets `401`, even logged-in
    Google users. Keep the token per terminal install.

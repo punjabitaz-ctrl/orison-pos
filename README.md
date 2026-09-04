@@ -34,7 +34,13 @@ See [`backend/README.md`](backend/README.md) for the full Apps Script deploy gui
 
 ### 2. Point the app at it
 
-Serve `public/` statically anywhere (GitHub Pages, a local web server, or an intranet box). On first launch, tap **Backend** on the login screen and paste the `/exec` URL + `APP_TOKEN`. Each app install remembers it.
+Serve `public/` statically anywhere (GitHub Pages, Cloudflare Pages — see
+[`DEPLOY.md`](DEPLOY.md) — a local web server, or an intranet box). Cloudflare
+Pages is one click: **Connect to Git** → repo → branch `main` → Framework
+preset **None**, build command *empty*, output directory **`public`** → you're
+live on `*.pages.dev` with free TLS in a minute. On first launch of the PWA,
+tap **Backend** on the login screen and paste the `/exec` URL + `APP_TOKEN`.
+Each app install remembers it.
 
 > After a fresh start, the old service worker may serve a cached page. Hard reload (Ctrl+Shift+R) once after updating `public/`.
 
