@@ -1,0 +1,15 @@
+{
+  "name": "Orison POS",
+  "short_name": "Orison POS",
+  "description": "Offline-first, mobile point of sale for Orison Electronics.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape-primary",
+  "background_color": "#0f2a42",
+  "theme_color": "#0f2a42",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
