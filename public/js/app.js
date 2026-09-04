@@ -5,7 +5,8 @@
 
 import { idb } from './db.js';
 import { api } from './api.js';
-import { syncNow } from './sync.js';
+import { syncNow, SYNC_EVENT } from './sync.js';
+import { inventoryAlerts } from './alerts.js';
 import { screen as login } from './screens/login.js';
 import { screen as register } from './screens/register.js';
 import { screen as checkout } from './screens/checkout.js';
@@ -13,8 +14,9 @@ import { screen as history } from './screens/history.js';
 import { screen as inventory } from './screens/inventory.js';
 import { screen as settings } from './screens/settings.js';
 import { screen as dashboard } from './screens/dashboard.js';
+import { screen as alerts } from './screens/alerts.js';
 
-const SCREENS = { dashboard, login, register, checkout, history, inventory, settings };
+const SCREENS = { dashboard, login, register, checkout, history, inventory, settings, alerts };
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -76,10 +78,21 @@ function applyRoleTabs() {
   const role = (state.user || {}).role || 'cashier';
   const canManage = role === 'admin' || role === 'manager';
   document.querySelectorAll('[data-tab]').forEach((t) => {
-    const restricted = t.dataset.tab === 'inventory' && !canManage;
+    const restricted = (t.dataset.tab === 'inventory' || t.dataset.tab === 'alerts') && !canManage;
     t.classList.toggle('hidden', restricted);
   });
 }
+
+function refreshAlertBadge() {
+  idb.getAll('products')
+    .then((prods) => {
+      const n = inventoryAlerts(prods).length;
+      const el = document.getElementById('alertsBadge');
+      if (el) { el.textContent = n > 99 ? '99+' : String(n); el.classList.toggle('show', n > 0); }
+    })
+    .catch(() => {});
+}
+window.addEventListener(SYNC_EVENT, refreshAlertBadge);
 
 const ctx = { idb, api, state, router };
 

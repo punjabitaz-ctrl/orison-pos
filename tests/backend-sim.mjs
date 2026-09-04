@@ -252,8 +252,10 @@ const adminToken = seeded.data.token;
 
 const ss = store.ss;
 check('workbook created with all tabs', ['Meta', 'Users', 'Products', 'Serials', 'Transactions', 'Conflicts'].every((t) => ss._sheets.has(t)));
+check('products sheet carries new columns', ((hdr) => ['item_type', 'locked', 'reorder_point', 'last_sold_at'].every((c) => hdr.includes(c)))(ss._sheets.get('Products')._grid[0]));
 const products = req('/api/products', {}, { session: adminToken });
-check('catalog has 42 products', products.ok && products.data.length === 42, JSON.stringify({ n: products.ok ? products.data.length : 0 }));
+check('catalog has 44 products (incl. 2 services)', products.ok && products.data.length === 44, JSON.stringify({ n: products.ok ? products.data.length : 0 }));
+check('service item has no stock & is not serialized', (() => { const s = products.data.find((p) => p.sku === 'SRV-REPAIR'); return s && s.itemType === 'service' && s.isSerialized === false && s.onHand === 0; })());
 check('serialized phone exposes serials + onHand count', (() => {
   const s24 = products.data.find((p) => p.sku === 'PH-S24U-256');
   return s24 && s24.isSerialized === true && s24.onHand === 4 && s24.serials.length === 4;
@@ -439,6 +441,46 @@ check('cashier can pull a daily report', cashierExport.ok && cashierExport.data.
 const cashierFile = driveFiles.find((f) => f.id === cashierExport.data.fileId);
 check('cashier report is scoped to her own sales', !!cashierFile && cashierFile.content.includes('Amara Njoku') && !cashierFile.content.includes('Tariq'));
 check('cashier report filename is unique per cashier', !!cashierFile && cashierFile.name !== 'orison-pos-sales-' + new Date().toISOString().slice(0, 10) + '.csv' && cashierFile.name.includes('.csv'));
+
+section('services, locked items & last_sold_at');
+const svc = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'SRV-REPAIR');
+const usb2 = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'CB-USBC-1M');
+const svcPush = req('/api/sync/push', {
+  deviceId: 'dev-D',
+  batch: [{
+    clientTxId: 'tx-svc-1',
+    userId: pin.data.user.id,
+    grandTotal: 49,
+    tenders: [],
+    note: '',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: svc.id, quantity: 1, unitPrice: 49 }],
+  }],
+}, { session: cashierToken });
+check('service sale accepted without stock', svcPush.ok && svcPush.data.results[0].accepted === true && svcPush.data.results[0].status === 'COMPLETED', JSON.stringify(svcPush));
+const svcProd = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'SRV-REPAIR');
+check('service still has zero stock after sale', svcProd.onHand === 0);
+
+const patch = req('/api/admin/products/patch', { productId: usb2.id, reorderPoint: 12, locked: true }, { session: mgrToken });
+check('manager patches reorder point + lock', patch.ok === true, JSON.stringify(patch));
+const lockSold = req('/api/sync/push', {
+  deviceId: 'dev-E',
+  batch: [{
+    clientTxId: 'tx-lock-1',
+    userId: pin.data.user.id,
+    grandTotal: 12,
+    tenders: [],
+    note: '',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: usb2.id, quantity: 1, unitPrice: 12 }],
+  }],
+}, { session: cashierToken });
+check('locked product sale rejected as VOIDED', lockSold.ok && lockSold.data.results[0].accepted === false && lockSold.data.results[0].status === 'VOIDED', JSON.stringify(lockSold));
+const unpatch = req('/api/admin/products/patch', { productId: usb2.id, reorderPoint: 12, locked: false }, { session: mgrToken });
+check('manager unlocks + keeps reorder point', unpatch.ok === true);
+
+const lastSold = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'CB-USBC-1M');
+check('product lastSoldAt stamped after sale', !!lastSold.lastSoldAt);
 
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);

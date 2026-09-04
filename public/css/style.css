@@ -694,3 +694,38 @@ button:disabled { cursor: default; }
   .screen { max-width: 1060px; margin: 0 auto; }
   .scr-head, .search-row, .chips, .grid, .hx-list, .inv-list { padding-left: 24px; padding-right: 24px; }
 }
+
+/* ---------------- v1.1.0: alerts, badges, product types ---------------- */
+.tab { position: relative; }
+.tab-badge {
+  position: absolute; top: 4px; right: calc(50% - 22px);
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px;
+  background: var(--danger); color: #fff;
+  font-size: 10px; font-weight: 800; line-height: 18px; text-align: center;
+}
+.tab-badge.hidden { display: none; }
+
+.al-row {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--card); border: 1px solid var(--line);
+  border-left: 4px solid var(--line); border-radius: 12px;
+  padding: 10px 12px;
+}
+.al-row.sev-out   { border-left-color: var(--danger); }
+.al-row.sev-low   { border-left-color: var(--warn); }
+.al-row.sev-locked{ border-left-color: var(--navy-3); }
+.al-main { flex: 1; min-width: 0; }
+.al-name { font-size: 14px; font-weight: 650; }
+.al-meta { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.al-right { display: flex; align-items: center; gap: 8px; flex: none; }
+.al-tag { font-size: 10px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; padding: 3px 7px; border-radius: 6px; background: var(--bg); color: var(--muted); }
+.sev-out .al-tag   { background: #fee2e2; color: var(--danger); }
+.sev-low .al-tag   { background: #fef3c7; color: var(--warn); }
+.sev-locked .al-tag{ background: #e0ecf7; color: var(--navy-3); }
+
+.prod-ser-badge.lock-badge { background: var(--danger); color: #fff; }
+.prod-stock.service-tag { color: var(--navy-3); font-weight: 700; }
+.lock-dot { font-size: 12px; vertical-align: middle; }
+
+.dash-alert-chips { display: flex; flex-wrap: wrap; gap: 8px; }

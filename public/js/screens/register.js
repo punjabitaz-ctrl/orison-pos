@@ -17,18 +17,26 @@ function catColor(c) {
   return colors[n % colors.length];
 }
 
+function isLocked(p) {
+  return p && (p.locked === true || p.locked === 1 || String(p.locked) === '1');
+}
+
 function card(product) {
+  const isService = product.itemType === 'service';
   const avail = product.isSerialized ? (product.serials || []).length : (product.onHand || 0);
-  const out = avail <= 0;
+  const out = !isService && avail <= 0;
   return `
     <button class="prod-card ${out ? 'out' : ''}" data-add="${esc(product.id)}" type="button">
       <div class="prod-cat" style="background:${catColor(product.category)}">${esc(product.category)}</div>
       <h3 class="prod-name">${esc(product.name)}</h3>
       <div class="prod-meta">
         <span class="prod-price">${fmt(product.retailPrice)}</span>
-        <span class="prod-stock ${out ? 'stock-out' : ''}">${out ? 'Out' : (product.isSerialized ? avail + ' units' : avail + ' in stock')}</span>
+        ${isService
+          ? '<span class="prod-stock service-tag">Service</span>'
+          : `<span class="prod-stock ${out ? 'stock-out' : ''}">${out ? 'Out' : (product.isSerialized ? avail + ' units' : avail + ' in stock')}</span>`}
       </div>
       ${product.isSerialized ? '<span class="prod-ser-badge">IMEI</span>' : ''}
+      ${isLocked(product) ? '<span class="prod-ser-badge lock-badge">Locked</span>' : ''}
     </button>`;
 }
 
@@ -185,6 +193,8 @@ export const screen = {
     // ---- Cart ----
     function addToCart(product) {
       if (!product) { toast('Product not found', 'warn'); beep('err'); return; }
+      if (isLocked(product)) { toast(`${product.name} is locked — release it in Inventory`, 'warn'); beep('err'); return; }
+      if (product.itemType === 'service') { addCartLine(product, null); renderCart(); return; }
       if (product.isSerialized) { openSerialDialog(product, ''); return; }
       if ((product.onHand || 0) <= 0) { toast(`${product.name} is out of stock`, 'warn'); beep('err'); return; }
       addCartLine(product, null);
@@ -200,7 +210,7 @@ export const screen = {
         const existing = state.cart.get(product.id);
         if (existing) { existing.qty++; existing.price = product.retailPrice; }
         else state.cart.set(product.id, { product, qty: 1, serials: [], price: product.retailPrice });
-        product.onHand = Math.max(0, (product.onHand || 0) - 1);
+        if (product.itemType !== 'service') product.onHand = Math.max(0, (product.onHand || 0) - 1);
       }
       state.cartVersion++;
     }
@@ -218,7 +228,7 @@ export const screen = {
       if (line.product.isSerialized) {
         for (const s of line.serials) if (!line.product.serials.includes(s)) line.product.serials.push(s);
       } else {
-        line.product.onHand = (line.product.onHand || 0) + (line.qty || 1);
+        if (line.product.itemType !== 'service') line.product.onHand = (line.product.onHand || 0) + (line.qty || 1);
       }
     }
 
@@ -266,8 +276,9 @@ export const screen = {
         b.addEventListener('click', () => {
           const line = [...state.cart.values()].find((l) => lineKeyOf(l) === b.dataset.key);
           if (!line) return;
-          if (b.hasAttribute('data-min') && line.qty > 1) { line.qty--; line.product.onHand++; }
-          if (b.hasAttribute('data-plus') && (line.product.onHand || 0) > 0) { line.qty++; line.product.onHand--; }
+          const isService = line.product.itemType === 'service';
+          if (b.hasAttribute('data-min') && line.qty > 1) { line.qty--; if (!isService) line.product.onHand++; }
+          if (b.hasAttribute('data-plus') && (isService || (line.product.onHand || 0) > 0)) { line.qty++; if (!isService) line.product.onHand--; }
           if (b.hasAttribute('data-remove')) lineRemove(line);
           state.cartVersion++;
           renderCart();

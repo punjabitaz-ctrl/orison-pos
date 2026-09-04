@@ -62,7 +62,7 @@ export async function pull() {
   const data = await api.get('/api/sync/pull');
   if (!data || !data.products) throw new Error('Empty sync response');
 
-  await idb.bulkPut('products', data.products, (p) => p.id);
+  await idb.bulkPut('products', mergeProducts(data.products), (p) => p.id);
   await idb.bulkPut('users', data.users, (u) => u.id);
   await idb.put('meta', {
     ...(await meta()),
@@ -73,6 +73,19 @@ export async function pull() {
 
   emit({ kind: 'pull', products: data.products.length });
   return data;
+}
+
+/* Server is stock-truth; but keep the local lastSoldAt if it's newer than the
+   server's (a sale just completed locally before its push round-tripped). */
+async function mergeProducts(serverProducts) {
+  const local = await idb.getAll('products').catch(() => []);
+  const byId = new Map(local.map((p) => [String(p.id), p]));
+  return (serverProducts || []).map((sp) => {
+    const lo = byId.get(String(sp.id));
+    if (!lo || !lo.lastSoldAt) return sp;
+    if (!sp.lastSoldAt) return { ...sp, lastSoldAt: lo.lastSoldAt };
+    return new Date(lo.lastSoldAt) > new Date(sp.lastSoldAt) ? { ...sp, lastSoldAt: lo.lastSoldAt } : sp;
+  });
 }
 
 export async function mergeProductLocal(product) {

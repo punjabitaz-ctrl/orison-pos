@@ -70,6 +70,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/admin/products':  return adminProducts_(session, payload);
     case '/api/admin/serials':   return adminSerials_(session, payload);
     case '/api/admin/inventory': return adminInventory_(session, payload);
+    case '/api/admin/products/patch': return adminProductsPatch_(session, payload);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     default:
       throw statusError_(404, 'Unknown action: ' + action);
@@ -160,7 +161,7 @@ function sha256Hex_(str) {
 
 var META_HEADERS    = ['key', 'value'];
 var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at'];
-var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'active', 'updated_at'];
+var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
 var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
@@ -325,6 +326,8 @@ var SEED_PRODUCTS = [
   { sku: 'AC-HDMI-2M', upc: '0012345620400', name: 'HDMI 2.1 Cable 2m', category: 'Cables', cost: 10, retail: 24, qty: 20 },
   { sku: 'AC-ADAPTER-LT', upc: '0012345620417', name: 'USB-C Laptop Adapter 100W', category: 'Cables', cost: 28, retail: 49, qty: 15 },
   { sku: 'AC-STAND-LAPTOP', upc: '0012345620424', name: 'Laptop Stand - Aluminum', category: 'Accessories', cost: 15, retail: 29, qty: 12 },
+  { sku: 'SRV-REPAIR', upc: '', name: 'Phone Repair - Labor', category: 'Services', retail: 49, qty: 0, service: 1 },
+  { sku: 'SRV-SCREEN', upc: '', name: 'Screen Replacement - Labor', category: 'Services', retail: 89, qty: 0, service: 1 },
 ];
 
 function ensureSeed_() {
@@ -375,16 +378,21 @@ function seed_() {
     var serials = pr.serials || [];
     var isSerialized = serials.length > 0 ? 1 : 0;
     var onHand = isSerialized ? serials.length : (pr.qty || 0);
+    var isService = pr.service ? 1 : 0;
     prodRows.push({
       id: pid,
       sku: pr.sku,
       upc: pr.upc,
       name: pr.name,
       category: pr.category,
-      cost_price: pr.cost,
+      cost_price: pr.cost || 0,
       retail_price: pr.retail,
       is_serialized: isSerialized,
-      on_hand: onHand,
+      on_hand: isService ? 0 : onHand,
+      item_type: isService ? 'service' : 'product',
+      locked: 0,
+      reorder_point: '',
+      last_sold_at: '',
       active: 1,
       updated_at: now,
     });
@@ -504,6 +512,10 @@ function productsSnapshot_() {
       isSerialized: isSerialized,
       onHand: isSerialized ? serials.length : num_(p.on_hand),
       serials: serials,
+      itemType: String(p.item_type) === 'product' ? 'product' : (String(p.item_type || 'product')),
+      locked: String(p.locked) === '1' || Boolean(p.locked),
+      reorderPoint: p.reorder_point != null ? num_(p.reorder_point) : '',
+      lastSoldAt: String(p.last_sold_at || ''),
     });
   }
   return out;
@@ -616,6 +628,7 @@ function syncPush_(session, payload) {
           continue;
         }
         var isSerialized = String(product.is_serialized) === '1';
+        var itemType = String(product.item_type || 'product');
         var unitPrice = typeof item.unitPrice === 'number' ? item.unitPrice : num_(product.retail_price);
         if (isSerialized) {
           var sn = item.serialNumber != null ? String(item.serialNumber).trim() : '';
@@ -635,7 +648,19 @@ function syncPush_(session, payload) {
             continue;
           }
           resolved.push({ product: product, serial: serial, quantity: 1, unitPrice: unitPrice });
+        } else if (itemType === 'service') {
+          // No stock tracked for a service / offering.
+          resolved.push({ product: product, serial: null, quantity: 1, unitPrice: unitPrice, onHand: null });
         } else {
+          if (product.lockedToggle) {
+            if (product.lockedToggle.flag) {
+              errors.push({ productId: product.id, reason: 'product_locked' });
+              continue;
+            }
+          } else if (String(product.locked) === '1') {
+            errors.push({ productId: product.id, reason: 'product_locked' });
+            continue;
+          }
           resolved.push({
             product: product,
             serial: null,
@@ -689,12 +714,15 @@ function syncPush_(session, payload) {
         var stamp = new Date().toISOString();
         for (var m = 0; m < resolved.length; m++) {
           var r = resolved[m];
+          /* every sold line stamps last_sold_at so slow-mover / aging rules work */
+          productPatches[String(r.product.id)] = Object.assign({}, productPatches[String(r.product.id)], { last_sold_at: stamp, updated_at: stamp });
           if (r.serial) {
             serialPatches[String(r.serial.id)] = { status: 'SOLD', tx_id: txId, updated_at: stamp };
             r.serial.status = 'SOLD';
-          } else {
+          } else if (r.onHand !== null) {
+            /* non-service product decrements stock; services consume none */
             var next = Math.max(0, r.onHand - r.quantity);
-            productPatches[String(r.product.id)] = { on_hand: next, updated_at: stamp };
+            productPatches[String(r.product.id)].on_hand = next;
             r.product.on_hand = next;
           }
         }
@@ -898,13 +926,19 @@ function adminProducts_(session, payload) {
   var name = String(payload.name || '').trim();
   var sku = String(payload.sku || '').trim();
   var upc = String(payload.upc || '').trim();
+  var itemType = String(payload.itemType || 'product').trim();
+  if (['product', 'service'].indexOf(itemType) < 0) itemType = 'product';
   if (!name || !sku) {
     throw statusError_(400, 'Name and SKU are required');
   }
-  var isSerialized = payload.isSerialized ? 1 : 0;
-  var onHand = num_(payload.onHand);
+  var isSerialized = itemType !== 'service' && payload.isSerialized ? 1 : 0;
+  var onHand = itemType === 'service' ? 0 : num_(payload.onHand);
   var retail = num_(payload.retailPrice);
   var cost = num_(payload.costPrice);
+  var locked = payload.locked ? 1 : 0;
+  var reorderPoint = itemType === 'product' && !isSerialized && payload.reorderPoint != null
+    ? num_(payload.reorderPoint)
+    : '';
 
   var existing = readRows_('Products', PRODUCT_HEADERS);
   for (var i = 0; i < existing.length; i++) {
@@ -927,7 +961,11 @@ function adminProducts_(session, payload) {
       cost_price: cost,
       retail_price: retail,
       is_serialized: isSerialized,
-      on_hand: isSerialized ? 0 : onHand,
+      on_hand: onHand,
+      item_type: itemType,
+      locked: locked,
+      reorder_point: reorderPoint,
+      last_sold_at: '',
       active: 1,
       updated_at: now,
     }]);
@@ -1008,6 +1046,9 @@ function adminInventory_(session, payload) {
   if (String(product.is_serialized) === '1') {
     throw statusError_(400, 'Use serials to manage stock for serialized products');
   }
+  if (String(product.item_type) === 'service') {
+    throw statusError_(400, 'Services carry no stock to manage');
+  }
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
@@ -1016,6 +1057,44 @@ function adminInventory_(session, payload) {
       [productId]: { on_hand: onHand, updated_at: new Date().toISOString() },
     });
     return { ok: true, onHand: onHand };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* Admin/manager: edit a product or service's core rules (price, lock status,
+   and the reorder point that drives low-stock alerts). */
+function adminProductsPatch_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  var productId = String(payload.productId || '').trim();
+  if (!productId) throw statusError_(400, 'productId is required');
+
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var product = null;
+  for (var i = 0; i < prodRows.length; i++) {
+    if (String(prodRows[i].id) === productId) { product = prodRows[i]; break; }
+  }
+  if (!product) throw statusError_(404, 'Product/service not found');
+
+  var patch = {};
+  if (payload.retailPrice != null) patch.retail_price = num_(payload.retailPrice);
+  if (payload.costPrice != null) patch.cost_price = num_(payload.costPrice);
+  if (payload.locked != null) patch.locked = payload.locked ? 1 : 0;
+  var itemType = String(product.item_type || 'product');
+  if (payload.reorderPoint !== undefined && payload.reorderPoint !== null) {
+    if (itemType === 'service' || String(product.is_serialized) === '1') {
+      throw statusError_(400, 'Reorder point only applies to non-serialized products');
+    }
+    patch.reorder_point = num_(payload.reorderPoint);
+  }
+  if (!Object.keys(patch).length) throw statusError_(400, 'Nothing to update');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    patch.updated_at = new Date().toISOString();
+    applyPatches_('Products', PRODUCT_HEADERS, 'id', { [productId]: patch });
+    return { ok: true, id: productId };
   } finally {
     lock.releaseLock();
   }

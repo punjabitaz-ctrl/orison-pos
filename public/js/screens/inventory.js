@@ -7,12 +7,17 @@ import { idb } from '../db.js';
 import { api } from '../api.js';
 import { fmt, esc, toast, beep, debounce, openModal, closeModal } from '../ui.js';
 import { pull, mergeProductLocal, SYNC_EVENT, getSyncState } from '../sync.js';
+import { reorderThreshold } from '../alerts.js';
 
 function catColor(c) {
   const colors = ['#d97706', '#0ea5e9', '#059669', '#7c3aed', '#e11d48', '#0891b2', '#65a30d', '#c2410c', '#4f46e5', '#0d9488'];
   let n = 0;
   for (let i = 0; i < c.length; i++) n = (n * 31 + c.charCodeAt(i)) >>> 0;
   return colors[n % colors.length];
+}
+
+function isLocked(p) {
+  return p && (p.locked === true || p.locked === 1 || String(p.locked) === '1');
 }
 
 export const screen = {
@@ -61,23 +66,29 @@ export const screen = {
         || (p.sku || '').toLowerCase().includes(q)
         || (p.upc || '').toLowerCase().includes(q));
       listEl.innerHTML = list.map((p) => {
-        const avail = p.isSerialized ? (p.serials || []).length : (p.onHand || 0);
+        const isService = p.itemType === 'service';
+        const locked = isLocked(p);
+        const avail = isService ? 0 : (p.isSerialized ? (p.serials || []).length : (p.onHand || 0));
+        const belowReorder = !isService && !p.isSerialized && avail <= reorderThreshold(p);
+        const stockCls = isService ? '' : (avail <= 0 ? 'zero' : (belowReorder ? 'low' : ''));
         return `
         <div class="inv-row">
           <div class="inv-idx" style="background:${catColor(p.category)}">${esc(p.category[0] || '?')}</div>
           <div class="inv-main">
-            <div class="inv-name">${esc(p.name)}</div>
-            <div class="inv-sku">${esc(p.sku || '')}${p.isSerialized ? ' · IMEI-managed' : ''}</div>
+            <div class="inv-name">${esc(p.name)}${locked ? ' <span class="lock-dot" title="Locked">🔒</span>' : ''}</div>
+            <div class="inv-sku">${esc(p.sku || '')}${isService ? ' · service' : (p.isSerialized ? ' · IMEI-managed' : '')}</div>
           </div>
-          <div class="inv-qty ${avail <= 3 ? 'low' : ''} ${avail <= 0 ? 'zero' : ''}">
-            ${avail} ${p.isSerialized ? 'units' : 'left'}
-          </div>
+          <div class="inv-qty ${stockCls}">${isService ? 'Service' : `${avail} ${p.isSerialized ? 'units' : 'left'}`}</div>
           <div class="inv-price">${fmt(p.retailPrice)}</div>
           ${isAdmin ? `
           <div class="inv-actions">
-            ${p.isSerialized
-              ? `<button class="icon-btn" data-serials="${esc(p.id)}" title="Add serials">＋</button>`
-              : `<button class="icon-btn" data-stock="${esc(p.id)}" title="Adjust stock">✎</button>`}
+            ${isService
+              ? `<button class="icon-btn" data-settings="${esc(p.id)}" title="Settings">⚙</button>`
+              : p.isSerialized
+                ? `<button class="icon-btn" data-serials="${esc(p.id)}" title="Add serials">＋</button>
+                   <button class="icon-btn" data-settings="${esc(p.id)}" title="Settings">⚙</button>`
+                : `<button class="icon-btn" data-stock="${esc(p.id)}" title="Adjust stock">✎</button>
+                   <button class="icon-btn" data-settings="${esc(p.id)}" title="Settings">⚙</button>`}
           </div>` : ''}
         </div>`;
       }).join('') || '<div class="empty"><p>No products.</p></div>';
@@ -85,6 +96,7 @@ export const screen = {
       if (isAdmin) {
         listEl.querySelectorAll('[data-stock]').forEach((b) => b.addEventListener('click', () => stockModal(listEl, b.dataset.stock)));
         listEl.querySelectorAll('[data-serials]').forEach((b) => b.addEventListener('click', () => serialsModal(b.dataset.serials)));
+        listEl.querySelectorAll('[data-settings]').forEach((b) => b.addEventListener('click', () => settingsModal(b.dataset.settings)));
       }
     }
 
@@ -95,7 +107,7 @@ export const screen = {
     function newProductModal() {
       const modal = openModal(`
         <div class="form-modal">
-          <h3>New product</h3>
+          <h3>New item</h3>
           <div class="field"><span>Name *</span><input id="fName" placeholder="e.g. USB-C Cable 1m"></div>
           <div class="two fields-row">
             <div class="field"><span>SKU</span><input id="fSku" placeholder="CB-USBC-1M"></div>
@@ -107,14 +119,29 @@ export const screen = {
           </div>
           <div class="two fields-row">
             <div class="field"><span>Cost $</span><input id="fCost" type="number" inputmode="decimal" min="0" step="0.01" value="0"></div>
+            <div class="field"><span>Type</span>
+              <select id="fType">
+                <option value="product">Product</option>
+                <option value="service">Service / labor</option>
+              </select>
+            </div>
           </div>
-          <label class="check"><input id="fSerial" type="checkbox"> Serialized (IMEI-tracked)</label>
-          <div class="field"><span>Starting qty (if not serialized)</span><input id="fQty" type="number" inputmode="numeric" min="0" step="1" value="0"></div>
+          <div id="stockFields">
+            <label class="check"><input id="fSerial" type="checkbox"> Serialized (IMEI-tracked)</label>
+            <div class="field"><span>Starting qty</span><input id="fQty" type="number" inputmode="numeric" min="0" step="1" value="0"></div>
+            <div class="field"><span>Reorder at (low-stock alert threshold)</span><input id="fReorder" type="number" inputmode="numeric" min="0" step="1" value="5"></div>
+          </div>
+          <label class="check"><input id="fLocked" type="checkbox"> Locked (cannot be sold until unlocked)</label>
           <p id="pErr" class="login-err"></p>
           <div class="row"><button class="btn btn-ghost" data-cancel>Cancel</button><button class="btn" id="pSave">Save</button></div>
         </div>`);
+      const fType = modal.querySelector('#fType');
+      const stockEl = modal.querySelector('#stockFields');
+      const toggleFields = () => { stockEl.style.display = fType.value === 'service' ? 'none' : ''; };
+      fType.addEventListener('change', toggleFields);
       modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
       modal.querySelector('#pSave').addEventListener('click', async () => {
+        const isService = fType.value === 'service';
         const body = {
           name: modal.querySelector('#fName').value.trim(),
           sku: modal.querySelector('#fSku').value.trim(),
@@ -122,8 +149,11 @@ export const screen = {
           category: modal.querySelector('#fCat').value.trim() || 'General',
           retailPrice: parseFloat(modal.querySelector('#fPrice').value) || 0,
           costPrice: parseFloat(modal.querySelector('#fCost').value) || 0,
-          isSerialized: modal.querySelector('#fSerial').checked,
-          onHand: parseInt(modal.querySelector('#fQty').value, 10) || 0,
+          itemType: fType.value,
+          isSerialized: !isService && modal.querySelector('#fSerial').checked,
+          onHand: isService ? 0 : (parseInt(modal.querySelector('#fQty').value, 10) || 0),
+          reorderPoint: isService ? null : (parseInt(modal.querySelector('#fReorder').value, 10) || 5),
+          locked: modal.querySelector('#fLocked').checked,
         };
         if (!body.name) { modal.querySelector('#pErr').textContent = 'Name is required.'; return; }
         try {
@@ -132,7 +162,7 @@ export const screen = {
           await screen.refreshProducts();
           renderList();
           closeModal();
-          toast('Product created', 'ok'); beep('ok');
+          toast('Item created', 'ok'); beep('ok');
         } catch (err) {
           modal.querySelector('#pErr').textContent = (err && err.data && err.data.error) || err.message;
         }
@@ -191,6 +221,46 @@ export const screen = {
           closeModal();
           toast(`Added ${res.added.length} serials${res.duplicates.length ? `, ${res.duplicates.length} duplicates skipped` : ''}`, 'ok');
         } catch (err) { modal.querySelector('#sErr').textContent = (err && err.data && err.data.error) || err.message; }
+      });
+    }
+
+    function settingsModal(productId) {
+      const p = screen._products.find((x) => x.id === productId);
+      if (!p) return;
+      const isService = p.itemType === 'service';
+      const serialized = p.isSerialized;
+      const locked = isLocked(p);
+      const modal = openModal(`
+        <div class="form-modal">
+          <h3>Item settings</h3>
+          <p class="muted">${esc(p.name)}${isService ? ' · service' : ''}</p>
+          <div class="two fields-row">
+            <div class="field"><span>Retail $</span><input id="oPrice" type="number" inputmode="decimal" min="0" step="0.01" value="${p.retailPrice || 0}"></div>
+            <div class="field"><span>Cost $</span><input id="oCost" type="number" inputmode="decimal" min="0" step="0.01" value="${p.costPrice || 0}"></div>
+          </div>
+          ${!isService && !serialized
+            ? `<div class="field"><span>Reorder at (low-stock alert threshold)</span><input id="oReorder" type="number" inputmode="numeric" min="0" step="1" value="${(p.reorderPoint != null && p.reorderPoint !== '') ? p.reorderPoint : 5}"></div>`
+            : ''}
+          ${!isService ? `<label class="check"><input id="oLocked" type="checkbox" ${locked ? 'checked' : ''}> Locked (cannot be sold)</label>` : ''}
+          <p id="oErr" class="login-err"></p>
+          <div class="row"><button class="btn btn-ghost" data-cancel>Cancel</button><button class="btn" id="oSave">Save</button></div>
+        </div>`);
+      modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
+      modal.querySelector('#oSave').addEventListener('click', async () => {
+        const body = { productId };
+        body.retailPrice = parseFloat(modal.querySelector('#oPrice').value) || 0;
+        body.costPrice = parseFloat(modal.querySelector('#oCost').value) || 0;
+        if (!isService) body.locked = modal.querySelector('#oLocked').checked;
+        const reorderEl = modal.querySelector('#oReorder');
+        if (reorderEl) body.reorderPoint = parseInt(reorderEl.value, 10) || 0;
+        try {
+          await api.post('/api/admin/products/patch', body);
+          await pull();
+          await screen.refreshProducts();
+          renderList();
+          closeModal();
+          toast('Settings saved', 'ok'); beep('ok');
+        } catch (err) { modal.querySelector('#oErr').textContent = (err && err.data && err.data.error) || err.message; }
       });
     }
 

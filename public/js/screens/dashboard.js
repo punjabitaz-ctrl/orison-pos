@@ -8,6 +8,7 @@ import { idb } from '../db.js';
 import { api } from '../api.js';
 import { fmt, esc, toast, beep } from '../ui.js';
 import { SYNC_EVENT } from '../sync.js';
+import { inventoryAlerts } from '../alerts.js';
 
 const MANAGER_ROLES = ['admin', 'manager'];
 
@@ -83,6 +84,11 @@ export const screen = {
       const todayUnits = todayTx.reduce((s, t) => s + (t.items || []).reduce((a, i) => a + (i.quantity || 1), 0), 0);
 
       const recent = [...relevant].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 4);
+      const alerts = inventoryAlerts(products);
+      const aOut = alerts.filter((a) => a.severity === 'out').length;
+      const aLow = alerts.filter((a) => a.severity === 'low').length;
+      const aLocked = alerts.filter((a) => a.severity === 'locked').length;
+      const aAging = alerts.filter((a) => a.aging).length;
 
       root.innerHTML = `
         <header class="scr-head">
@@ -140,15 +146,19 @@ export const screen = {
         </section>
 
         <section class="dash-section">
-          <h3>Low stock</h3>
-          ${lowStock(products).length
-            ? `<div class="rank-list">${lowStock(products).slice(0, 6).map((p) => `
-                <div class="rank-row">
-                  <span class="rank-idx warn">${p.onHand}</span>
-                  <div class="rank-main"><div class="rank-name">${esc(p.name)}</div><div class="muted">${esc(p.sku)}</div></div>
-                  <span class="tag-warn">${p.isSerialized ? 'serials' : 'on hand'}</span>
-                </div>`).join('')}</div>`
-            : `<p class="muted">All stocked.</p>`}
+          <h3>Inventory alerts</h3>
+          ${(aOut + aLow + aLocked + aAging)
+            ? `<div class="rank-list">
+                <div class="rank-row"><span class="rank-idx warn">${aOut}</span><div class="rank-main"><div class="rank-name">Out of stock</div><div class="muted">need re-supply</div></div></div>
+                <div class="rank-row"><span class="rank-idx warn">${aLow}</span><div class="rank-main"><div class="rank-name">Low stock</div><div class="muted">at or below reorder point</div></div></div>
+                <div class="rank-row"><span class="rank-idx">${aLocked}</span><div class="rank-main"><div class="rank-name">Locked</div><div class="muted">held from sale by admin</div></div></div>
+                <div class="rank-row"><span class="rank-idx warn">${aAging}</span><div class="rank-main"><div class="rank-name">Paying dust</div><div class="muted">not sold in 30+ days</div></div></div>
+              </div>
+              <div class="row dash-actions">
+                <button class="btn" id="dashAlerts">Open alerts</button>
+              </div>`
+            : `<p class="muted">All stocked & selling.</p>
+               <button class="btn btn-ghost btn-sm" id="dashAlerts">Open alerts</button>`}
         </section>
 
         <div class="row dash-actions">
@@ -191,6 +201,8 @@ export const screen = {
       if (histBtn) histBtn.addEventListener('click', () => router.show('history'));
       const invBtn = root.querySelector('#dashInventory');
       if (invBtn) invBtn.addEventListener('click', () => router.show('inventory'));
+      const alertBtn = root.querySelector('#dashAlerts');
+      if (alertBtn) alertBtn.addEventListener('click', () => router.show('alerts'));
       const expBtn = root.querySelector('#dashExport');
       if (expBtn) expBtn.addEventListener('click', () => exportDay(expBtn));
       root.querySelectorAll('[data-go-history]').forEach((b) => b.addEventListener('click', () => router.show('history')));
