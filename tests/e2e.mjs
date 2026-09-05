@@ -25,8 +25,17 @@ const BASE = process.env.E2E_BASE || 'http://127.0.0.1:8080'
 const GAS_URL = process.env.E2E_GAS_URL || ''
 const APP_TOKEN = process.env.E2E_APP_TOKEN || ''
 const PROFILE = mkdtempSync(join(tmpdir(), 'orison-e2e-'))
-const EMAIL = 'tariq@orisonigt.com'
-const PIN = '1234'
+// Seed PINs are generated per deployment and never committed. Read the admin
+// and cashier PINs from the Apps Script execution log (see README) and pass
+// them in, e.g. E2E_PIN=481902 E2E_CASHIER_PIN=730155 npm run test:e2e
+const EMAIL = process.env.E2E_EMAIL || 'tariq@example.com'
+const PIN = process.env.E2E_PIN || ''
+const CASHIER_EMAIL = process.env.E2E_CASHIER_EMAIL || 'amara@example.com'
+const CASHIER_PIN = process.env.E2E_CASHIER_PIN || ''
+if (!PIN || !CASHIER_PIN) {
+  console.error('E2E_PIN and E2E_CASHIER_PIN must be set — see README > Starter logins.')
+  process.exit(2)
+}
 const SERIAL = '359999001234567'
 const LOG = join(process.cwd(), 'tests', 'e2e-run.log')
 const SHOTDIR = join(process.cwd(), 'tests', 'shots')
@@ -234,8 +243,8 @@ try {
   await page2.setViewport({ width: 412, height: 915, isMobile: true, hasTouch: true })
   await page2.goto(BASE + '/', { waitUntil: 'load', timeout: 30000 })
   await sleep(1200)
-  await page2.type('#loginEmail', 'amara@orisonigt.com')
-  for (const ch of '5678') { await page2.click(`.pp-key[data-k="${ch}"]`); await sleep(40) }
+  await page2.type('#loginEmail', CASHIER_EMAIL)
+  for (const ch of CASHIER_PIN) { await page2.click(`.pp-key[data-k="${ch}"]`); await sleep(40) }
   await page2.click('#loginBtn')
   await page2.waitForFunction(() => document.body.innerText.includes('Dashboard'), { timeout: 15000 })
   await sleep(600)

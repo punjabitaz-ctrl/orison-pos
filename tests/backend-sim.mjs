@@ -118,6 +118,7 @@ const store = makeStore();
 const props = {};
 const driveFiles = [];
 const driveFolders = [{ id: 'folder-1', name: 'Orison POS Export' }];
+const sleeps = [];
 
 const sandbox = {
   console,
@@ -137,9 +138,13 @@ const sandbox = {
     getScriptProperties: () => ({
       getProperty: (k) => (k in props ? props[k] : null),
       setProperty: (k, v) => { props[k] = v; },
+      deleteProperty: (k) => { delete props[k]; },
     }),
   },
   Utilities: {
+    // Record rather than actually sleep: the delay is what we assert on, and
+    // real sleeps would add ~7s to the suite.
+    sleep: (ms) => { sleeps.push(ms); },
     getUuid: () => randomUUID(),
     Charset: { UTF_8: 'utf-8' },
     DigestAlgorithm: { SHA_256: 'SHA-256' },
@@ -245,7 +250,17 @@ function section(name) { console.log('\n== ' + name); }
 props.APP_TOKEN = 'test-app-token-abc';
 
 section('seed / workbook auto-create');
-const seeded = req('/api/login', { email: 'tariq@orisonigt.com', pin: '1234' });
+// Seed PINs are generated randomly and never committed, so the suite reads the
+// credentials the seed reported for this run instead of hardcoding them.
+sandbox.ensureSeed_();
+const CREDS = {};
+for (const c of sandbox.SEED_CREDENTIALS) CREDS[c.email] = c.pin;
+check('seed reported one credential per starter account', sandbox.SEED_CREDENTIALS.length === 4);
+check('seeded PINs are 6 digits and not all identical',
+  sandbox.SEED_CREDENTIALS.every((c) => /^\d{6}$/.test(c.pin)) &&
+  new Set(sandbox.SEED_CREDENTIALS.map((c) => c.pin)).size > 1);
+
+const seeded = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] });
 check('blank workbook had no spreadsheet yet', true, '');
 check('login returns token + user + store', seeded.ok === true && seeded.data.token && seeded.data.user.role === 'admin');
 const adminToken = seeded.data.token;
@@ -262,7 +277,7 @@ check('serialized phone exposes serials + onHand count', (() => {
 })());
 
 section('auth');
-const badPw = req('/api/login', { email: 'tariq@orisonigt.com', pin: '9999' });
+const badPw = req('/api/login', { email: 'tariq@example.com', pin: '999999' });
 check('bad PIN → 401', badPw.ok === false && badPw.status === 401);
 const noToken = req('/api/products');
 check('missing session → 401', noToken.ok === false && noToken.status === 401);
@@ -275,7 +290,7 @@ section('sync push — first-committed-wins');
 const s24 = products.data.find((p) => p.sku === 'PH-S24U-256');
 const usb = products.data.find((p) => p.sku === 'CB-USBC-1M');
 const serial = s24.serials[0];
-const pin = req('/api/login', { email: 'amara@orisonigt.com', pin: '5678' });
+const pin = req('/api/login', { email: 'amara@example.com', pin: CREDS['amara@example.com'] });
 const cashierToken = pin.data.token;
 check('cashier login ok', pin.ok);
 
@@ -327,7 +342,7 @@ section('admin + role gating');
 const cashierCreate = req('/api/admin/products', { name: 'X', sku: 'X-1' }, { session: cashierToken });
 check('cashier admin create → 403', cashierCreate.ok === false && cashierCreate.status === 403);
 
-const mgr = req('/api/login', { email: 'sarah@orisonigt.com', pin: '3456' });
+const mgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] });
 check('manager login ok', mgr.ok && mgr.data.user.role === 'manager');
 const mgrToken = mgr.data.token;
 const newProd = req('/api/admin/products', {
@@ -629,6 +644,57 @@ sandbox.sheet_('Transactions', sandbox.TX_HEADERS);
 const txHdr = txGridFull[0];
 check('migration appends kind/original_client_tx/counterparty', txHdr.includes('kind') && txHdr.includes('original_client_tx') && txHdr.includes('counterparty'), JSON.stringify(txHdr));
 check('migration preserves existing columns', txHdr[0] === 'id' && txHdr[8] === 'grand_total' && txHdr[9] === 'status');
+
+section('login throttling');
+{
+  const victim = 'diego@example.com';
+  const goodPin = CREDS[victim];
+  sleeps.length = 0;
+
+  // Four wrong PINs: each rejected, each answered with a growing delay.
+  const early = [];
+  for (let i = 0; i < 4; i++) early.push(req('/api/login', { email: victim, pin: '000000' }));
+  check('wrong PIN is rejected', early.every((r) => r.ok === false && r.status === 401));
+  check('failures are delayed, and the delay grows',
+    sleeps.length === 4 && sleeps.every((d, i) => i === 0 || d > sleeps[i - 1]),
+    JSON.stringify(sleeps));
+
+  // The fifth failure trips the lockout.
+  const fifth = req('/api/login', { email: victim, pin: '000000' });
+  check('fifth wrong PIN still 401', fifth.ok === false && fifth.status === 401);
+
+  const locked = req('/api/login', { email: victim, pin: '000000' });
+  check('further attempts are locked out with 429', locked.ok === false && locked.status === 429);
+
+  // The lockout must hold even for the CORRECT PIN, or it buys nothing.
+  const correctWhileLocked = req('/api/login', { email: victim, pin: goodPin });
+  check('correct PIN is refused while locked out',
+    correctWhileLocked.ok === false && correctWhileLocked.status === 429);
+
+  // A different account is unaffected — the counter is per-email.
+  const other = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] });
+  check('lockout does not spill onto another account', other.ok === true);
+
+  // An admin can release it.
+  sandbox.clearLoginLockout(victim);
+  const afterClear = req('/api/login', { email: victim, pin: goodPin });
+  check('clearLoginLockout releases the account', afterClear.ok === true);
+
+  // A successful login clears the running failure count.
+  req('/api/login', { email: victim, pin: '000000' });
+  req('/api/login', { email: victim, pin: goodPin });
+  sleeps.length = 0;
+  const afterSuccess = req('/api/login', { email: victim, pin: '000000' });
+  check('successful login resets the failure counter',
+    afterSuccess.status === 401 && sleeps.length === 1 && sleeps[0] === 250,
+    JSON.stringify(sleeps));
+
+  // An unknown address is delayed the same way, so timing cannot enumerate staff.
+  sleeps.length = 0;
+  const unknown = req('/api/login', { email: 'nobody@example.com', pin: '000000' });
+  check('unknown address is rejected and delayed like a known one',
+    unknown.status === 401 && sleeps.length === 1 && sleeps[0] === 250);
+}
 
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);

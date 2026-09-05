@@ -44,14 +44,35 @@ Each app install remembers it.
 
 > After a fresh start, the old service worker may serve a cached page. Hard reload (Ctrl+Shift+R) once after updating `public/`.
 
-## Demo logins (seeded by the backend)
+## Starter logins (seeded by the backend)
 
-| Role | Email | PIN |
-| ---- | ----- | --- |
-| Admin | `tariq@orisonigt.com` | `1234` |
-| Manager | `sarah@orisonigt.com` | `3456` |
-| Cashier | `amara@orisonigt.com` | `5678` |
-| Cashier | `diego@orisonigt.com` | `9012` |
+The backend seeds four accounts on its first run and generates a **random
+6-digit PIN for each**. The PINs are stored only as salted hashes, so there is
+exactly one chance to read them:
+
+1. In the Apps Script editor, open **View > Executions**.
+2. Open the first execution (the one that created the workbook).
+3. The log lists each address with its PIN:
+
+   ```
+   [orison-pos] seeded users - record these PINs now, they are not recoverable:
+   [orison-pos]   tariq@example.com  PIN 481902  (admin)
+   ...
+   ```
+
+| Role | Email |
+| ---- | ----- |
+| Admin | `tariq@example.com` |
+| Manager | `sarah@example.com` |
+| Cashier | `amara@example.com` |
+| Cashier | `diego@example.com` |
+
+Hand each person their PIN, then edit the `Users` sheet to replace the
+`@example.com` placeholders with real addresses.
+
+Login is throttled: consecutive wrong PINs are answered with a growing delay,
+and five failures lock that account for 15 minutes. To release one early, run
+`clearLoginLockout("someone@example.com")` from the Apps Script editor.
 
 Store: **Orison Electronics — Main Street** (code `ORSTN-01`)
 

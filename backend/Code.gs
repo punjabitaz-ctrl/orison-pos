@@ -288,12 +288,34 @@ function getStore_() {
  *  Seed
  * ------------------------------------------------------------------ */
 
+/* Starter accounts. NO PINs here: a PIN committed to the repository is a
+ * published credential, and this repository is public. seed_() generates a
+ * random 6-digit PIN for each account and reports it once — read them from the
+ * Apps Script execution log (View > Executions) right after the first run, hand
+ * them to staff, and have each person change theirs. Addresses use example.com
+ * so committed fixtures never name a real mailbox. */
 var SEED_USERS = [
-  { first_name: 'Tariq', last_name: 'Al-Sayed', email: 'tariq@orisonigt.com', pin: '1234', role: 'admin' },
-  { first_name: 'Sarah', last_name: 'Lindqvist', email: 'sarah@orisonigt.com', pin: '3456', role: 'manager' },
-  { first_name: 'Amara', last_name: 'Njoku', email: 'amara@orisonigt.com', pin: '5678', role: 'cashier' },
-  { first_name: 'Diego', last_name: 'Ramirez', email: 'diego@orisonigt.com', pin: '9012', role: 'cashier' },
+  { first_name: 'Tariq', last_name: 'Al-Sayed', email: 'tariq@example.com', role: 'admin' },
+  { first_name: 'Sarah', last_name: 'Lindqvist', email: 'sarah@example.com', role: 'manager' },
+  { first_name: 'Amara', last_name: 'Njoku', email: 'amara@example.com', role: 'cashier' },
+  { first_name: 'Diego', last_name: 'Ramirez', email: 'diego@example.com', role: 'cashier' },
 ];
+
+/* Plaintext PINs from the most recent seed_() in THIS execution, so the deploy
+ * step can print them once. Apps Script discards globals between executions, so
+ * this never outlives the run that created it and is never written to a sheet. */
+var SEED_CREDENTIALS = [];
+
+/* A 6-digit PIN from a cryptographically-uniform source. 10x the keyspace of
+ * the 4-digit PINs this replaces, and no modulo bias. */
+function randomPin_() {
+  var digits = '';
+  while (digits.length < 6) {
+    var bytes = Utilities.getUuid().replace(/[^0-9]/g, '');
+    digits += bytes;
+  }
+  return digits.slice(0, 6);
+}
 
 /* Port of server/seed.js catalog (42 products). Serialized products list
  * IMEIs/serials; non-serialized carry a qty. */
@@ -364,10 +386,13 @@ function seed_() {
   setKv_('store_phone', '(555) 010-0101');
 
   var userRows = [];
+  SEED_CREDENTIALS = [];
   for (var i = 0; i < SEED_USERS.length; i++) {
     var u = SEED_USERS[i];
+    var pin = randomPin_();
+    SEED_CREDENTIALS.push({ email: u.email, pin: pin, role: u.role });
     var salt = Utilities.getUuid().split('-')[0];
-    var hash = sha256Hex_(salt + ':' + u.pin);
+    var hash = sha256Hex_(salt + ':' + pin);
     userRows.push({
       id: Utilities.getUuid(),
       store_id: storeId,
@@ -382,6 +407,17 @@ function seed_() {
     });
   }
   appendRows_('Users', USER_HEADERS, userRows);
+
+  // Printed once, to the execution log only. This is the sole opportunity to
+  // read these PINs; they are stored only as salted hashes.
+  try {
+    Logger.log('[orison-pos] seeded users - record these PINs now, they are not recoverable:');
+    for (var c = 0; c < SEED_CREDENTIALS.length; c++) {
+      Logger.log('[orison-pos]   ' + SEED_CREDENTIALS[c].email +
+                 '  PIN ' + SEED_CREDENTIALS[c].pin +
+                 '  (' + SEED_CREDENTIALS[c].role + ')');
+    }
+  } catch (_) {}
 
   var now = new Date().toISOString();
   var prodRows = [];
@@ -431,9 +467,78 @@ function seed_() {
  *  Login / config / catalog / sync pull
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ *  Login throttling
+ *
+ *  A PIN is a small secret — six digits is a million candidates, four was ten
+ *  thousand — and this Web App is reachable by anyone with the URL. Without a
+ *  cost per attempt an attacker simply enumerates the space, so failures are
+ *  counted per account and answered with a growing delay, then a lockout.
+ *
+ *  Counters live in Script Properties rather than CacheService so a lockout
+ *  survives cache eviction, and are keyed by a hash of the email so the
+ *  property store never becomes a list of staff addresses.
+ * ------------------------------------------------------------------ */
+
+var LOGIN_MAX_FAILURES = 5;
+var LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+/* Delay applied to the 1st..4th consecutive failure. Enough to make
+ * enumeration hopeless while staying far inside the execution time limit. */
+var LOGIN_FAILURE_DELAYS_MS = [250, 1000, 2000, 4000];
+
+function loginFailKey_(email) {
+  return 'login_fail_' + sha256Hex_(String(email || '').toLowerCase()).slice(0, 32);
+}
+
+function loginFailureRecord_(email) {
+  var raw = PropertiesService.getScriptProperties().getProperty(loginFailKey_(email));
+  if (!raw) return null;
+  try {
+    var rec = JSON.parse(raw);
+    if (Date.now() - Number(rec.first || 0) >= LOGIN_LOCKOUT_MS) return null; // window elapsed
+    return rec;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* Milliseconds remaining on an active lockout, or 0 when not locked out. */
+function loginLockoutRemainingMs_(email) {
+  var rec = loginFailureRecord_(email);
+  if (!rec || Number(rec.n || 0) < LOGIN_MAX_FAILURES) return 0;
+  var remaining = LOGIN_LOCKOUT_MS - (Date.now() - Number(rec.first || 0));
+  return remaining > 0 ? remaining : 0;
+}
+
+function recordLoginFailure_(email) {
+  var props = PropertiesService.getScriptProperties();
+  var rec = loginFailureRecord_(email) || { n: 0, first: Date.now() };
+  rec.n = Number(rec.n || 0) + 1;
+  props.setProperty(loginFailKey_(email), JSON.stringify(rec));
+  return rec.n;
+}
+
+function clearLoginFailures_(email) {
+  PropertiesService.getScriptProperties().deleteProperty(loginFailKey_(email));
+}
+
+/* Run from the Apps Script editor to free an account locked out by a
+ * mistyped PIN or a deliberate lockout attempt. */
+function clearLoginLockout(email) {
+  clearLoginFailures_(email);
+  Logger.log('[orison-pos] cleared login lockout for ' + email);
+}
+
 function login_(payload) {
   var email = String(payload.email || '').trim().toLowerCase();
   var pin = String(payload.pin || '');
+
+  var lockedMs = loginLockoutRemainingMs_(email);
+  if (lockedMs > 0) {
+    throw statusError_(429, 'Too many failed attempts. Try again in ' +
+      Math.ceil(lockedMs / 60000) + ' minute(s).');
+  }
+
   var users = readRows_('Users', USER_HEADERS);
   var found = null;
   for (var i = 0; i < users.length; i++) {
@@ -443,8 +548,15 @@ function login_(payload) {
     }
   }
   if (!found || sha256Hex_(String(found.pin_salt) + ':' + pin) !== String(found.pin_hash)) {
+    var failures = recordLoginFailure_(email);
+    // Same delay whether or not the address exists, so timing does not reveal
+    // which staff emails are real.
+    var delay = LOGIN_FAILURE_DELAYS_MS[Math.min(failures, LOGIN_FAILURE_DELAYS_MS.length) - 1];
+    if (delay) { try { Utilities.sleep(delay); } catch (_) {} }
     throw statusError_(401, 'Invalid email or PIN');
   }
+
+  clearLoginFailures_(email);
   var token = signToken_({
     uid: found.id,
     role: found.role,
