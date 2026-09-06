@@ -1,6 +1,6 @@
 {
   "name": "orison-pos",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Offline-first, mobile-first Point of Sale (PWA) for a small electronics retailer. Backend: Google Apps Script + Sheets + Drive. Zero per-seat fees.",
   "scripts": {
