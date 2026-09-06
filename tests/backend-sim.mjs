@@ -118,6 +118,8 @@ const store = makeStore();
 const props = {};
 const driveFiles = [];
 const driveFolders = [{ id: 'folder-1', name: 'Orison POS Export' }];
+const sleeps = [];
+const lockAcquisitions = [];
 
 const sandbox = {
   console,
@@ -137,9 +139,16 @@ const sandbox = {
     getScriptProperties: () => ({
       getProperty: (k) => (k in props ? props[k] : null),
       setProperty: (k, v) => { props[k] = v; },
+      deleteProperty: (k) => { delete props[k]; },
+      // Returns a copy, as the real service does — callers mutate the result
+      // while deleting, and must not be editing the live store underneath.
+      getProperties: () => ({ ...props }),
     }),
   },
   Utilities: {
+    // Record rather than actually sleep: the delay is what we assert on, and
+    // real sleeps would add ~7s to the suite.
+    sleep: (ms) => { sleeps.push(ms); },
     getUuid: () => randomUUID(),
     Charset: { UTF_8: 'utf-8' },
     DigestAlgorithm: { SHA_256: 'SHA-256' },
@@ -154,7 +163,10 @@ const sandbox = {
     create: (name) => store.create(name),
   },
   LockService: {
-    getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }),
+    getScriptLock: () => ({
+      tryLock: () => { lockAcquisitions.push(Date.now()); return true; },
+      releaseLock: () => {},
+    }),
   },
   DriveApp: {
     getFolderById: (id) => (driveFolders.find((f) => f.id === id) ? { getId: () => id, createFile: realCreateFile } : (() => { throw new Error('missing folder ' + id); })()),
@@ -245,7 +257,17 @@ function section(name) { console.log('\n== ' + name); }
 props.APP_TOKEN = 'test-app-token-abc';
 
 section('seed / workbook auto-create');
-const seeded = req('/api/login', { email: 'tariq@orisonigt.com', pin: '1234' });
+// Seed PINs are generated randomly and never committed, so the suite reads the
+// credentials the seed reported for this run instead of hardcoding them.
+sandbox.ensureSeed_();
+const CREDS = {};
+for (const c of sandbox.SEED_CREDENTIALS) CREDS[c.email] = c.pin;
+check('seed reported one credential per starter account', sandbox.SEED_CREDENTIALS.length === 4);
+check('seeded PINs are 6 digits and not all identical',
+  sandbox.SEED_CREDENTIALS.every((c) => /^\d{6}$/.test(c.pin)) &&
+  new Set(sandbox.SEED_CREDENTIALS.map((c) => c.pin)).size > 1);
+
+const seeded = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] });
 check('blank workbook had no spreadsheet yet', true, '');
 check('login returns token + user + store', seeded.ok === true && seeded.data.token && seeded.data.user.role === 'admin');
 const adminToken = seeded.data.token;
@@ -262,7 +284,7 @@ check('serialized phone exposes serials + onHand count', (() => {
 })());
 
 section('auth');
-const badPw = req('/api/login', { email: 'tariq@orisonigt.com', pin: '9999' });
+const badPw = req('/api/login', { email: 'tariq@example.com', pin: '999999' });
 check('bad PIN → 401', badPw.ok === false && badPw.status === 401);
 const noToken = req('/api/products');
 check('missing session → 401', noToken.ok === false && noToken.status === 401);
@@ -275,7 +297,7 @@ section('sync push — first-committed-wins');
 const s24 = products.data.find((p) => p.sku === 'PH-S24U-256');
 const usb = products.data.find((p) => p.sku === 'CB-USBC-1M');
 const serial = s24.serials[0];
-const pin = req('/api/login', { email: 'amara@orisonigt.com', pin: '5678' });
+const pin = req('/api/login', { email: 'amara@example.com', pin: CREDS['amara@example.com'] });
 const cashierToken = pin.data.token;
 check('cashier login ok', pin.ok);
 
@@ -327,7 +349,7 @@ section('admin + role gating');
 const cashierCreate = req('/api/admin/products', { name: 'X', sku: 'X-1' }, { session: cashierToken });
 check('cashier admin create → 403', cashierCreate.ok === false && cashierCreate.status === 403);
 
-const mgr = req('/api/login', { email: 'sarah@orisonigt.com', pin: '3456' });
+const mgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] });
 check('manager login ok', mgr.ok && mgr.data.user.role === 'manager');
 const mgrToken = mgr.data.token;
 const newProd = req('/api/admin/products', {
@@ -629,6 +651,195 @@ sandbox.sheet_('Transactions', sandbox.TX_HEADERS);
 const txHdr = txGridFull[0];
 check('migration appends kind/original_client_tx/counterparty', txHdr.includes('kind') && txHdr.includes('original_client_tx') && txHdr.includes('counterparty'), JSON.stringify(txHdr));
 check('migration preserves existing columns', txHdr[0] === 'id' && txHdr[8] === 'grand_total' && txHdr[9] === 'status');
+
+section('login throttling');
+{
+  const victim = 'diego@example.com';
+  const goodPin = CREDS[victim];
+
+  // The failure path must neither sleep nor take the script lock. Utilities.sleep
+  // bills the daily runtime quota; the script lock is held for seconds at a time
+  // by syncPush_, and waiting on it pushes the 401 past the client's 8s timeout,
+  // where api.js reports it as "offline" and login.js falls back to offline PIN.
+  sleeps.length = 0;
+  lockAcquisitions.length = 0;
+  const early = [];
+  for (let i = 0; i < 4; i++) early.push(req('/api/login', { email: victim, pin: '000000' }));
+  check('wrong PIN is rejected', early.every((r) => r.ok === false && r.status === 401));
+  check('failed logins do not sleep', sleeps.length === 0, JSON.stringify(sleeps));
+  check('failed logins do not take the script lock', lockAcquisitions.length === 0,
+    lockAcquisitions.length + ' acquisitions');
+
+  const fifth = req('/api/login', { email: victim, pin: '000000' });
+  check('fifth wrong PIN still 401', fifth.ok === false && fifth.status === 401);
+
+  const locked = req('/api/login', { email: victim, pin: '000000' });
+  check('further attempts are locked out with 429', locked.ok === false && locked.status === 429);
+
+  // The lockout must hold even for the CORRECT PIN, or it buys nothing.
+  check('correct PIN is refused while locked out',
+    req('/api/login', { email: victim, pin: goodPin }).status === 429);
+
+  check('lockout does not spill onto another account',
+    req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).ok === true);
+
+  // The window runs from the LAST failure, so a lockout is a full 15 minutes
+  // rather than 15 minutes minus however long the attack already ran.
+  {
+    const prefix = 'lf_';
+    const mine = Object.keys(props).filter((k) => k.startsWith(prefix));
+    check('failures are stored as one marker each', mine.length >= 5, mine.length + ' markers');
+
+    // Age this account's markers to just inside the window: still locked.
+    const age = (ms) => {
+      for (const k of Object.keys(props).filter((x) => x.startsWith(prefix))) {
+        const parts = k.split('_');
+        const moved = parts[0] + '_' + parts[1] + '_' + (Date.now() - ms) + '_' + parts[3];
+        props[moved] = props[k];
+        delete props[k];
+      }
+    };
+    age(15 * 60 * 1000 - 5000);
+    check('still locked 5s before the window closes',
+      req('/api/login', { email: victim, pin: goodPin }).status === 429);
+
+    age(15 * 60 * 1000 + 1000);
+    check('released once the window has fully elapsed',
+      req('/api/login', { email: victim, pin: goodPin }).ok === true);
+  }
+
+  // The store-filling attack: one failure each against many addresses that are
+  // never seen again. Deleting expired records only when the SAME address is
+  // looked up again leaves every one of them behind forever.
+  {
+    const before = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
+    for (let i = 0; i < 60; i++) req('/api/login', { email: 'probe' + i + '@example.com', pin: '000000' });
+    const during = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
+    check('each distinct address leaves a marker while it is live', during >= before + 60,
+      before + ' -> ' + during);
+
+    // Age every marker past the window, then make one unrelated request.
+    for (const k of Object.keys(props).filter((x) => x.startsWith('lf_'))) {
+      const parts = k.split('_');
+      props[parts[0] + '_' + parts[1] + '_' + (Date.now() - 16 * 60 * 1000) + '_' + parts[3]] = props[k];
+      delete props[k];
+    }
+    // Deletions are capped per request so a backlog never stalls one login;
+    // the sweep drains across requests instead.
+    const beforeSweep = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
+    req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] });
+    const afterOne = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
+    check('one request never deletes more than its budget',
+      beforeSweep - afterOne <= 50, 'deleted ' + (beforeSweep - afterOne));
+
+    for (let i = 0; i < 5; i++) {
+      req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] });
+    }
+    const after = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
+    check('expired markers for addresses never seen again are swept', after === 0,
+      after + ' left behind');
+  }
+
+  // Eviction under the ceiling must not hand a locked account a clean slate.
+  {
+    for (let i = 0; i < 5; i++) req('/api/login', { email: victim, pin: '000000' });
+    check('victim is locked before the flood',
+      req('/api/login', { email: victim, pin: goodPin }).status === 429);
+
+    // Far more one-off failures than the ceiling, from throwaway addresses.
+    for (let i = 0; i < 1200; i++) {
+      req('/api/login', { email: 'flood' + i + '@example.com', pin: '000000' });
+    }
+    check('victim is still locked after the flood',
+      req('/api/login', { email: victim, pin: goodPin }).status === 429,
+      'evicting the globally oldest markers would have released it');
+    check('storage stayed bounded during the flood',
+      Object.keys(props).filter((k) => k.startsWith('lf_')).length <= 1000 + 50,
+      Object.keys(props).filter((k) => k.startsWith('lf_')).length + ' markers');
+
+    req('/api/admin/unlock', { email: victim }, { session: adminToken });
+  }
+
+  // An admin can release a lockout from the till, not only the script editor.
+  for (let i = 0; i < 5; i++) req('/api/login', { email: victim, pin: '000000' });
+  check('locked again after five failures',
+    req('/api/login', { email: victim, pin: goodPin }).status === 429);
+
+  const cashierUnlock = req('/api/admin/unlock', { email: victim }, { session: cashierToken });
+  check('cashier may not clear a lockout', cashierUnlock.ok === false && cashierUnlock.status === 403);
+
+  check('admin can clear a lockout',
+    req('/api/admin/unlock', { email: victim }, { session: adminToken }).ok === true);
+  check('account works again after admin unlock',
+    req('/api/login', { email: victim, pin: goodPin }).ok === true);
+
+  check('unknown address is rejected the same way',
+    req('/api/login', { email: 'nobody@example.com', pin: '000000' }).status === 401);
+}
+
+section('admin PIN reset');
+{
+  const target = 'amara@example.com';
+  check('cashier may not reset a PIN',
+    req('/api/admin/pin', { email: target, pin: '111111' }, { session: cashierToken }).status === 403);
+  check('manager may not reset a PIN',
+    req('/api/admin/pin', { email: target, pin: '111111' }, { session: mgr.data.token }).status === 403);
+  check('a 4-digit PIN is refused',
+    req('/api/admin/pin', { email: target, pin: '1111' }, { session: adminToken }).status === 400);
+  check('an unknown address is refused',
+    req('/api/admin/pin', { email: 'nobody@example.com', pin: '111111' }, { session: adminToken }).status === 404);
+
+  const reset = req('/api/admin/pin', { email: target, pin: '246813' }, { session: adminToken });
+  check('admin can reset a PIN', reset.ok === true);
+  check('the new PIN works', req('/api/login', { email: target, pin: '246813' }).ok === true);
+  check('the old PIN no longer works',
+    req('/api/login', { email: target, pin: CREDS[target] }).status === 401);
+
+  // Recovery path: a locked-out account is usable again straight after a reset.
+  for (let i = 0; i < 5; i++) req('/api/login', { email: target, pin: '000000' });
+  check('locked after five failures', req('/api/login', { email: target, pin: '246813' }).status === 429);
+  req('/api/admin/pin', { email: target, pin: '135791' }, { session: adminToken });
+  check('a PIN reset also clears the lockout',
+    req('/api/login', { email: target, pin: '135791' }).ok === true);
+}
+
+section('self-service PIN change');
+{
+  const who = 'sarah@example.com';
+  const login = req('/api/login', { email: who, pin: CREDS[who] });
+  const token = login.data.token;
+
+  check('needs a session', req('/api/pin', { currentPin: CREDS[who], newPin: '222222' }).status === 401);
+  check('rejects a wrong current PIN',
+    req('/api/pin', { currentPin: '000000', newPin: '222222' }, { session: token }).status === 403);
+  check('rejects a short new PIN',
+    req('/api/pin', { currentPin: CREDS[who], newPin: '2222' }, { session: token }).status === 400);
+
+  check('changes the PIN',
+    req('/api/pin', { currentPin: CREDS[who], newPin: '222222' }, { session: token }).ok === true);
+  check('the new PIN works', req('/api/login', { email: who, pin: '222222' }).ok === true);
+  check('the seeded PIN no longer works',
+    req('/api/login', { email: who, pin: CREDS[who] }).status === 401);
+  CREDS[who] = '222222';
+}
+
+section('PIN generation');
+{
+  // A PIN built from the raw digits of a v4 UUID inherits the fixed version
+  // nibble and ends in '4' about 17% of the time instead of 10%.
+  const counts = {};
+  const N = 20000;
+  for (let i = 0; i < N; i++) {
+    const pin = sandbox.randomPin_();
+    if (!/^[0-9]{6}$/.test(pin)) { counts.BAD = (counts.BAD || 0) + 1; continue; }
+    for (const ch of pin) counts[ch] = (counts[ch] || 0) + 1;
+  }
+  check('every PIN is exactly 6 digits', !counts.BAD);
+  const freqs = '0123456789'.split('').map((d) => (counts[d] || 0) / (N * 6));
+  const worst = Math.max(...freqs.map((f) => Math.abs(f - 0.1)));
+  check('digits are uniform to within 1 point', worst < 0.01,
+    'worst deviation ' + (worst * 100).toFixed(2) + 'pp');
+}
 
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);

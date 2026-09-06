@@ -44,14 +44,51 @@ Each app install remembers it.
 
 > After a fresh start, the old service worker may serve a cached page. Hard reload (Ctrl+Shift+R) once after updating `public/`.
 
-## Demo logins (seeded by the backend)
+## Starter logins (seeded by the backend)
 
-| Role | Email | PIN |
-| ---- | ----- | --- |
-| Admin | `tariq@orisonigt.com` | `1234` |
-| Manager | `sarah@orisonigt.com` | `3456` |
-| Cashier | `amara@orisonigt.com` | `5678` |
-| Cashier | `diego@orisonigt.com` | `9012` |
+The backend seeds four accounts on its first run and generates a **random
+6-digit PIN for each**, and writes them to the execution log. Apps Script keeps
+that log, so treat these as first-day credentials rather than lasting ones —
+hand them out, then have everyone change theirs. The `Users` sheet itself only
+ever holds a salted hash. To read them:
+
+1. In the Apps Script editor, open **View > Executions**.
+2. Open the first execution (the one that created the workbook).
+3. The log lists each address with its PIN:
+
+   ```
+   [orison-pos] seeded users - record these PINs now, they are not recoverable:
+   [orison-pos]   tariq@example.com  PIN 481902  (admin)
+   ...
+   ```
+
+| Role | Email |
+| ---- | ----- |
+| Admin | `tariq@example.com` |
+| Manager | `sarah@example.com` |
+| Cashier | `amara@example.com` |
+| Cashier | `diego@example.com` |
+
+Hand each person their PIN, then edit the `Users` sheet to replace the
+`@example.com` placeholders with real addresses. Staff change their own PIN with
+`POST /api/pin` (`{ "currentPin": "...", "newPin": "..." }`) — which is how the
+logged starter PINs stop being usable.
+
+Login is throttled: five wrong PINs lock that account for 15 minutes, measured
+from the most recent failure. An admin or manager can release it from the till
+(`POST /api/admin/unlock` with `{ "email": "someone@example.com" }`), or you can
+run `clearLoginLockout("someone@example.com")` from the Apps Script editor.
+
+An admin can also reset a forgotten PIN from the app (`POST /api/admin/pin` with
+`{ "email": "...", "pin": "246813" }`), which clears any lockout at the same
+time. That is also the recovery path if the workbook is ever recreated: doing so
+reseeds the starter accounts with fresh random PINs, and the only record of them
+is that run's execution log.
+
+Note the tradeoff: because the counter is per-account and Apps Script does not
+expose the caller's address, someone who knows a staff email can keep that
+account locked by failing against it repeatedly. The unlock endpoint exists so
+a shift is never blocked waiting on the script editor.
 
 Store: **Orison Electronics — Main Street** (code `ORSTN-01`)
 
@@ -74,12 +111,20 @@ Set an owner device to 2–5 min for a near-live view.
 ## Development
 
 ```bash
-# Backend logic against an in-memory mock of Apps Script (no network, fast)
-npm run test:backend
+# Backend logic against an in-memory mock of Apps Script (no network, fast).
+# This is what `npm test` runs — it needs nothing external.
+npm test          # same as: npm run test:backend
 
-# Headless-browser E2E against a deployed backend
+# Headless-browser E2E against a deployed backend. Needs the deployment URL and
+# token, plus the two PINs — they are generated per deployment and never
+# committed, so read them from the execution log (see Starter logins above).
 #   $env:E2E_GAS_URL='https://…/exec';  $env:E2E_APP_TOKEN='secret'
+#   $env:E2E_PIN='481902';              $env:E2E_CASHIER_PIN='730155'
+# Without E2E_PIN and E2E_CASHIER_PIN this suite skips rather than failing.
 npm run test:e2e
+
+# Both suites together
+npm run test:all
 
 # Local static serve of the PWA shell (backend still comes from the /exec URL)
 npm run serve   # http://127.0.0.1:8080

@@ -67,6 +67,9 @@ function dispatch_(action, session, payload, params) {
     case '/api/transactions':    return transactions_(params);
     case '/api/conflicts':       return conflicts_(session, params);
     case '/api/conflicts/review': return reviewConflict_(session, payload);
+    case '/api/admin/unlock':    return adminUnlock_(session, payload);
+    case '/api/admin/pin':       return adminSetPin_(session, payload);
+    case '/api/pin':             return changeOwnPin_(session, payload);
     case '/api/admin/products':  return adminProducts_(session, payload);
     case '/api/admin/serials':   return adminSerials_(session, payload);
     case '/api/admin/inventory': return adminInventory_(session, payload);
@@ -288,12 +291,58 @@ function getStore_() {
  *  Seed
  * ------------------------------------------------------------------ */
 
+/* Starter accounts. NO PINs here: a PIN committed to the repository is a
+ * published credential, and this repository is public. seed_() generates a
+ * random 6-digit PIN for each account and reports it once — read them from the
+ * Apps Script execution log (View > Executions) right after the first run, hand
+ * them to staff, and have each person change theirs. Addresses use example.com
+ * so committed fixtures never name a real mailbox. */
 var SEED_USERS = [
-  { first_name: 'Tariq', last_name: 'Al-Sayed', email: 'tariq@orisonigt.com', pin: '1234', role: 'admin' },
-  { first_name: 'Sarah', last_name: 'Lindqvist', email: 'sarah@orisonigt.com', pin: '3456', role: 'manager' },
-  { first_name: 'Amara', last_name: 'Njoku', email: 'amara@orisonigt.com', pin: '5678', role: 'cashier' },
-  { first_name: 'Diego', last_name: 'Ramirez', email: 'diego@orisonigt.com', pin: '9012', role: 'cashier' },
+  { first_name: 'Tariq', last_name: 'Al-Sayed', email: 'tariq@example.com', role: 'admin' },
+  { first_name: 'Sarah', last_name: 'Lindqvist', email: 'sarah@example.com', role: 'manager' },
+  { first_name: 'Amara', last_name: 'Njoku', email: 'amara@example.com', role: 'cashier' },
+  { first_name: 'Diego', last_name: 'Ramirez', email: 'diego@example.com', role: 'cashier' },
 ];
+
+/* Plaintext PINs from the most recent seed_() in THIS execution, so the deploy
+ * step can print them once. Apps Script discards globals between executions, so
+ * this never outlives the run that created it and is never written to a sheet. */
+var SEED_CREDENTIALS = [];
+
+/* Random hex nibbles from v4 UUIDs, skipping the two positions RFC 4122 fixes.
+ * With dashes removed, index 12 is always the version '4' and index 16 is the
+ * variant (8/9/a/b); harvesting digits without excluding them skews the result
+ * badly — measured over 200k samples, a PIN built from the raw digits of a UUID
+ * ends in '4' 17% of the time instead of 10%. */
+function randomNibbles_(count) {
+  var out = [];
+  while (out.length < count) {
+    var hex = Utilities.getUuid().replace(/-/g, '');
+    for (var i = 0; i < hex.length; i++) {
+      if (i === 12 || i === 16) continue; // version / variant: not random
+      out.push(parseInt(hex.charAt(i), 16));
+    }
+  }
+  return out.slice(0, count);
+}
+
+/* A uniform 6-digit PIN. 100x the keyspace of the 4-digit PINs this replaces.
+ * Rejection sampling, because 2^24 is not a multiple of 1,000,000 and a plain
+ * modulo would make the low values slightly more likely. */
+function randomPin_() {
+  var LIMIT = 16000000; // largest multiple of 1e6 that fits in 24 bits
+  for (var attempt = 0; attempt < 64; attempt++) {
+    var n = randomNibbles_(6);
+    var value = 0;
+    for (var i = 0; i < 6; i++) value = value * 16 + n[i];
+    if (value < LIMIT) {
+      var pin = String(value % 1000000);
+      while (pin.length < 6) pin = '0' + pin;
+      return pin;
+    }
+  }
+  throw new Error('randomPin_: exhausted retries');
+}
 
 /* Port of server/seed.js catalog (42 products). Serialized products list
  * IMEIs/serials; non-serialized carry a qty. */
@@ -345,11 +394,26 @@ var SEED_PRODUCTS = [
 ];
 
 function ensureSeed_() {
+  // Cheap gate so the common case does not queue behind whatever holds the
+  // script lock — syncPush_ holds it for seconds, and a login stalled that way
+  // blows past the client's 8s timeout, which api.js reports as "offline".
+  //
+  // It reads a Script Property and NOT kv_(): kv_ reaches spreadSheet_, which
+  // CREATES the workbook when none exists, so gating on it would move first-run
+  // creation outside the lock and let two simultaneous first requests build two
+  // workbooks and seed twice — two sets of users with different PINs, and an
+  // already-issued token whose uid is absent from whichever workbook survives.
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('SEEDED') === '1') return;
+
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) return;
   try {
-    if (kv_().store_id) return;
+    // Set the flag for a deployment seeded before it existed, so it too stops
+    // taking the lock on every request from here on.
+    if (kv_().store_id) { props.setProperty('SEEDED', '1'); return; }
     seed_();
+    props.setProperty('SEEDED', '1');
   } finally {
     lock.releaseLock();
   }
@@ -364,10 +428,13 @@ function seed_() {
   setKv_('store_phone', '(555) 010-0101');
 
   var userRows = [];
+  SEED_CREDENTIALS = [];
   for (var i = 0; i < SEED_USERS.length; i++) {
     var u = SEED_USERS[i];
+    var pin = randomPin_();
+    SEED_CREDENTIALS.push({ email: u.email, pin: pin, role: u.role });
     var salt = Utilities.getUuid().split('-')[0];
-    var hash = sha256Hex_(salt + ':' + u.pin);
+    var hash = sha256Hex_(salt + ':' + pin);
     userRows.push({
       id: Utilities.getUuid(),
       store_id: storeId,
@@ -382,6 +449,20 @@ function seed_() {
     });
   }
   appendRows_('Users', USER_HEADERS, userRows);
+
+  // Written to the execution log, which Apps Script retains. That makes these
+  // starter PINs credentials a second party has seen, so they are a way in for
+  // the first day and not a lasting one: staff should change theirs via
+  // /api/pin, and an admin can force one via /api/admin/pin. The Users sheet
+  // itself only ever holds the salted hash.
+  try {
+    Logger.log('[orison-pos] seeded users - starter PINs, rotate after handing them out:');
+    for (var c = 0; c < SEED_CREDENTIALS.length; c++) {
+      Logger.log('[orison-pos]   ' + SEED_CREDENTIALS[c].email +
+                 '  PIN ' + SEED_CREDENTIALS[c].pin +
+                 '  (' + SEED_CREDENTIALS[c].role + ')');
+    }
+  } catch (_) {}
 
   var now = new Date().toISOString();
   var prodRows = [];
@@ -431,9 +512,185 @@ function seed_() {
  *  Login / config / catalog / sync pull
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ *  Login throttling
+ *
+ *  A PIN is a small secret — six digits is a million candidates, four was ten
+ *  thousand — and this Web App is reachable by anyone with the URL. Without a
+ *  cost per attempt an attacker simply enumerates the space, so failures are
+ *  counted per account and answered with a growing delay, then a lockout.
+ *
+ *  Counters live in Script Properties rather than CacheService so a lockout
+ *  survives cache eviction, and are keyed by a hash of the email so the
+ *  property store never becomes a list of staff addresses.
+ * ------------------------------------------------------------------ */
+
+var LOGIN_MAX_FAILURES = 5;
+var LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+
+/* Failures are stored as one property per attempt rather than a counter.
+ *
+ * A counter needs read-modify-write, which Script Properties does not make
+ * atomic, so it needs LockService — and that turned out to be a bad trade on
+ * this path: tryLock stalls behind syncPush_, which routinely holds the script
+ * lock for seconds, pushing the 401 past the client's 8s timeout, where api.js
+ * maps it to err.offline and login.js silently drops the cashier into the
+ * offline-PIN fallback. Failing open when the lock could not be taken also
+ * meant guesses during contention went uncounted.
+ *
+ * Appending a uniquely-named marker needs no lock and loses no writes. The one
+ * concession is that the gate is read before the marker is written, so a burst
+ * arriving together can all pass it; the overshoot is bounded by Apps Script's
+ * simultaneous-execution limit and the lockout engages immediately after.
+ */
+var LOGIN_FAIL_PREFIX = 'lf_';
+/* Hard ceiling on stored markers. Script Properties is a bounded store (~500 KB)
+ * and every failure against a fresh address mints a key, so without a ceiling a
+ * sustained run of bad logins fills it and setProperty starts throwing — taking
+ * SESSION_SECRET and SPREADSHEET_ID writes down with it. */
+var LOGIN_FAIL_MAX_MARKERS = 1000;
+/* Markers kept per account. Five locks an account; the rest is ballast. */
+var LOGIN_FAIL_MAX_PER_ACCOUNT = 8;
+/* Deletions per request, so a large backlog never stalls one login. */
+var LOGIN_FAIL_MAX_DELETES_PER_CALL = 50;
+
+function loginFailPrefix_(email) {
+  return LOGIN_FAIL_PREFIX + sha256Hex_(String(email || '').toLowerCase()).slice(0, 16) + '_';
+}
+
+function markerTimestamp_(key) {
+  var parts = key.split('_');
+  return Number(parts[2] || 0);
+}
+
+/* Expire markers, keeping storage bounded without releasing anyone's lockout.
+ *
+ * Two rules, in order:
+ *   - per account, keep only the newest few markers. Five is what locks an
+ *     account; more than that is just ballast.
+ *   - if the store is still over its ceiling, drop whole accounts that are NOT
+ *     currently locked, oldest first. Evicting the globally oldest markers
+ *     instead would let ~1000 one-off failures against throwaway addresses
+ *     delete a locked victim's markers and hand them a clean slate — the
+ *     attacker would be using the defence to undo itself.
+ *
+ * Deletions are capped per request: PropertiesService charges one call per key,
+ * and clearing a large backlog in a single login would push it past the 8s
+ * client timeout that api.js reports as "offline". The backlog drains across
+ * requests instead, which is fine because expiry is already time-based.
+ */
+function sweepLoginFailures_(props, all) {
+  var cutoff = Date.now() - LOGIN_LOCKOUT_MS;
+  var budget = LOGIN_FAIL_MAX_DELETES_PER_CALL;
+  var byAccount = {};
+
+  function drop(key) {
+    if (budget <= 0) return false;
+    props.deleteProperty(key);
+    delete all[key];
+    budget--;
+    return true;
+  }
+
+  for (var key in all) {
+    if (key.indexOf(LOGIN_FAIL_PREFIX) !== 0) continue;
+    if (markerTimestamp_(key) < cutoff) {
+      drop(key);
+      continue;
+    }
+    var account = key.split('_').slice(0, 2).join('_');
+    (byAccount[account] = byAccount[account] || []).push(key);
+  }
+
+  var accounts = [];
+  var liveCount = 0;
+  for (var acct in byAccount) {
+    var keys = byAccount[acct];
+    keys.sort(function (a, b) { return markerTimestamp_(a) - markerTimestamp_(b); });
+    while (keys.length > LOGIN_FAIL_MAX_PER_ACCOUNT && budget > 0) {
+      if (!drop(keys[0])) break;
+      keys.shift();
+    }
+    liveCount += keys.length;
+    accounts.push({ key: acct, keys: keys, newest: markerTimestamp_(keys[keys.length - 1]) });
+  }
+
+  if (liveCount <= LOGIN_FAIL_MAX_MARKERS) return;
+
+  // Over the ceiling: shed unlocked accounts, least recently seen first. A
+  // locked account keeps its markers — losing them is what an attacker wants.
+  accounts.sort(function (a, b) { return a.newest - b.newest; });
+  for (var i = 0; i < accounts.length && liveCount > LOGIN_FAIL_MAX_MARKERS && budget > 0; i++) {
+    if (accounts[i].keys.length >= LOGIN_MAX_FAILURES) continue; // locked: keep
+    var ks = accounts[i].keys;
+    for (var j = 0; j < ks.length && budget > 0; j++) {
+      if (drop(ks[j])) liveCount--;
+    }
+  }
+}
+
+/* Live failure marker timestamps for one address, newest last. */
+function loginFailureTimes_(email, all) {
+  var prefix = loginFailPrefix_(email);
+  var cutoff = Date.now() - LOGIN_LOCKOUT_MS;
+  var times = [];
+  for (var key in all) {
+    if (key.indexOf(prefix) !== 0) continue;
+    var ts = markerTimestamp_(key);
+    if (ts >= cutoff) times.push(ts);
+  }
+  times.sort(function (a, b) { return a - b; });
+  return times;
+}
+
+/* Milliseconds remaining on an active lockout, or 0 when not locked out.
+ * The window runs from the most recent failure: anchored to the first, an
+ * attacker could spread failures across the window and trip the last one just
+ * before it elapsed, earning a lockout of a second or two and a clean slate. */
+function loginLockoutRemainingMs_(email) {
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  sweepLoginFailures_(props, all);
+  var times = loginFailureTimes_(email, all);
+  if (times.length < LOGIN_MAX_FAILURES) return 0;
+  var remaining = LOGIN_LOCKOUT_MS - (Date.now() - times[times.length - 1]);
+  return remaining > 0 ? remaining : 0;
+}
+
+function recordLoginFailure_(email) {
+  var props = PropertiesService.getScriptProperties();
+  var key = loginFailPrefix_(email) + Date.now() + '_' +
+            Math.floor(Math.random() * 1e6);
+  props.setProperty(key, '1');
+}
+
+function clearLoginFailures_(email) {
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  var prefix = loginFailPrefix_(email);
+  for (var key in all) {
+    if (key.indexOf(prefix) === 0) props.deleteProperty(key);
+  }
+}
+
+/* Release an account locked out by a mistyped PIN or a deliberate lockout.
+ * Also reachable at /api/admin/unlock so a manager can do it from the till —
+ * a store cannot wait for someone to open the Apps Script editor mid-shift. */
+function clearLoginLockout(email) {
+  clearLoginFailures_(email);
+  Logger.log('[orison-pos] cleared login lockout for ' + email);
+}
+
 function login_(payload) {
   var email = String(payload.email || '').trim().toLowerCase();
   var pin = String(payload.pin || '');
+
+  var lockedMs = loginLockoutRemainingMs_(email);
+  if (lockedMs > 0) {
+    throw statusError_(429, 'Too many failed attempts. Try again in ' +
+      Math.ceil(lockedMs / 60000) + ' minute(s).');
+  }
+
   var users = readRows_('Users', USER_HEADERS);
   var found = null;
   for (var i = 0; i < users.length; i++) {
@@ -443,8 +700,16 @@ function login_(payload) {
     }
   }
   if (!found || sha256Hex_(String(found.pin_salt) + ':' + pin) !== String(found.pin_hash)) {
+    // Counted, but deliberately NOT delayed. Utilities.sleep bills against the
+    // script's daily runtime quota and holds a simultaneous-execution slot, so
+    // a delay long enough to matter is itself a way to take the till offline;
+    // it also pushed responses past the client's 8s timeout, which api.js maps
+    // to "offline" and hides the real error. The attempt cap does the work.
+    recordLoginFailure_(email);
     throw statusError_(401, 'Invalid email or PIN');
   }
+
+  clearLoginFailures_(email);
   var token = signToken_({
     uid: found.id,
     role: found.role,
@@ -1144,6 +1409,80 @@ function reviewConflict_(session, payload) {
 /* ------------------------------------------------------------------ *
  *  Admin (admin / manager) + Drive export
  * ------------------------------------------------------------------ */
+
+/* Change your own PIN. Any signed-in role.
+ *
+ * Seed PINs are written to the execution log, and Apps Script keeps that log —
+ * so a seeded PIN is a credential a second party has seen and can go on seeing.
+ * Telling staff to change theirs only means something if they can, without
+ * going through an admin, so this takes the current PIN and replaces it.
+ */
+function changeOwnPin_(session, payload) {
+  if (!session || !session.uid) throw statusError_(401, 'Sign in first');
+  var current = String((payload && payload.currentPin) || '');
+  var next = String((payload && payload.newPin) || '');
+  if (!/^[0-9]{6}$/.test(next)) throw statusError_(400, 'new PIN must be 6 digits');
+
+  var users = readRows_('Users', USER_HEADERS);
+  var me = null;
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].id) === String(session.uid)) { me = users[i]; break; }
+  }
+  if (!me) throw statusError_(404, 'No such user');
+  if (sha256Hex_(String(me.pin_salt) + ':' + current) !== String(me.pin_hash)) {
+    throw statusError_(403, 'Current PIN is incorrect');
+  }
+
+  var salt = Utilities.getUuid().split('-')[0];
+  applyPatches_('Users', USER_HEADERS, 'id', {
+    [me.id]: { pin_salt: salt, pin_hash: sha256Hex_(salt + ':' + next) },
+  });
+  Logger.log('[orison-pos] PIN changed by ' + session.uid);
+  return { ok: true };
+}
+
+/* Set a staff member's PIN. Admin only.
+ *
+ * Seeded PINs are random and reported once to the execution log, and
+ * spreadSheet_ recreates the workbook if openById ever fails — which reseeds
+ * and rotates all four. Without a reset path that leaves nobody able to sign
+ * in, so this is the recovery route as well as the everyday "I forgot my PIN"
+ * one. Stored the same way login checks it: salted, hashed, never in cleartext.
+ */
+function adminSetPin_(session, payload) {
+  requireRole_(session, ['admin']);
+  var email = String((payload && payload.email) || '').trim().toLowerCase();
+  var pin = String((payload && payload.pin) || '');
+  if (!email) throw statusError_(400, 'email is required');
+  if (!/^[0-9]{6}$/.test(pin)) throw statusError_(400, 'pin must be 6 digits');
+
+  var users = readRows_('Users', USER_HEADERS);
+  var found = null;
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].email).toLowerCase() === email) { found = users[i]; break; }
+  }
+  if (!found) throw statusError_(404, 'No such user');
+
+  var salt = Utilities.getUuid().split('-')[0];
+  applyPatches_('Users', USER_HEADERS, 'id', {
+    [found.id]: { pin_salt: salt, pin_hash: sha256Hex_(salt + ':' + pin) },
+  });
+  clearLoginFailures_(email);
+  Logger.log('[orison-pos] PIN reset for ' + email + ' by ' + session.uid);
+  return { ok: true };
+}
+
+/* Release a staff login lockout. Admin/manager only, and it deliberately does
+ * not reveal whether the address was locked — the caller is already trusted,
+ * but the response should not become a way to probe which accounts exist. */
+function adminUnlock_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  var email = String((payload && payload.email) || '').trim().toLowerCase();
+  if (!email) throw statusError_(400, 'email is required');
+  clearLoginFailures_(email);
+  Logger.log('[orison-pos] lockout cleared for ' + email + ' by ' + session.uid);
+  return { ok: true };
+}
 
 function adminProducts_(session, payload) {
   requireRole_(session, ['admin', 'manager']);
