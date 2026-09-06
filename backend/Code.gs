@@ -69,6 +69,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/conflicts/review': return reviewConflict_(session, payload);
     case '/api/admin/unlock':    return adminUnlock_(session, payload);
     case '/api/admin/pin':       return adminSetPin_(session, payload);
+    case '/api/pin':             return changeOwnPin_(session, payload);
     case '/api/admin/products':  return adminProducts_(session, payload);
     case '/api/admin/serials':   return adminSerials_(session, payload);
     case '/api/admin/inventory': return adminInventory_(session, payload);
@@ -393,20 +394,26 @@ var SEED_PRODUCTS = [
 ];
 
 function ensureSeed_() {
-  // Checked before the lock as well as inside it. Seeding happens once in the
-  // life of a deployment, but this runs on every request, and taking the script
-  // lock unconditionally means every request queues behind whatever holds it —
-  // syncPush_ holds it for seconds at a time. A login stalled that way blows
-  // past the client's 8s timeout, which api.js reports as "offline" and
-  // login.js turns into the offline-PIN fallback. The re-check inside the lock
-  // is what actually makes seeding exclusive.
-  if (kv_().store_id) return;
+  // Cheap gate so the common case does not queue behind whatever holds the
+  // script lock — syncPush_ holds it for seconds, and a login stalled that way
+  // blows past the client's 8s timeout, which api.js reports as "offline".
+  //
+  // It reads a Script Property and NOT kv_(): kv_ reaches spreadSheet_, which
+  // CREATES the workbook when none exists, so gating on it would move first-run
+  // creation outside the lock and let two simultaneous first requests build two
+  // workbooks and seed twice — two sets of users with different PINs, and an
+  // already-issued token whose uid is absent from whichever workbook survives.
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('SEEDED') === '1') return;
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) return;
   try {
-    if (kv_().store_id) return;
+    // Set the flag for a deployment seeded before it existed, so it too stops
+    // taking the lock on every request from here on.
+    if (kv_().store_id) { props.setProperty('SEEDED', '1'); return; }
     seed_();
+    props.setProperty('SEEDED', '1');
   } finally {
     lock.releaseLock();
   }
@@ -443,10 +450,13 @@ function seed_() {
   }
   appendRows_('Users', USER_HEADERS, userRows);
 
-  // Printed once, to the execution log only. This is the sole opportunity to
-  // read these PINs; they are stored only as salted hashes.
+  // Written to the execution log, which Apps Script retains. That makes these
+  // starter PINs credentials a second party has seen, so they are a way in for
+  // the first day and not a lasting one: staff should change theirs via
+  // /api/pin, and an admin can force one via /api/admin/pin. The Users sheet
+  // itself only ever holds the salted hash.
   try {
-    Logger.log('[orison-pos] seeded users - record these PINs now, they are not recoverable:');
+    Logger.log('[orison-pos] seeded users - starter PINs, rotate after handing them out:');
     for (var c = 0; c < SEED_CREDENTIALS.length; c++) {
       Logger.log('[orison-pos]   ' + SEED_CREDENTIALS[c].email +
                  '  PIN ' + SEED_CREDENTIALS[c].pin +
@@ -539,6 +549,10 @@ var LOGIN_FAIL_PREFIX = 'lf_';
  * sustained run of bad logins fills it and setProperty starts throwing — taking
  * SESSION_SECRET and SPREADSHEET_ID writes down with it. */
 var LOGIN_FAIL_MAX_MARKERS = 1000;
+/* Markers kept per account. Five locks an account; the rest is ballast. */
+var LOGIN_FAIL_MAX_PER_ACCOUNT = 8;
+/* Deletions per request, so a large backlog never stalls one login. */
+var LOGIN_FAIL_MAX_DELETES_PER_CALL = 50;
 
 function loginFailPrefix_(email) {
   return LOGIN_FAIL_PREFIX + sha256Hex_(String(email || '').toLowerCase()).slice(0, 16) + '_';
@@ -549,33 +563,68 @@ function markerTimestamp_(key) {
   return Number(parts[2] || 0);
 }
 
-/* Drop every marker older than the window, whatever address it belongs to.
+/* Expire markers, keeping storage bounded without releasing anyone's lockout.
  *
- * This has to be a sweep across all keys, not a check on the one address being
- * looked at: deleting only on re-read leaves a permanent property behind for
- * every address an attacker tries once and never repeats, which is exactly the
- * store-filling attack the ceiling above exists to stop.
+ * Two rules, in order:
+ *   - per account, keep only the newest few markers. Five is what locks an
+ *     account; more than that is just ballast.
+ *   - if the store is still over its ceiling, drop whole accounts that are NOT
+ *     currently locked, oldest first. Evicting the globally oldest markers
+ *     instead would let ~1000 one-off failures against throwaway addresses
+ *     delete a locked victim's markers and hand them a clean slate — the
+ *     attacker would be using the defence to undo itself.
+ *
+ * Deletions are capped per request: PropertiesService charges one call per key,
+ * and clearing a large backlog in a single login would push it past the 8s
+ * client timeout that api.js reports as "offline". The backlog drains across
+ * requests instead, which is fine because expiry is already time-based.
  */
 function sweepLoginFailures_(props, all) {
   var cutoff = Date.now() - LOGIN_LOCKOUT_MS;
-  var live = [];
+  var budget = LOGIN_FAIL_MAX_DELETES_PER_CALL;
+  var byAccount = {};
+
+  function drop(key) {
+    if (budget <= 0) return false;
+    props.deleteProperty(key);
+    delete all[key];
+    budget--;
+    return true;
+  }
+
   for (var key in all) {
     if (key.indexOf(LOGIN_FAIL_PREFIX) !== 0) continue;
     if (markerTimestamp_(key) < cutoff) {
-      props.deleteProperty(key);
-      delete all[key];
-    } else {
-      live.push(key);
+      drop(key);
+      continue;
     }
+    var account = key.split('_').slice(0, 2).join('_');
+    (byAccount[account] = byAccount[account] || []).push(key);
   }
-  // Still over the ceiling after expiring: evict oldest first so storage stays
-  // bounded even under a sustained run inside a single window.
-  if (live.length > LOGIN_FAIL_MAX_MARKERS) {
-    live.sort(function (a, b) { return markerTimestamp_(a) - markerTimestamp_(b); });
-    var excess = live.length - LOGIN_FAIL_MAX_MARKERS;
-    for (var i = 0; i < excess; i++) {
-      props.deleteProperty(live[i]);
-      delete all[live[i]];
+
+  var accounts = [];
+  var liveCount = 0;
+  for (var acct in byAccount) {
+    var keys = byAccount[acct];
+    keys.sort(function (a, b) { return markerTimestamp_(a) - markerTimestamp_(b); });
+    while (keys.length > LOGIN_FAIL_MAX_PER_ACCOUNT && budget > 0) {
+      if (!drop(keys[0])) break;
+      keys.shift();
+    }
+    liveCount += keys.length;
+    accounts.push({ key: acct, keys: keys, newest: markerTimestamp_(keys[keys.length - 1]) });
+  }
+
+  if (liveCount <= LOGIN_FAIL_MAX_MARKERS) return;
+
+  // Over the ceiling: shed unlocked accounts, least recently seen first. A
+  // locked account keeps its markers — losing them is what an attacker wants.
+  accounts.sort(function (a, b) { return a.newest - b.newest; });
+  for (var i = 0; i < accounts.length && liveCount > LOGIN_FAIL_MAX_MARKERS && budget > 0; i++) {
+    if (accounts[i].keys.length >= LOGIN_MAX_FAILURES) continue; // locked: keep
+    var ks = accounts[i].keys;
+    for (var j = 0; j < ks.length && budget > 0; j++) {
+      if (drop(ks[j])) liveCount--;
     }
   }
 }
@@ -1360,6 +1409,37 @@ function reviewConflict_(session, payload) {
 /* ------------------------------------------------------------------ *
  *  Admin (admin / manager) + Drive export
  * ------------------------------------------------------------------ */
+
+/* Change your own PIN. Any signed-in role.
+ *
+ * Seed PINs are written to the execution log, and Apps Script keeps that log —
+ * so a seeded PIN is a credential a second party has seen and can go on seeing.
+ * Telling staff to change theirs only means something if they can, without
+ * going through an admin, so this takes the current PIN and replaces it.
+ */
+function changeOwnPin_(session, payload) {
+  if (!session || !session.uid) throw statusError_(401, 'Sign in first');
+  var current = String((payload && payload.currentPin) || '');
+  var next = String((payload && payload.newPin) || '');
+  if (!/^[0-9]{6}$/.test(next)) throw statusError_(400, 'new PIN must be 6 digits');
+
+  var users = readRows_('Users', USER_HEADERS);
+  var me = null;
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].id) === String(session.uid)) { me = users[i]; break; }
+  }
+  if (!me) throw statusError_(404, 'No such user');
+  if (sha256Hex_(String(me.pin_salt) + ':' + current) !== String(me.pin_hash)) {
+    throw statusError_(403, 'Current PIN is incorrect');
+  }
+
+  var salt = Utilities.getUuid().split('-')[0];
+  applyPatches_('Users', USER_HEADERS, 'id', {
+    [me.id]: { pin_salt: salt, pin_hash: sha256Hex_(salt + ':' + next) },
+  });
+  Logger.log('[orison-pos] PIN changed by ' + session.uid);
+  return { ok: true };
+}
 
 /* Set a staff member's PIN. Admin only.
  *

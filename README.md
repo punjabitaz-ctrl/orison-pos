@@ -47,8 +47,10 @@ Each app install remembers it.
 ## Starter logins (seeded by the backend)
 
 The backend seeds four accounts on its first run and generates a **random
-6-digit PIN for each**. The PINs are stored only as salted hashes, so there is
-exactly one chance to read them:
+6-digit PIN for each**, and writes them to the execution log. Apps Script keeps
+that log, so treat these as first-day credentials rather than lasting ones —
+hand them out, then have everyone change theirs. The `Users` sheet itself only
+ever holds a salted hash. To read them:
 
 1. In the Apps Script editor, open **View > Executions**.
 2. Open the first execution (the one that created the workbook).
@@ -68,7 +70,9 @@ exactly one chance to read them:
 | Cashier | `diego@example.com` |
 
 Hand each person their PIN, then edit the `Users` sheet to replace the
-`@example.com` placeholders with real addresses.
+`@example.com` placeholders with real addresses. Staff change their own PIN with
+`POST /api/pin` (`{ "currentPin": "...", "newPin": "..." }`) — which is how the
+logged starter PINs stop being usable.
 
 Login is throttled: five wrong PINs lock that account for 15 minutes, measured
 from the most recent failure. An admin or manager can release it from the till

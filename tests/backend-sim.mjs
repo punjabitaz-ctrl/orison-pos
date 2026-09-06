@@ -724,10 +724,40 @@ section('login throttling');
       props[parts[0] + '_' + parts[1] + '_' + (Date.now() - 16 * 60 * 1000) + '_' + parts[3]] = props[k];
       delete props[k];
     }
+    // Deletions are capped per request so a backlog never stalls one login;
+    // the sweep drains across requests instead.
+    const beforeSweep = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
     req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] });
+    const afterOne = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
+    check('one request never deletes more than its budget',
+      beforeSweep - afterOne <= 50, 'deleted ' + (beforeSweep - afterOne));
+
+    for (let i = 0; i < 5; i++) {
+      req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] });
+    }
     const after = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
     check('expired markers for addresses never seen again are swept', after === 0,
       after + ' left behind');
+  }
+
+  // Eviction under the ceiling must not hand a locked account a clean slate.
+  {
+    for (let i = 0; i < 5; i++) req('/api/login', { email: victim, pin: '000000' });
+    check('victim is locked before the flood',
+      req('/api/login', { email: victim, pin: goodPin }).status === 429);
+
+    // Far more one-off failures than the ceiling, from throwaway addresses.
+    for (let i = 0; i < 1200; i++) {
+      req('/api/login', { email: 'flood' + i + '@example.com', pin: '000000' });
+    }
+    check('victim is still locked after the flood',
+      req('/api/login', { email: victim, pin: goodPin }).status === 429,
+      'evicting the globally oldest markers would have released it');
+    check('storage stayed bounded during the flood',
+      Object.keys(props).filter((k) => k.startsWith('lf_')).length <= 1000 + 50,
+      Object.keys(props).filter((k) => k.startsWith('lf_')).length + ' markers');
+
+    req('/api/admin/unlock', { email: victim }, { session: adminToken });
   }
 
   // An admin can release a lockout from the till, not only the script editor.
@@ -771,6 +801,26 @@ section('admin PIN reset');
   req('/api/admin/pin', { email: target, pin: '135791' }, { session: adminToken });
   check('a PIN reset also clears the lockout',
     req('/api/login', { email: target, pin: '135791' }).ok === true);
+}
+
+section('self-service PIN change');
+{
+  const who = 'sarah@example.com';
+  const login = req('/api/login', { email: who, pin: CREDS[who] });
+  const token = login.data.token;
+
+  check('needs a session', req('/api/pin', { currentPin: CREDS[who], newPin: '222222' }).status === 401);
+  check('rejects a wrong current PIN',
+    req('/api/pin', { currentPin: '000000', newPin: '222222' }, { session: token }).status === 403);
+  check('rejects a short new PIN',
+    req('/api/pin', { currentPin: CREDS[who], newPin: '2222' }, { session: token }).status === 400);
+
+  check('changes the PIN',
+    req('/api/pin', { currentPin: CREDS[who], newPin: '222222' }, { session: token }).ok === true);
+  check('the new PIN works', req('/api/login', { email: who, pin: '222222' }).ok === true);
+  check('the seeded PIN no longer works',
+    req('/api/login', { email: who, pin: CREDS[who] }).status === 401);
+  CREDS[who] = '222222';
 }
 
 section('PIN generation');
