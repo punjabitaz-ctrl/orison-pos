@@ -67,6 +67,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/transactions':    return transactions_(params);
     case '/api/conflicts':       return conflicts_(session, params);
     case '/api/conflicts/review': return reviewConflict_(session, payload);
+    case '/api/admin/unlock':    return adminUnlock_(session, payload);
     case '/api/admin/products':  return adminProducts_(session, payload);
     case '/api/admin/serials':   return adminSerials_(session, payload);
     case '/api/admin/inventory': return adminInventory_(session, payload);
@@ -306,15 +307,39 @@ var SEED_USERS = [
  * this never outlives the run that created it and is never written to a sheet. */
 var SEED_CREDENTIALS = [];
 
-/* A 6-digit PIN from a cryptographically-uniform source. 10x the keyspace of
- * the 4-digit PINs this replaces, and no modulo bias. */
-function randomPin_() {
-  var digits = '';
-  while (digits.length < 6) {
-    var bytes = Utilities.getUuid().replace(/[^0-9]/g, '');
-    digits += bytes;
+/* Random hex nibbles from v4 UUIDs, skipping the two positions RFC 4122 fixes.
+ * With dashes removed, index 12 is always the version '4' and index 16 is the
+ * variant (8/9/a/b); harvesting digits without excluding them skews the result
+ * badly — measured over 200k samples, a PIN built from the raw digits of a UUID
+ * ends in '4' 17% of the time instead of 10%. */
+function randomNibbles_(count) {
+  var out = [];
+  while (out.length < count) {
+    var hex = Utilities.getUuid().replace(/-/g, '');
+    for (var i = 0; i < hex.length; i++) {
+      if (i === 12 || i === 16) continue; // version / variant: not random
+      out.push(parseInt(hex.charAt(i), 16));
+    }
   }
-  return digits.slice(0, 6);
+  return out.slice(0, count);
+}
+
+/* A uniform 6-digit PIN. 100x the keyspace of the 4-digit PINs this replaces.
+ * Rejection sampling, because 2^24 is not a multiple of 1,000,000 and a plain
+ * modulo would make the low values slightly more likely. */
+function randomPin_() {
+  var LIMIT = 16000000; // largest multiple of 1e6 that fits in 24 bits
+  for (var attempt = 0; attempt < 64; attempt++) {
+    var n = randomNibbles_(6);
+    var value = 0;
+    for (var i = 0; i < 6; i++) value = value * 16 + n[i];
+    if (value < LIMIT) {
+      var pin = String(value % 1000000);
+      while (pin.length < 6) pin = '0' + pin;
+      return pin;
+    }
+  }
+  throw new Error('randomPin_: exhausted retries');
 }
 
 /* Port of server/seed.js catalog (42 products). Serialized products list
@@ -482,48 +507,74 @@ function seed_() {
 
 var LOGIN_MAX_FAILURES = 5;
 var LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
-/* Delay applied to the 1st..4th consecutive failure. Enough to make
- * enumeration hopeless while staying far inside the execution time limit. */
-var LOGIN_FAILURE_DELAYS_MS = [250, 1000, 2000, 4000];
 
 function loginFailKey_(email) {
   return 'login_fail_' + sha256Hex_(String(email || '').toLowerCase()).slice(0, 32);
 }
 
-function loginFailureRecord_(email) {
-  var raw = PropertiesService.getScriptProperties().getProperty(loginFailKey_(email));
+/* The failure record, or null when there is none or it has aged out.
+ *
+ * The window is measured from the LAST failure, not the first. Anchoring to the
+ * first let an attacker spread four failures across the window and trip the
+ * fifth just before it elapsed, earning a lockout of a second or two and then a
+ * clean counter — a fifteen-minute lockout in name only.
+ *
+ * An expired record is deleted rather than merely ignored: Script Properties is
+ * a bounded store (~500 KB) and a failed login mints a key per address tried,
+ * so leaving them behind lets an attacker fill it until setProperty throws and
+ * SESSION_SECRET and SPREADSHEET_ID can no longer be written. */
+function loginFailureRecord_(email, props) {
+  var key = loginFailKey_(email);
+  var raw = props.getProperty(key);
   if (!raw) return null;
+  var rec;
   try {
-    var rec = JSON.parse(raw);
-    if (Date.now() - Number(rec.first || 0) >= LOGIN_LOCKOUT_MS) return null; // window elapsed
-    return rec;
+    rec = JSON.parse(raw);
   } catch (_) {
+    props.deleteProperty(key);
     return null;
   }
+  if (Date.now() - Number(rec.last || 0) >= LOGIN_LOCKOUT_MS) {
+    props.deleteProperty(key);
+    return null;
+  }
+  return rec;
 }
 
 /* Milliseconds remaining on an active lockout, or 0 when not locked out. */
 function loginLockoutRemainingMs_(email) {
-  var rec = loginFailureRecord_(email);
+  var rec = loginFailureRecord_(email, PropertiesService.getScriptProperties());
   if (!rec || Number(rec.n || 0) < LOGIN_MAX_FAILURES) return 0;
-  var remaining = LOGIN_LOCKOUT_MS - (Date.now() - Number(rec.first || 0));
+  var remaining = LOGIN_LOCKOUT_MS - (Date.now() - Number(rec.last || 0));
   return remaining > 0 ? remaining : 0;
 }
 
+/* Increment under the script lock. Read-modify-write on Script Properties is
+ * not atomic, and a Web App serves requests concurrently: without the lock,
+ * parallel guesses all read the same count and all write n=1, so the threshold
+ * is never reached and the throttle does nothing against the one attacker it
+ * exists to stop. Every other mutating path in this file takes the same lock. */
 function recordLoginFailure_(email) {
-  var props = PropertiesService.getScriptProperties();
-  var rec = loginFailureRecord_(email) || { n: 0, first: Date.now() };
-  rec.n = Number(rec.n || 0) + 1;
-  props.setProperty(loginFailKey_(email), JSON.stringify(rec));
-  return rec.n;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var rec = loginFailureRecord_(email, props) || { n: 0 };
+    rec.n = Number(rec.n || 0) + 1;
+    rec.last = Date.now();
+    props.setProperty(loginFailKey_(email), JSON.stringify(rec));
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function clearLoginFailures_(email) {
   PropertiesService.getScriptProperties().deleteProperty(loginFailKey_(email));
 }
 
-/* Run from the Apps Script editor to free an account locked out by a
- * mistyped PIN or a deliberate lockout attempt. */
+/* Release an account locked out by a mistyped PIN or a deliberate lockout.
+ * Also reachable at /api/admin/unlock so a manager can do it from the till —
+ * a store cannot wait for someone to open the Apps Script editor mid-shift. */
 function clearLoginLockout(email) {
   clearLoginFailures_(email);
   Logger.log('[orison-pos] cleared login lockout for ' + email);
@@ -548,11 +599,12 @@ function login_(payload) {
     }
   }
   if (!found || sha256Hex_(String(found.pin_salt) + ':' + pin) !== String(found.pin_hash)) {
-    var failures = recordLoginFailure_(email);
-    // Same delay whether or not the address exists, so timing does not reveal
-    // which staff emails are real.
-    var delay = LOGIN_FAILURE_DELAYS_MS[Math.min(failures, LOGIN_FAILURE_DELAYS_MS.length) - 1];
-    if (delay) { try { Utilities.sleep(delay); } catch (_) {} }
+    // Counted, but deliberately NOT delayed. Utilities.sleep bills against the
+    // script's daily runtime quota and holds a simultaneous-execution slot, so
+    // a delay long enough to matter is itself a way to take the till offline;
+    // it also pushed responses past the client's 8s timeout, which api.js maps
+    // to "offline" and hides the real error. The attempt cap does the work.
+    recordLoginFailure_(email);
     throw statusError_(401, 'Invalid email or PIN');
   }
 
@@ -1256,6 +1308,18 @@ function reviewConflict_(session, payload) {
 /* ------------------------------------------------------------------ *
  *  Admin (admin / manager) + Drive export
  * ------------------------------------------------------------------ */
+
+/* Release a staff login lockout. Admin/manager only, and it deliberately does
+ * not reveal whether the address was locked — the caller is already trusted,
+ * but the response should not become a way to probe which accounts exist. */
+function adminUnlock_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  var email = String((payload && payload.email) || '').trim().toLowerCase();
+  if (!email) throw statusError_(400, 'email is required');
+  clearLoginFailures_(email);
+  Logger.log('[orison-pos] lockout cleared for ' + email + ' by ' + session.uid);
+  return { ok: true };
+}
 
 function adminProducts_(session, payload) {
   requireRole_(session, ['admin', 'manager']);

@@ -70,9 +70,15 @@ exactly one chance to read them:
 Hand each person their PIN, then edit the `Users` sheet to replace the
 `@example.com` placeholders with real addresses.
 
-Login is throttled: consecutive wrong PINs are answered with a growing delay,
-and five failures lock that account for 15 minutes. To release one early, run
-`clearLoginLockout("someone@example.com")` from the Apps Script editor.
+Login is throttled: five wrong PINs lock that account for 15 minutes, measured
+from the most recent failure. An admin or manager can release it from the till
+(`POST /api/admin/unlock` with `{ "email": "someone@example.com" }`), or you can
+run `clearLoginLockout("someone@example.com")` from the Apps Script editor.
+
+Note the tradeoff: because the counter is per-account and Apps Script does not
+expose the caller's address, someone who knows a staff email can keep that
+account locked by failing against it repeatedly. The unlock endpoint exists so
+a shift is never blocked waiting on the script editor.
 
 Store: **Orison Electronics — Main Street** (code `ORSTN-01`)
 

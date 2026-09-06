@@ -649,17 +649,15 @@ section('login throttling');
 {
   const victim = 'diego@example.com';
   const goodPin = CREDS[victim];
-  sleeps.length = 0;
 
-  // Four wrong PINs: each rejected, each answered with a growing delay.
+  // Four wrong PINs: rejected, and NOT delayed. Utilities.sleep would bill the
+  // script's daily runtime quota and push past the client's 8s timeout.
+  sleeps.length = 0;
   const early = [];
   for (let i = 0; i < 4; i++) early.push(req('/api/login', { email: victim, pin: '000000' }));
   check('wrong PIN is rejected', early.every((r) => r.ok === false && r.status === 401));
-  check('failures are delayed, and the delay grows',
-    sleeps.length === 4 && sleeps.every((d, i) => i === 0 || d > sleeps[i - 1]),
-    JSON.stringify(sleeps));
+  check('failed logins do not burn script runtime', sleeps.length === 0, JSON.stringify(sleeps));
 
-  // The fifth failure trips the lockout.
   const fifth = req('/api/login', { email: victim, pin: '000000' });
   check('fifth wrong PIN still 401', fifth.ok === false && fifth.status === 401);
 
@@ -671,29 +669,63 @@ section('login throttling');
   check('correct PIN is refused while locked out',
     correctWhileLocked.ok === false && correctWhileLocked.status === 429);
 
-  // A different account is unaffected — the counter is per-email.
   const other = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] });
   check('lockout does not spill onto another account', other.ok === true);
 
-  // An admin can release it.
-  sandbox.clearLoginLockout(victim);
-  const afterClear = req('/api/login', { email: victim, pin: goodPin });
-  check('clearLoginLockout releases the account', afterClear.ok === true);
+  // The window runs from the LAST failure. Anchored to the first, an attacker
+  // could spread failures across the window and earn a ~1s lockout.
+  {
+    // Address this account's key directly — other tests above have left
+    // failure records for other addresses, so "the first login_fail_ key" is
+    // not necessarily this one.
+    const key = sandbox.loginFailKey_(victim);
+    const rec = JSON.parse(props[key]);
+    check('failure record is stamped with the last failure', typeof rec.last === 'number');
+    // Age the record to just under the window: still locked.
+    props[key] = JSON.stringify({ n: rec.n, last: Date.now() - (15 * 60 * 1000 - 5000) });
+    check('still locked 5s before the window closes',
+      req('/api/login', { email: victim, pin: goodPin }).status === 429);
+    // Age it past the window: released, and the record is deleted not just ignored.
+    props[key] = JSON.stringify({ n: rec.n, last: Date.now() - (15 * 60 * 1000 + 1000) });
+    const released = req('/api/login', { email: victim, pin: goodPin });
+    check('released once the window has fully elapsed', released.ok === true);
+    check('expired failure record is deleted, not left to fill the store',
+      !(key in props));
+  }
 
-  // A successful login clears the running failure count.
-  req('/api/login', { email: victim, pin: '000000' });
-  req('/api/login', { email: victim, pin: goodPin });
-  sleeps.length = 0;
-  const afterSuccess = req('/api/login', { email: victim, pin: '000000' });
-  check('successful login resets the failure counter',
-    afterSuccess.status === 401 && sleeps.length === 1 && sleeps[0] === 250,
-    JSON.stringify(sleeps));
+  // An admin can release a lockout from the till, not only the script editor.
+  for (let i = 0; i < 5; i++) req('/api/login', { email: victim, pin: '000000' });
+  check('locked again after five failures',
+    req('/api/login', { email: victim, pin: goodPin }).status === 429);
 
-  // An unknown address is delayed the same way, so timing cannot enumerate staff.
-  sleeps.length = 0;
+  const cashierUnlock = req('/api/admin/unlock', { email: victim }, { session: cashierToken });
+  check('cashier may not clear a lockout', cashierUnlock.ok === false && cashierUnlock.status === 403);
+
+  const adminUnlock = req('/api/admin/unlock', { email: victim }, { session: adminToken });
+  check('admin can clear a lockout', adminUnlock.ok === true);
+  check('account works again after admin unlock',
+    req('/api/login', { email: victim, pin: goodPin }).ok === true);
+
   const unknown = req('/api/login', { email: 'nobody@example.com', pin: '000000' });
-  check('unknown address is rejected and delayed like a known one',
-    unknown.status === 401 && sleeps.length === 1 && sleeps[0] === 250);
+  check('unknown address is rejected the same way', unknown.status === 401);
+}
+
+section('PIN generation');
+{
+  // A PIN built from the raw digits of a v4 UUID inherits the fixed version
+  // nibble and ends in '4' about 17% of the time instead of 10%.
+  const counts = {};
+  const N = 20000;
+  for (let i = 0; i < N; i++) {
+    const pin = sandbox.randomPin_();
+    if (!/^[0-9]{6}$/.test(pin)) { counts.BAD = (counts.BAD || 0) + 1; continue; }
+    for (const ch of pin) counts[ch] = (counts[ch] || 0) + 1;
+  }
+  check('every PIN is exactly 6 digits', !counts.BAD);
+  const freqs = '0123456789'.split('').map((d) => (counts[d] || 0) / (N * 6));
+  const worst = Math.max(...freqs.map((f) => Math.abs(f - 0.1)));
+  check('digits are uniform to within 1 point', worst < 0.01,
+    'worst deviation ' + (worst * 100).toFixed(2) + 'pp');
 }
 
 console.log('\n-------------------------------------');

@@ -1,4 +1,3 @@
-import puppeteer from 'puppeteer-core'
 import { writeFileSync, mkdirSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -24,7 +23,6 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
 const BASE = process.env.E2E_BASE || 'http://127.0.0.1:8080'
 const GAS_URL = process.env.E2E_GAS_URL || ''
 const APP_TOKEN = process.env.E2E_APP_TOKEN || ''
-const PROFILE = mkdtempSync(join(tmpdir(), 'orison-e2e-'))
 // Seed PINs are generated per deployment and never committed. Read the admin
 // and cashier PINs from the Apps Script execution log (see README) and pass
 // them in, e.g. E2E_PIN=481902 E2E_CASHIER_PIN=730155 npm run test:e2e
@@ -32,10 +30,20 @@ const EMAIL = process.env.E2E_EMAIL || 'tariq@example.com'
 const PIN = process.env.E2E_PIN || ''
 const CASHIER_EMAIL = process.env.E2E_CASHIER_EMAIL || 'amara@example.com'
 const CASHIER_PIN = process.env.E2E_CASHIER_PIN || ''
+// Skip rather than fail: this suite also needs a running server and a deployed
+// backend, so it cannot be part of a default `npm test` run. Exiting non-zero
+// here would make `npm test` permanently red on a clean checkout.
 if (!PIN || !CASHIER_PIN) {
-  console.error('E2E_PIN and E2E_CASHIER_PIN must be set — see README > Starter logins.')
-  process.exit(2)
+  console.log('SKIP e2e: set E2E_PIN and E2E_CASHIER_PIN to run it — see README > Starter logins.')
+  process.exit(0)
 }
+
+// Imported dynamically, below the guard: a static import is hoisted above it,
+// so a checkout without devDependencies would crash before the skip could run.
+const puppeteer = (await import('puppeteer-core')).default
+
+// Created only once we know the run will proceed, so a skip leaks no temp dir.
+const PROFILE = mkdtempSync(join(tmpdir(), 'orison-e2e-'))
 const SERIAL = '359999001234567'
 const LOG = join(process.cwd(), 'tests', 'e2e-run.log')
 const SHOTDIR = join(process.cwd(), 'tests', 'shots')

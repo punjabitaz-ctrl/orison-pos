@@ -4,10 +4,11 @@
   "private": true,
   "description": "Offline-first, mobile-first Point of Sale (PWA) for a small electronics retailer. Backend: Google Apps Script + Sheets + Drive. Zero per-seat fees.",
   "scripts": {
-    "test": "node tests/backend-sim.mjs && node tests/e2e.mjs",
+    "test": "node tests/backend-sim.mjs",
     "test:backend": "node tests/backend-sim.mjs",
     "test:e2e": "node tests/e2e.mjs",
-    "serve": "npx --yes local-web-server --port 8080 --directory public --spa index.html"
+    "serve": "npx --yes local-web-server --port 8080 --directory public --spa index.html",
+    "test:all": "node tests/backend-sim.mjs && node tests/e2e.mjs"
   },
   "engines": {
     "node": ">=20"
