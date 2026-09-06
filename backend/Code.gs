@@ -68,6 +68,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/conflicts':       return conflicts_(session, params);
     case '/api/conflicts/review': return reviewConflict_(session, payload);
     case '/api/admin/unlock':    return adminUnlock_(session, payload);
+    case '/api/admin/pin':       return adminSetPin_(session, payload);
     case '/api/admin/products':  return adminProducts_(session, payload);
     case '/api/admin/serials':   return adminSerials_(session, payload);
     case '/api/admin/inventory': return adminInventory_(session, payload);
@@ -392,6 +393,15 @@ var SEED_PRODUCTS = [
 ];
 
 function ensureSeed_() {
+  // Checked before the lock as well as inside it. Seeding happens once in the
+  // life of a deployment, but this runs on every request, and taking the script
+  // lock unconditionally means every request queues behind whatever holds it —
+  // syncPush_ holds it for seconds at a time. A login stalled that way blows
+  // past the client's 8s timeout, which api.js reports as "offline" and
+  // login.js turns into the offline-PIN fallback. The re-check inside the lock
+  // is what actually makes seeding exclusive.
+  if (kv_().store_id) return;
+
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) return;
   try {
@@ -508,68 +518,110 @@ function seed_() {
 var LOGIN_MAX_FAILURES = 5;
 var LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
 
-function loginFailKey_(email) {
-  return 'login_fail_' + sha256Hex_(String(email || '').toLowerCase()).slice(0, 32);
+/* Failures are stored as one property per attempt rather than a counter.
+ *
+ * A counter needs read-modify-write, which Script Properties does not make
+ * atomic, so it needs LockService — and that turned out to be a bad trade on
+ * this path: tryLock stalls behind syncPush_, which routinely holds the script
+ * lock for seconds, pushing the 401 past the client's 8s timeout, where api.js
+ * maps it to err.offline and login.js silently drops the cashier into the
+ * offline-PIN fallback. Failing open when the lock could not be taken also
+ * meant guesses during contention went uncounted.
+ *
+ * Appending a uniquely-named marker needs no lock and loses no writes. The one
+ * concession is that the gate is read before the marker is written, so a burst
+ * arriving together can all pass it; the overshoot is bounded by Apps Script's
+ * simultaneous-execution limit and the lockout engages immediately after.
+ */
+var LOGIN_FAIL_PREFIX = 'lf_';
+/* Hard ceiling on stored markers. Script Properties is a bounded store (~500 KB)
+ * and every failure against a fresh address mints a key, so without a ceiling a
+ * sustained run of bad logins fills it and setProperty starts throwing — taking
+ * SESSION_SECRET and SPREADSHEET_ID writes down with it. */
+var LOGIN_FAIL_MAX_MARKERS = 1000;
+
+function loginFailPrefix_(email) {
+  return LOGIN_FAIL_PREFIX + sha256Hex_(String(email || '').toLowerCase()).slice(0, 16) + '_';
 }
 
-/* The failure record, or null when there is none or it has aged out.
- *
- * The window is measured from the LAST failure, not the first. Anchoring to the
- * first let an attacker spread four failures across the window and trip the
- * fifth just before it elapsed, earning a lockout of a second or two and then a
- * clean counter — a fifteen-minute lockout in name only.
- *
- * An expired record is deleted rather than merely ignored: Script Properties is
- * a bounded store (~500 KB) and a failed login mints a key per address tried,
- * so leaving them behind lets an attacker fill it until setProperty throws and
- * SESSION_SECRET and SPREADSHEET_ID can no longer be written. */
-function loginFailureRecord_(email, props) {
-  var key = loginFailKey_(email);
-  var raw = props.getProperty(key);
-  if (!raw) return null;
-  var rec;
-  try {
-    rec = JSON.parse(raw);
-  } catch (_) {
-    props.deleteProperty(key);
-    return null;
-  }
-  if (Date.now() - Number(rec.last || 0) >= LOGIN_LOCKOUT_MS) {
-    props.deleteProperty(key);
-    return null;
-  }
-  return rec;
+function markerTimestamp_(key) {
+  var parts = key.split('_');
+  return Number(parts[2] || 0);
 }
 
-/* Milliseconds remaining on an active lockout, or 0 when not locked out. */
+/* Drop every marker older than the window, whatever address it belongs to.
+ *
+ * This has to be a sweep across all keys, not a check on the one address being
+ * looked at: deleting only on re-read leaves a permanent property behind for
+ * every address an attacker tries once and never repeats, which is exactly the
+ * store-filling attack the ceiling above exists to stop.
+ */
+function sweepLoginFailures_(props, all) {
+  var cutoff = Date.now() - LOGIN_LOCKOUT_MS;
+  var live = [];
+  for (var key in all) {
+    if (key.indexOf(LOGIN_FAIL_PREFIX) !== 0) continue;
+    if (markerTimestamp_(key) < cutoff) {
+      props.deleteProperty(key);
+      delete all[key];
+    } else {
+      live.push(key);
+    }
+  }
+  // Still over the ceiling after expiring: evict oldest first so storage stays
+  // bounded even under a sustained run inside a single window.
+  if (live.length > LOGIN_FAIL_MAX_MARKERS) {
+    live.sort(function (a, b) { return markerTimestamp_(a) - markerTimestamp_(b); });
+    var excess = live.length - LOGIN_FAIL_MAX_MARKERS;
+    for (var i = 0; i < excess; i++) {
+      props.deleteProperty(live[i]);
+      delete all[live[i]];
+    }
+  }
+}
+
+/* Live failure marker timestamps for one address, newest last. */
+function loginFailureTimes_(email, all) {
+  var prefix = loginFailPrefix_(email);
+  var cutoff = Date.now() - LOGIN_LOCKOUT_MS;
+  var times = [];
+  for (var key in all) {
+    if (key.indexOf(prefix) !== 0) continue;
+    var ts = markerTimestamp_(key);
+    if (ts >= cutoff) times.push(ts);
+  }
+  times.sort(function (a, b) { return a - b; });
+  return times;
+}
+
+/* Milliseconds remaining on an active lockout, or 0 when not locked out.
+ * The window runs from the most recent failure: anchored to the first, an
+ * attacker could spread failures across the window and trip the last one just
+ * before it elapsed, earning a lockout of a second or two and a clean slate. */
 function loginLockoutRemainingMs_(email) {
-  var rec = loginFailureRecord_(email, PropertiesService.getScriptProperties());
-  if (!rec || Number(rec.n || 0) < LOGIN_MAX_FAILURES) return 0;
-  var remaining = LOGIN_LOCKOUT_MS - (Date.now() - Number(rec.last || 0));
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  sweepLoginFailures_(props, all);
+  var times = loginFailureTimes_(email, all);
+  if (times.length < LOGIN_MAX_FAILURES) return 0;
+  var remaining = LOGIN_LOCKOUT_MS - (Date.now() - times[times.length - 1]);
   return remaining > 0 ? remaining : 0;
 }
 
-/* Increment under the script lock. Read-modify-write on Script Properties is
- * not atomic, and a Web App serves requests concurrently: without the lock,
- * parallel guesses all read the same count and all write n=1, so the threshold
- * is never reached and the throttle does nothing against the one attacker it
- * exists to stop. Every other mutating path in this file takes the same lock. */
 function recordLoginFailure_(email) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) return;
-  try {
-    var props = PropertiesService.getScriptProperties();
-    var rec = loginFailureRecord_(email, props) || { n: 0 };
-    rec.n = Number(rec.n || 0) + 1;
-    rec.last = Date.now();
-    props.setProperty(loginFailKey_(email), JSON.stringify(rec));
-  } finally {
-    lock.releaseLock();
-  }
+  var props = PropertiesService.getScriptProperties();
+  var key = loginFailPrefix_(email) + Date.now() + '_' +
+            Math.floor(Math.random() * 1e6);
+  props.setProperty(key, '1');
 }
 
 function clearLoginFailures_(email) {
-  PropertiesService.getScriptProperties().deleteProperty(loginFailKey_(email));
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  var prefix = loginFailPrefix_(email);
+  for (var key in all) {
+    if (key.indexOf(prefix) === 0) props.deleteProperty(key);
+  }
 }
 
 /* Release an account locked out by a mistyped PIN or a deliberate lockout.
@@ -1308,6 +1360,37 @@ function reviewConflict_(session, payload) {
 /* ------------------------------------------------------------------ *
  *  Admin (admin / manager) + Drive export
  * ------------------------------------------------------------------ */
+
+/* Set a staff member's PIN. Admin only.
+ *
+ * Seeded PINs are random and reported once to the execution log, and
+ * spreadSheet_ recreates the workbook if openById ever fails — which reseeds
+ * and rotates all four. Without a reset path that leaves nobody able to sign
+ * in, so this is the recovery route as well as the everyday "I forgot my PIN"
+ * one. Stored the same way login checks it: salted, hashed, never in cleartext.
+ */
+function adminSetPin_(session, payload) {
+  requireRole_(session, ['admin']);
+  var email = String((payload && payload.email) || '').trim().toLowerCase();
+  var pin = String((payload && payload.pin) || '');
+  if (!email) throw statusError_(400, 'email is required');
+  if (!/^[0-9]{6}$/.test(pin)) throw statusError_(400, 'pin must be 6 digits');
+
+  var users = readRows_('Users', USER_HEADERS);
+  var found = null;
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].email).toLowerCase() === email) { found = users[i]; break; }
+  }
+  if (!found) throw statusError_(404, 'No such user');
+
+  var salt = Utilities.getUuid().split('-')[0];
+  applyPatches_('Users', USER_HEADERS, 'id', {
+    [found.id]: { pin_salt: salt, pin_hash: sha256Hex_(salt + ':' + pin) },
+  });
+  clearLoginFailures_(email);
+  Logger.log('[orison-pos] PIN reset for ' + email + ' by ' + session.uid);
+  return { ok: true };
+}
 
 /* Release a staff login lockout. Admin/manager only, and it deliberately does
  * not reveal whether the address was locked — the caller is already trusted,

@@ -119,6 +119,7 @@ const props = {};
 const driveFiles = [];
 const driveFolders = [{ id: 'folder-1', name: 'Orison POS Export' }];
 const sleeps = [];
+const lockAcquisitions = [];
 
 const sandbox = {
   console,
@@ -139,6 +140,9 @@ const sandbox = {
       getProperty: (k) => (k in props ? props[k] : null),
       setProperty: (k, v) => { props[k] = v; },
       deleteProperty: (k) => { delete props[k]; },
+      // Returns a copy, as the real service does — callers mutate the result
+      // while deleting, and must not be editing the live store underneath.
+      getProperties: () => ({ ...props }),
     }),
   },
   Utilities: {
@@ -159,7 +163,10 @@ const sandbox = {
     create: (name) => store.create(name),
   },
   LockService: {
-    getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }),
+    getScriptLock: () => ({
+      tryLock: () => { lockAcquisitions.push(Date.now()); return true; },
+      releaseLock: () => {},
+    }),
   },
   DriveApp: {
     getFolderById: (id) => (driveFolders.find((f) => f.id === id) ? { getId: () => id, createFile: realCreateFile } : (() => { throw new Error('missing folder ' + id); })()),
@@ -650,13 +657,18 @@ section('login throttling');
   const victim = 'diego@example.com';
   const goodPin = CREDS[victim];
 
-  // Four wrong PINs: rejected, and NOT delayed. Utilities.sleep would bill the
-  // script's daily runtime quota and push past the client's 8s timeout.
+  // The failure path must neither sleep nor take the script lock. Utilities.sleep
+  // bills the daily runtime quota; the script lock is held for seconds at a time
+  // by syncPush_, and waiting on it pushes the 401 past the client's 8s timeout,
+  // where api.js reports it as "offline" and login.js falls back to offline PIN.
   sleeps.length = 0;
+  lockAcquisitions.length = 0;
   const early = [];
   for (let i = 0; i < 4; i++) early.push(req('/api/login', { email: victim, pin: '000000' }));
   check('wrong PIN is rejected', early.every((r) => r.ok === false && r.status === 401));
-  check('failed logins do not burn script runtime', sleeps.length === 0, JSON.stringify(sleeps));
+  check('failed logins do not sleep', sleeps.length === 0, JSON.stringify(sleeps));
+  check('failed logins do not take the script lock', lockAcquisitions.length === 0,
+    lockAcquisitions.length + ' acquisitions');
 
   const fifth = req('/api/login', { email: victim, pin: '000000' });
   check('fifth wrong PIN still 401', fifth.ok === false && fifth.status === 401);
@@ -665,32 +677,57 @@ section('login throttling');
   check('further attempts are locked out with 429', locked.ok === false && locked.status === 429);
 
   // The lockout must hold even for the CORRECT PIN, or it buys nothing.
-  const correctWhileLocked = req('/api/login', { email: victim, pin: goodPin });
   check('correct PIN is refused while locked out',
-    correctWhileLocked.ok === false && correctWhileLocked.status === 429);
+    req('/api/login', { email: victim, pin: goodPin }).status === 429);
 
-  const other = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] });
-  check('lockout does not spill onto another account', other.ok === true);
+  check('lockout does not spill onto another account',
+    req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).ok === true);
 
-  // The window runs from the LAST failure. Anchored to the first, an attacker
-  // could spread failures across the window and earn a ~1s lockout.
+  // The window runs from the LAST failure, so a lockout is a full 15 minutes
+  // rather than 15 minutes minus however long the attack already ran.
   {
-    // Address this account's key directly — other tests above have left
-    // failure records for other addresses, so "the first login_fail_ key" is
-    // not necessarily this one.
-    const key = sandbox.loginFailKey_(victim);
-    const rec = JSON.parse(props[key]);
-    check('failure record is stamped with the last failure', typeof rec.last === 'number');
-    // Age the record to just under the window: still locked.
-    props[key] = JSON.stringify({ n: rec.n, last: Date.now() - (15 * 60 * 1000 - 5000) });
+    const prefix = 'lf_';
+    const mine = Object.keys(props).filter((k) => k.startsWith(prefix));
+    check('failures are stored as one marker each', mine.length >= 5, mine.length + ' markers');
+
+    // Age this account's markers to just inside the window: still locked.
+    const age = (ms) => {
+      for (const k of Object.keys(props).filter((x) => x.startsWith(prefix))) {
+        const parts = k.split('_');
+        const moved = parts[0] + '_' + parts[1] + '_' + (Date.now() - ms) + '_' + parts[3];
+        props[moved] = props[k];
+        delete props[k];
+      }
+    };
+    age(15 * 60 * 1000 - 5000);
     check('still locked 5s before the window closes',
       req('/api/login', { email: victim, pin: goodPin }).status === 429);
-    // Age it past the window: released, and the record is deleted not just ignored.
-    props[key] = JSON.stringify({ n: rec.n, last: Date.now() - (15 * 60 * 1000 + 1000) });
-    const released = req('/api/login', { email: victim, pin: goodPin });
-    check('released once the window has fully elapsed', released.ok === true);
-    check('expired failure record is deleted, not left to fill the store',
-      !(key in props));
+
+    age(15 * 60 * 1000 + 1000);
+    check('released once the window has fully elapsed',
+      req('/api/login', { email: victim, pin: goodPin }).ok === true);
+  }
+
+  // The store-filling attack: one failure each against many addresses that are
+  // never seen again. Deleting expired records only when the SAME address is
+  // looked up again leaves every one of them behind forever.
+  {
+    const before = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
+    for (let i = 0; i < 60; i++) req('/api/login', { email: 'probe' + i + '@example.com', pin: '000000' });
+    const during = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
+    check('each distinct address leaves a marker while it is live', during >= before + 60,
+      before + ' -> ' + during);
+
+    // Age every marker past the window, then make one unrelated request.
+    for (const k of Object.keys(props).filter((x) => x.startsWith('lf_'))) {
+      const parts = k.split('_');
+      props[parts[0] + '_' + parts[1] + '_' + (Date.now() - 16 * 60 * 1000) + '_' + parts[3]] = props[k];
+      delete props[k];
+    }
+    req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] });
+    const after = Object.keys(props).filter((k) => k.startsWith('lf_')).length;
+    check('expired markers for addresses never seen again are swept', after === 0,
+      after + ' left behind');
   }
 
   // An admin can release a lockout from the till, not only the script editor.
@@ -701,13 +738,39 @@ section('login throttling');
   const cashierUnlock = req('/api/admin/unlock', { email: victim }, { session: cashierToken });
   check('cashier may not clear a lockout', cashierUnlock.ok === false && cashierUnlock.status === 403);
 
-  const adminUnlock = req('/api/admin/unlock', { email: victim }, { session: adminToken });
-  check('admin can clear a lockout', adminUnlock.ok === true);
+  check('admin can clear a lockout',
+    req('/api/admin/unlock', { email: victim }, { session: adminToken }).ok === true);
   check('account works again after admin unlock',
     req('/api/login', { email: victim, pin: goodPin }).ok === true);
 
-  const unknown = req('/api/login', { email: 'nobody@example.com', pin: '000000' });
-  check('unknown address is rejected the same way', unknown.status === 401);
+  check('unknown address is rejected the same way',
+    req('/api/login', { email: 'nobody@example.com', pin: '000000' }).status === 401);
+}
+
+section('admin PIN reset');
+{
+  const target = 'amara@example.com';
+  check('cashier may not reset a PIN',
+    req('/api/admin/pin', { email: target, pin: '111111' }, { session: cashierToken }).status === 403);
+  check('manager may not reset a PIN',
+    req('/api/admin/pin', { email: target, pin: '111111' }, { session: mgr.data.token }).status === 403);
+  check('a 4-digit PIN is refused',
+    req('/api/admin/pin', { email: target, pin: '1111' }, { session: adminToken }).status === 400);
+  check('an unknown address is refused',
+    req('/api/admin/pin', { email: 'nobody@example.com', pin: '111111' }, { session: adminToken }).status === 404);
+
+  const reset = req('/api/admin/pin', { email: target, pin: '246813' }, { session: adminToken });
+  check('admin can reset a PIN', reset.ok === true);
+  check('the new PIN works', req('/api/login', { email: target, pin: '246813' }).ok === true);
+  check('the old PIN no longer works',
+    req('/api/login', { email: target, pin: CREDS[target] }).status === 401);
+
+  // Recovery path: a locked-out account is usable again straight after a reset.
+  for (let i = 0; i < 5; i++) req('/api/login', { email: target, pin: '000000' });
+  check('locked after five failures', req('/api/login', { email: target, pin: '246813' }).status === 429);
+  req('/api/admin/pin', { email: target, pin: '135791' }, { session: adminToken });
+  check('a PIN reset also clears the lockout',
+    req('/api/login', { email: target, pin: '135791' }).ok === true);
 }
 
 section('PIN generation');

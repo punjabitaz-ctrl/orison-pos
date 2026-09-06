@@ -116,7 +116,9 @@ try {
   // ---- Login via PIN pad ----
   await page.type('#loginEmail', EMAIL)
   for (const ch of PIN) { await page.click(`.pp-key[data-k="${ch}"]`); await sleep(50) }
-  ok('PIN pad shows ' + PIN.length + ' digits', await page.$eval('#loginPin', el => el.value).then(v => v === PIN), 'val=' + await page.$eval('#loginPin', el => el.value))
+  // Report only the length on failure: PIN is now a live credential, and this
+  // string goes to stdout and tests/e2e-run.log.
+  ok('PIN pad shows ' + PIN.length + ' digits', await page.$eval('#loginPin', el => el.value).then(v => v === PIN), 'got ' + (await page.$eval('#loginPin', el => el.value)).length + ' digits')
   await page.screenshot({ path: join(SHOTDIR, '01-login.png') })
   await page.click('#loginBtn')
   await page.waitForFunction(() => document.body.innerText.includes('Dashboard'), { timeout: 15000 })
