@@ -61,10 +61,10 @@ function dispatch_(action, session, payload, params) {
   switch (action) {
     case '/api/login':           return login_(payload);
     case '/api/config':          return config_();
-    case '/api/products':        return products_();
+    case '/api/products':        return products_(session);
     case '/api/sync/pull':       return syncPull_(session, params);
     case '/api/sync/push':       return syncPush_(session, payload);
-    case '/api/transactions':    return transactions_(params);
+    case '/api/transactions':    return transactions_(session, params);
     case '/api/conflicts':       return conflicts_(session, params);
     case '/api/conflicts/review': return reviewConflict_(session, payload);
     case '/api/admin/products':  return adminProducts_(session, payload);
@@ -480,8 +480,8 @@ function users_() {
     .map(userDto_);
 }
 
-function products_() {
-  return productsSnapshot_();
+function products_(session) {
+  return productsSnapshot_(session && session.role);
 }
 
 function syncPull_(session, params) {
@@ -493,14 +493,19 @@ function syncPull_(session, params) {
   return {
     store: getStore_(),
     users: users_(),
-    products: productsSnapshot_(),
+    products: productsSnapshot_(session && session.role),
     watermark: new Date().toISOString(),
     requester: session.uid,
     openConflicts: openConflicts,
   };
 }
 
-function productsSnapshot_() {
+function isStoreRole_(role) {
+  return role === 'admin' || role === 'manager';
+}
+
+function productsSnapshot_(role) {
+  var showCost = isStoreRole_(role);
   var prodRows = readRows_('Products', PRODUCT_HEADERS);
   var serialRows = readRows_('Serials', SERIAL_HEADERS);
   var byProd = {};
@@ -521,7 +526,7 @@ function productsSnapshot_() {
       upc: String(p.upc),
       name: String(p.name),
       category: String(p.category),
-      costPrice: num_(p.cost_price),
+      costPrice: showCost ? num_(p.cost_price) : null,
       retailPrice: num_(p.retail_price),
       isSerialized: isSerialized,
       onHand: isSerialized ? serials.length : num_(p.on_hand),
@@ -1040,13 +1045,19 @@ function fallbackUserId_(userRows) {
  *  Transactions list
  * ------------------------------------------------------------------ */
 
-function transactions_(params) {
+function transactions_(session, params) {
   var limit = parseInt(params && params.limit, 10);
   if (isNaN(limit) || limit < 1) limit = 100;
   limit = Math.min(limit, 500);
 
+  /* cashier scope: own rows only; admin/manager see the full store ledger. */
+  var isStore = isStoreRole_(session && session.role);
   var txRows = readRows_('Transactions', TX_HEADERS)
-    .filter(function (t) { return String(t.status) === 'COMPLETED'; });
+    .filter(function (t) {
+      if (String(t.status) !== 'COMPLETED') return false;
+      if (isStore) return true;
+      return String(t.user_id) === String(session.uid);
+    });
   txRows.sort(function (a, b) {
     return String(b.created_at).localeCompare(String(a.created_at));
   });
@@ -1413,6 +1424,7 @@ function getDriveFolder_() {
 
 function csvCell_(v) {
   var s = String(v == null ? '' : v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 

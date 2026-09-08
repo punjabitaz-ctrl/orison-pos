@@ -630,6 +630,48 @@ const txHdr = txGridFull[0];
 check('migration appends kind/original_client_tx/counterparty', txHdr.includes('kind') && txHdr.includes('original_client_tx') && txHdr.includes('counterparty'), JSON.stringify(txHdr));
 check('migration preserves existing columns', txHdr[0] === 'id' && txHdr[8] === 'grand_total' && txHdr[9] === 'status');
 
+section('security fixes — role-scoped data (cost price / transactions)');
+
+/* one COMPLETED sale attributed to the manager so scoping has a distinguisher */
+const sarahSale = req('/api/sync/push', {
+  deviceId: 'dev-S',
+  batch: [{
+    clientTxId: 'tx-sec-1', userId: mgr.data.user.id, grandTotal: 25,
+    tenders: [{ type: 'card', amount: 25 }], note: 'scoped-tx',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: spkR.id, quantity: 1, unitPrice: 25 }],
+  }],
+}, { session: mgrToken });
+check('scoped sale (attributed to manager) accepted', sarahSale.ok && sarahSale.data.results[0].accepted === true, JSON.stringify(sarahSale));
+
+const prodCash = req('/api/products', {}, { session: cashierToken });
+const prodAdmin = req('/api/products', {}, { session: adminToken });
+const costCash = prodCash.data.find((p) => p.sku === 'TS-SPK-01');
+const costAdmin = prodAdmin.data.find((p) => p.sku === 'TS-SPK-01');
+check('cashier catalog hides costPrice', prodCash.ok && costCash && costCash.costPrice === null, JSON.stringify(costCash));
+check('admin/manager catalog keeps costPrice', prodAdmin.ok && typeof costAdmin.costPrice === 'number', JSON.stringify(costAdmin));
+
+const pullCash = req('/api/sync/pull', {}, { session: cashierToken });
+check('sync pull to cashier hides costPrice too', pullCash.ok && pullCash.data.products.find((p) => p.sku === 'TS-SPK-01').costPrice === null);
+
+const txCash = req('/api/transactions', {}, { params: { limit: '500' }, session: cashierToken }).data.transactions;
+const txAdm = req('/api/transactions', {}, { params: { limit: '500' }, session: adminToken }).data.transactions;
+const txMgr2 = req('/api/transactions', {}, { params: { limit: '500' }, session: mgrToken }).data.transactions;
+check('cashier ledger excludes manager-attributed tx', txCash.length > 0 && !txCash.some((t) => t.clientTxId === 'tx-sec-1'), JSON.stringify({ n: txCash.length }));
+check('cashier ledger strictly smaller than store ledger', txCash.length === txAdm.length - 1, JSON.stringify({ c: txCash.length, a: txAdm.length }));
+check('manager ledger matches admin ledger', txMgr2.length === txAdm.length && txMgr2.some((t) => t.clientTxId === 'tx-sec-1'));
+check('cashier sees only self-attributed rows', txCash.every((t) => String(t.user_id) === String(pin.data.user.id)));
+
+section('security fixes — CSV formula guard');
+check('leading = neutralized', sandbox.csvCell_('=HYPERLINK(1)') === "'=HYPERLINK(1)");
+check('+ leading neutralized', sandbox.csvCell_('+SUM(A1)') === "'+SUM(A1)");
+check('- leading neutralized', sandbox.csvCell_('-1+2') === "'-1+2");
+check('@ leading neutralized', sandbox.csvCell_('@cmd') === "'@cmd");
+check('= with quotes+commas fully escaped', sandbox.csvCell_('=a,"b"') === '"\'=a,""b"""');
+check('plain text unchanged', sandbox.csvCell_('Nike Official') === 'Nike Official');
+check('quotes + commas still escaped', sandbox.csvCell_('a,"b"') === '"a,""b"""');
+check('numeric / empty cells unchanged', sandbox.csvCell_('1337') === '1337' && sandbox.csvCell_('') === '' && sandbox.csvCell_(0) === '0');
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

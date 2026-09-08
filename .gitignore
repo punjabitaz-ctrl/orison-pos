@@ -1,5 +1,6 @@
 node_modules/
 data/
+.gstack/
 tests/shots/
 tests/e2e-run.log
 tests/console-dump.txt
