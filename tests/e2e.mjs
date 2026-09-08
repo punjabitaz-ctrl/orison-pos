@@ -1,4 +1,3 @@
-import puppeteer from 'puppeteer-core'
 import { writeFileSync, mkdirSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -24,9 +23,27 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
 const BASE = process.env.E2E_BASE || 'http://127.0.0.1:8080'
 const GAS_URL = process.env.E2E_GAS_URL || ''
 const APP_TOKEN = process.env.E2E_APP_TOKEN || ''
+// Seed PINs are generated per deployment and never committed. Read the admin
+// and cashier PINs from the Apps Script execution log (see README) and pass
+// them in, e.g. E2E_PIN=481902 E2E_CASHIER_PIN=730155 npm run test:e2e
+const EMAIL = process.env.E2E_EMAIL || 'tariq@example.com'
+const PIN = process.env.E2E_PIN || ''
+const CASHIER_EMAIL = process.env.E2E_CASHIER_EMAIL || 'amara@example.com'
+const CASHIER_PIN = process.env.E2E_CASHIER_PIN || ''
+// Skip rather than fail: this suite also needs a running server and a deployed
+// backend, so it cannot be part of a default `npm test` run. Exiting non-zero
+// here would make `npm test` permanently red on a clean checkout.
+if (!PIN || !CASHIER_PIN) {
+  console.log('SKIP e2e: set E2E_PIN and E2E_CASHIER_PIN to run it — see README > Starter logins.')
+  process.exit(0)
+}
+
+// Imported dynamically, below the guard: a static import is hoisted above it,
+// so a checkout without devDependencies would crash before the skip could run.
+const puppeteer = (await import('puppeteer-core')).default
+
+// Created only once we know the run will proceed, so a skip leaks no temp dir.
 const PROFILE = mkdtempSync(join(tmpdir(), 'orison-e2e-'))
-const EMAIL = 'tariq@orisonigt.com'
-const PIN = '1234'
 const SERIAL = '359999001234567'
 const LOG = join(process.cwd(), 'tests', 'e2e-run.log')
 const SHOTDIR = join(process.cwd(), 'tests', 'shots')
@@ -99,7 +116,9 @@ try {
   // ---- Login via PIN pad ----
   await page.type('#loginEmail', EMAIL)
   for (const ch of PIN) { await page.click(`.pp-key[data-k="${ch}"]`); await sleep(50) }
-  ok('PIN pad shows ' + PIN.length + ' digits', await page.$eval('#loginPin', el => el.value).then(v => v === PIN), 'val=' + await page.$eval('#loginPin', el => el.value))
+  // Report only the length on failure: PIN is now a live credential, and this
+  // string goes to stdout and tests/e2e-run.log.
+  ok('PIN pad shows ' + PIN.length + ' digits', await page.$eval('#loginPin', el => el.value).then(v => v === PIN), 'got ' + (await page.$eval('#loginPin', el => el.value)).length + ' digits')
   await page.screenshot({ path: join(SHOTDIR, '01-login.png') })
   await page.click('#loginBtn')
   await page.waitForFunction(() => document.body.innerText.includes('Dashboard'), { timeout: 15000 })
@@ -234,8 +253,8 @@ try {
   await page2.setViewport({ width: 412, height: 915, isMobile: true, hasTouch: true })
   await page2.goto(BASE + '/', { waitUntil: 'load', timeout: 30000 })
   await sleep(1200)
-  await page2.type('#loginEmail', 'amara@orisonigt.com')
-  for (const ch of '5678') { await page2.click(`.pp-key[data-k="${ch}"]`); await sleep(40) }
+  await page2.type('#loginEmail', CASHIER_EMAIL)
+  for (const ch of CASHIER_PIN) { await page2.click(`.pp-key[data-k="${ch}"]`); await sleep(40) }
   await page2.click('#loginBtn')
   await page2.waitForFunction(() => document.body.innerText.includes('Dashboard'), { timeout: 15000 })
   await sleep(600)
