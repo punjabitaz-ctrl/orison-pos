@@ -4,7 +4,7 @@
    the persisted session, wires the tab bar, and reacts to connectivity. */
 
 import { idb } from './db.js';
-import { api } from './api.js';
+import { api, setSessionExpiredHandler } from './api.js';
 import { syncNow, SYNC_EVENT } from './sync.js';
 import { inventoryAlerts } from './alerts.js';
 import { screen as login } from './screens/login.js';
@@ -95,6 +95,17 @@ function refreshAlertBadge() {
 window.addEventListener(SYNC_EVENT, refreshAlertBadge);
 
 const ctx = { idb, api, state, router };
+
+// A revoked or expired session (e.g. a lost device whose sessions an admin
+// killed) invalidates the current token. Drop it and return to sign-in.
+setSessionExpiredHandler(async () => {
+  await api.clearToken().catch(() => {});
+  const m = (await idb.get('meta', 'config').catch(() => ({}))) || {};
+  delete m.user;
+  state.user = null;
+  await idb.put('meta', m, 'config').catch(() => {});
+  if (current && current.id !== 'login') router.show('login');
+});
 
 async function boot() {
   const root = document.getElementById('screen');

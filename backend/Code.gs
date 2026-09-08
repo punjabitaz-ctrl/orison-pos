@@ -69,7 +69,9 @@ function dispatch_(action, session, payload, params) {
     case '/api/conflicts/review': return reviewConflict_(session, payload);
     case '/api/admin/unlock':    return adminUnlock_(session, payload);
     case '/api/admin/pin':       return adminSetPin_(session, payload);
+    case '/api/admin/revoke':    return adminRevoke_(session, payload);
     case '/api/pin':             return changeOwnPin_(session, payload);
+    case '/api/logout':          return logout_(session);
     case '/api/admin/products':  return adminProducts_(session, payload);
     case '/api/admin/serials':   return adminSerials_(session, payload);
     case '/api/admin/inventory': return adminInventory_(session, payload);
@@ -140,6 +142,7 @@ function verifyToken_(token) {
     if (diff) return null;
     var payload = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[0])).getDataAsString());
     if (!payload.exp || Date.now() > payload.exp) return null;
+    if (isTokenRevoked_(payload.uid, payload.iat)) return null;
     return payload;
   } catch (_) {
     return null;
@@ -156,6 +159,37 @@ function sha256Hex_(str) {
   return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, str, Utilities.Charset.UTF_8)
     .map(function (b) { return ((b + 256) % 256).toString(16).padStart(2, '0'); })
     .join('');
+}
+
+/* ------------------------------------------------------------------ *
+ *  Token revocation
+ *
+ *  Tokens are stateless HMAC-SHA256 with a 12 h expiry.  To invalidate
+ *  all sessions for a user without rotating SESSION_SECRET, we store a
+ *  single "revoked at" timestamp per uid in CacheService (25 h TTL,
+ *  matching the worst-case token lifetime).  verifyToken_ rejects any
+ *  token whose iat predates the marker.
+ * ------------------------------------------------------------------ */
+
+var TOKEN_CACHE_PREFIX = 'tok_rev_';
+var TOKEN_CACHE_TTL = 25 * 60 * 60;  // 25 hours (longer than 12 h max token life)
+
+function revokeTokensForUser_(uid) {
+  var cache = CacheService.getScriptCache();
+  cache.put(TOKEN_CACHE_PREFIX + uid, String(Date.now()), TOKEN_CACHE_TTL);
+}
+
+function tokenRevokedAt_(uid) {
+  var cache = CacheService.getScriptCache();
+  var val = cache.get(TOKEN_CACHE_PREFIX + uid);
+  return val ? Number(val) : 0;
+}
+
+function isTokenRevoked_(uid, iat) {
+  // <= so a revocation marker written in the same millisecond as a login still
+  // invalidates that token (fail closed; login and revoke are never genuinely
+  // simultaneous in practice).
+  return iat != null && iat <= tokenRevokedAt_(uid);
 }
 
 /* ------------------------------------------------------------------ *
@@ -713,6 +747,7 @@ function login_(payload) {
   var token = signToken_({
     uid: found.id,
     role: found.role,
+    iat: Date.now(),
     exp: Date.now() + 12 * 60 * 60 * 1000,
   });
   return {
@@ -1448,6 +1483,7 @@ function changeOwnPin_(session, payload) {
   applyPatches_('Users', USER_HEADERS, 'id', {
     [me.id]: { pin_salt: salt, pin_hash: sha256Hex_(salt + ':' + next) },
   });
+  revokeTokensForUser_(me.id);
   Logger.log('[orison-pos] PIN changed by ' + session.uid);
   return { ok: true };
 }
@@ -1479,6 +1515,7 @@ function adminSetPin_(session, payload) {
     [found.id]: { pin_salt: salt, pin_hash: sha256Hex_(salt + ':' + pin) },
   });
   clearLoginFailures_(email);
+  revokeTokensForUser_(found.id);
   Logger.log('[orison-pos] PIN reset for ' + email + ' by ' + session.uid);
   return { ok: true };
 }
@@ -1493,6 +1530,32 @@ function adminUnlock_(session, payload) {
   clearLoginFailures_(email);
   Logger.log('[orison-pos] lockout cleared for ' + email + ' by ' + session.uid);
   return { ok: true };
+}
+
+/* Revoke all active sessions for the calling user.  Called on sign-out so a
+ * lost or stolen device's token stops working even before its 12 h expiry. */
+function logout_(session) {
+  if (!session || !session.uid) throw statusError_(401, 'Sign in first');
+  revokeTokensForUser_(session.uid);
+  Logger.log('[orison-pos] sessions revoked for ' + session.uid);
+  return { ok: true };
+}
+
+/* Revoke all sessions for a target user.  Admin only.  Used after a PIN
+ * reset or when a device is reported lost. */
+function adminRevoke_(session, payload) {
+  requireRole_(session, ['admin']);
+  var email = String((payload && payload.email) || '').trim().toLowerCase();
+  if (!email) throw statusError_(400, 'email is required');
+  var users = readRows_('Users', USER_HEADERS);
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].email).toLowerCase() === email) {
+      revokeTokensForUser_(users[i].id);
+      Logger.log('[orison-pos] sessions revoked for ' + email + ' by ' + session.uid);
+      return { ok: true };
+    }
+  }
+  throw statusError_(404, 'No such user');
 }
 
 function adminProducts_(session, payload) {

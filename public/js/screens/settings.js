@@ -81,6 +81,18 @@ export const screen = {
         <div class="set-row"><span>Address</span><span>${esc(m.store.address || '—')}</span></div>
       </section>` : ''}
 
+      ${(user && user.role === 'admin') ? `
+      <section class="set-card">
+        <h3>Security</h3>
+        <p class="muted">Kill sign-in on a lost terminal. Enter the staff email whose sessions to revoke — they must sign in again on every device.</p>
+        <div class="field">
+          <span>Staff email</span>
+          <input id="revokeEmail" type="email" placeholder="staff@example.com" autocapitalize="none" spellcheck="false">
+        </div>
+        <div class="row"><button class="btn btn-danger" id="revokeBtn">Revoke all sessions</button></div>
+        <p id="revokeMsg" class="muted" role="status"></p>
+      </section>` : ''}
+
       <section class="set-card set-about">
         <p>Orison POS · offline-first PWA<br>Backend: Google Apps Script + Sheets + Drive · protocol v1</p>
         <p class="muted">Install from the browser menu — works fully offline after first sync.</p>
@@ -113,8 +125,25 @@ export const screen = {
       redraw();
     });
 
+    root.querySelector('#revokeBtn')?.addEventListener('click', async () => {
+      const email = root.querySelector('#revokeEmail').value.trim().toLowerCase();
+      const msg = root.querySelector('#revokeMsg');
+      if (!email.includes('@')) { msg.textContent = 'Enter a valid staff email.'; return; }
+      try {
+        await api.post('/api/admin/revoke', { email });
+        msg.textContent = `Sessions revoked for ${ email }. They must sign in again.`;
+        beep('ok');
+      } catch (err) {
+        msg.textContent = (err && (err.data && err.data.error)) || (err && err.message) || 'Revoke failed';
+        beep('err');
+      }
+    });
+
     root.querySelector('#signoutBtn').addEventListener('click', async () => {
       if (!window.confirm('Sign out of this terminal?')) return;
+      // Revoke this terminal's token server-side so a lost device can't keep
+      // using it; best-effort (offline sign-out still clears locally).
+      try { await api.post('/api/logout', {}); } catch (_) {}
       await api.clearToken();
       const mm = (await idb.get('meta', 'config')) || {};
       delete mm.user;

@@ -120,6 +120,7 @@ const driveFiles = [];
 const driveFolders = [{ id: 'folder-1', name: 'Orison POS Export' }];
 const sleeps = [];
 const lockAcquisitions = [];
+const cacheStore = new Map();
 
 const sandbox = {
   console,
@@ -166,6 +167,13 @@ const sandbox = {
     getScriptLock: () => ({
       tryLock: () => { lockAcquisitions.push(Date.now()); return true; },
       releaseLock: () => {},
+    }),
+  },
+  CacheService: {
+    getScriptCache: () => ({
+      put: (k, v) => { cacheStore.set(k, String(v)); },
+      get: (k) => (cacheStore.has(k) ? cacheStore.get(k) : null),
+      remove: (k) => { cacheStore.delete(k); },
     }),
   },
   DriveApp: {
@@ -881,6 +889,65 @@ section('PIN generation');
   const worst = Math.max(...freqs.map((f) => Math.abs(f - 0.1)));
   check('digits are uniform to within 1 point', worst < 0.01,
     'worst deviation ' + (worst * 100).toFixed(2) + 'pp');
+}
+
+section('token revocation');
+{
+  // amara's PIN was rotated to 135791 by the admin PIN reset block above.
+  const who = 'amara@example.com';
+  const currentPin = '135791';
+  const login = req('/api/login', { email: who, pin: currentPin });
+  check('a fresh login returns a token', login.ok === true && !!login.data.token);
+  const token = login.data.token;
+  check('token works before revocation',
+    req('/api/transactions', {}, { params: { limit: '10' }, session: token }).ok === true);
+
+  // Fresh manager login: the original mgr.data.token was invalidated when Sarah
+  // changed her own PIN earlier, which revokes every session she held.
+  const mgrNow = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  check('revoke requires admin',
+    req('/api/admin/revoke', { email: who }, { session: mgrNow }).status === 403);
+  check('revoke rejects unknown address',
+    req('/api/admin/revoke', { email: 'nobody@example.com' }, { session: adminToken }).status === 404);
+
+  check('admin can revoke all sessions',
+    req('/api/admin/revoke', { email: who }, { session: adminToken }).ok === true);
+  check('revoked token is rejected',
+    req('/api/transactions', {}, { params: { limit: '10' }, session: token }).status === 401);
+
+  const again = req('/api/login', { email: who, pin: currentPin });
+  check('a new login after revocation still works', again.ok === true && !!again.data.token);
+}
+
+section('session revoke on sign-out / PIN change');
+{
+  const who = 'diego@example.com';
+  const login = req('/api/login', { email: who, pin: CREDS[who] });
+  const token = login.data.token;
+  check('logout revokes the device token',
+    req('/api/logout', {}, { session: token }).ok === true);
+  check('token dead after logout',
+    req('/api/products', {}, { session: token }).status === 401);
+
+  const t2 = req('/api/login', { email: who, pin: CREDS[who] }).data.token;
+  check('changing own PIN revokes other sessions',
+    req('/api/pin', { currentPin: CREDS[who], newPin: '333333' }, { session: t2 }).ok === true);
+  check('old token rejected after PIN change',
+    req('/api/products', {}, { session: t2 }).status === 401);
+  CREDS[who] = '333333';
+
+  const t3 = req('/api/login', { email: who, pin: CREDS[who] }).data.token;
+  const target2 = 'sarah@example.com';
+  check('admin PIN reset revokes target sessions', (() => {
+    const tt = req('/api/login', { email: target2, pin: CREDS[target2] }).data.token;
+    req('/api/admin/pin', { email: target2, pin: '444444' }, { session: adminToken });
+    return req('/api/products', {}, { session: tt }).status === 401;
+  })());
+  CREDS[target2] = '444444';
+
+  // Logout without a body still identifies the caller from the session token.
+  const t4 = req('/api/login', { email: who, pin: CREDS[who] }).data.token;
+  check('logout works with no payload body', req('/api/logout', {}, { session: t4 }).ok === true);
 }
 
 console.log('\n-------------------------------------');

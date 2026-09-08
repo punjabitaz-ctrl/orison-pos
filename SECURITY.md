@@ -18,8 +18,35 @@ rather not disclose it publicly.
 
 Every request carries `APP_TOKEN`. Everything except `/api/login` also carries a
 session token: an HMAC-SHA256 signature over a base64url payload holding the
-user id, role and a 12-hour expiry. Signatures are compared byte by byte in
-constant time, and the payload is rejected outright if it has expired.
+user id, role, an issued-at time and a 12-hour expiry. Signatures are compared
+byte by byte in constant time, and the payload is rejected outright if it has
+expired — or if the user's sessions have been revoked since it was issued (see
+[Session revocation](#session-revocation)).
+
+## Session revocation
+
+Tokens are stateless, so there is no server-side list to consult per request.
+Instead the backend keeps one "revoked at" timestamp per user in CacheService
+(25 h TTL, outliving the longest-lived 12 h token). A token whose `iat` predates
+that marker is rejected on the next request.
+
+Revocation happens on:
+
+- **Sign-out** — `POST /api/logout` (Settings → Sign out) revokes every session
+  held by the signing-in user, so signing out of a terminal kills that device's
+  token even if someone later recover the storage it was written to.
+- **Admin kill-switch** — `POST /api/admin/revoke { "email": "..." }`, surfaced
+  as a Security card in Settings, revokes all sessions for a staff email. This
+  is the action for a lost or stolen device: the moment that terminal next
+  contacts the backend it gets 401 and the app returns to the sign-in screen.
+- **PIN change** — changing your own PIN (`/api/pin`) or an admin resetting one
+  (`/api/admin/pin`) revokes every prior session for that user. It is
+  meaningless to keep old devices logged in to an account whose credentials
+  changed because of a suspected compromise.
+
+A device that is stolen while **offline** keeps whatever it had until it next
+connects; there is no way to reach it sooner. The kill-switch then takes effect
+on first contact.
 
 ## Login throttling
 
@@ -111,8 +138,10 @@ change takes effect at next sign-in rather than immediately.
 | `/api/admin/products`, `/serials`, `/inventory`, `/products/patch` | admin, manager |
 | `/api/conflicts`, `/api/conflicts/review` | admin, manager |
 | `/api/admin/unlock` | admin, manager |
+| `/api/admin/revoke` | admin |
 | `/api/admin/pin` | admin |
 | `/api/pin` | any signed-in user, own PIN only |
+| `/api/logout` | any signed-in user, own sessions only |
 
 ## The shared app token
 
@@ -122,20 +151,26 @@ installation and stored in that browser's IndexedDB alongside the session token.
 Two consequences worth planning around:
 
 1. A single compromised device — or any script running on the origin — yields
-   the credential that authorizes every device's requests.
-2. Rotating it means re-provisioning every device by hand.
+   the credential that authorizes every device's requests. Sessions themselves
+   are revocable per user (see [Session revocation](#session-revocation)), but
+   the app token is not; rotating it means re-provisioning every device by hand.
+2. Because it is shared, it cannot identify a device. If that matters, a
+   per-device credential is the next step.
 
-`public/_headers` currently sets `nosniff`, `Referrer-Policy`,
-`X-Frame-Options` and a restrictive `Permissions-Policy`, but **no
-Content-Security-Policy**. The app has no inline scripts and no third-party
-origins, so a strict one costs nothing and is worth adding:
+## Content-Security-Policy
+
+`public/_headers` sets `nosniff`, `Referrer-Policy`, `X-Frame-Options`, a
+restrictive `Permissions-Policy` and a strict Content-Security-Policy:
 
 ```
-Content-Security-Policy: default-src 'self'; script-src 'self'; connect-src 'self' https://script.google.com; frame-ancestors 'none'; base-uri 'self'
+Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self' https://script.google.com; font-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'
 ```
 
-Longer term, per-device tokens the backend can revoke individually would remove
-the shared-secret problem entirely.
+The app has no inline scripts and no third-party origins: the only external
+destination is the Apps Script backend (`connect-src`), and `'unsafe-inline'`
+is granted to styles only, because the tab bar and screens set a handful of
+inline `style` attributes. Everything else — scripts, images, fonts, workers,
+the manifest — must come from the app's own origin.
 
 ## Offline behaviour
 
@@ -151,7 +186,7 @@ usable — but it carries three consequences worth stating plainly:
    million candidates, so anyone who can read the device's IndexedDB recovers
    the PIN essentially instantly. It is per-device and only reachable by someone
    who already has the unlocked device or script execution on the origin — which
-   is also why the missing CSP above is worth fixing — but it is not a
-   meaningful protection and should not be relied on as one. Salting it per
-   device, or storing a server-issued opaque token instead of a PIN hash, would
-   close it.
+   the Content-Security-Policy does not itself prevent, since it allows the
+   app's own scripts — but it is not a meaningful protection and should not be
+   relied on as one. Salting it per device, or storing a server-issued opaque
+   token instead of a PIN hash, would close it.

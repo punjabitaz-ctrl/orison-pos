@@ -96,6 +96,12 @@ async function request(path, { method = 'GET', body, timeout = 15000 } = {}) {
       e.offline = true;
       throw e;
     }
+    // A revoked/expired session outside the login call means the token is dead.
+    // Notify the app so it drops the stale session and sends the user back to
+    // sign in, then rethrow so the caller still sees the original error.
+    if (err && err.status === 401 && action !== '/api/login' && onSessionExpired) {
+      onSessionExpired(err);
+    }
     throw err;
   } finally {
     clearTimeout(timer);
@@ -111,5 +117,13 @@ const api = {
   clearToken,
   getAppToken,
 };
+
+/* Global handler fired when a signed-in terminal gets a revoked-token 401
+   (a lost device whose sessions an admin killed). The app registers this once
+   in app.js to drop the stale session and bounce to the login screen. */
+let onSessionExpired = null;
+export function setSessionExpiredHandler(fn) {
+  onSessionExpired = fn;
+}
 
 export { api };

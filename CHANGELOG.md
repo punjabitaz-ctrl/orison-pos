@@ -5,6 +5,49 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] — 2026-09-08
+
+Hardening for the portable-terminal rollout: a Content-Security-Policy on the
+static site, and revocable session tokens so a lost device can be cut off
+without rotating the shared `SESSION_SECRET`.
+
+### Security
+
+- **Token revocation.** Sessions were stateless HMAC tokens that could only be
+  invalidated by expiry. Each token now carries an `iat`, and the backend keeps
+  a per-user "revoked at" marker in CacheService (25 h TTL, longer than the 12 h
+  token life); `verifyToken_` rejects any token issued before the marker. A user
+  signs out (revoking their own sessions), an admin kills a staff member's
+  sessions from Settings, and a PIN change or reset revokes every prior session.
+  See [SECURITY.md](SECURITY.md#session-revocation).
+
+- **Lost-device reflex.** The client now watches for 401s on any request outside
+  login: a revoked or expired token clears the stale session and sends the
+  terminal back to sign-in instead of silently carrying on.
+
+- **Content-Security-Policy.** `public/_headers` now ships a strict policy
+  (`default-src 'none'`; scripts, styles, images, fonts, workers and manifest
+  all `'self'`; `connect-src` limited to `'self'` and `script.google.com`;
+  `frame-ancestors 'none'`), with no third-party origins to accommodate. See
+  [SECURITY.md](SECURITY.md#content-security-policy). The stale "no CSP" note
+  in the known limitations is gone.
+
+### Added
+
+- `POST /api/logout` — revokes every active session for the calling user
+  (called by Settings → Sign out).
+- `POST /api/admin/revoke` — an admin revokes all sessions for a staff email,
+  from a new Security card in Settings. This is the action for a lost device.
+- Backend simulation coverage of revocation (revoke gating, post-revoke
+  rejection, sign-out invalidation, PIN-change invalidation, admin PIN-reset
+  invalidation). The suite goes from 125 to 138 checks.
+
+### Changed
+
+- `signToken_` payloads now include `iat`; all tokens issued before this
+  version remain valid (they have no `iat`, so the revocation check skips them)
+  until they expire naturally.
+
 ## [0.2.1] — 2026-09-06
 
 Security release covering the login path. No feature work, and nothing is
@@ -102,8 +145,8 @@ it:
   so someone who knows a staff email can keep that account locked by failing
   against it. `/api/admin/unlock` exists because of this. See
   [SECURITY.md](SECURITY.md#login-throttling).
-- `APP_TOKEN` is one shared secret held by every device, and `public/_headers`
-  sets no Content-Security-Policy. See
+- `APP_TOKEN` is one shared secret held by every device. Sessions are now
+  revocable per user, but the app token itself still is not. See
   [SECURITY.md](SECURITY.md#the-shared-app-token).
 - The offline sign-in fallback compares against an **unsalted** SHA-256 of the
   PIN cached in IndexedDB, which is trivially reversible for a 6-digit PIN by
