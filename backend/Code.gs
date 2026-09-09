@@ -65,6 +65,9 @@ function dispatch_(action, session, payload, params) {
     case '/api/sync/pull':       return syncPull_(session, params);
     case '/api/sync/push':       return syncPush_(session, payload);
     case '/api/transactions':    return transactions_(session, params);
+    case '/api/customers':       return customers_(session, payload, params);
+    case '/api/customers/ledger': return customerLedger_(session, params);
+    case '/api/customers/receivables': return receivables_(session);
     case '/api/conflicts':       return conflicts_(session, params);
     case '/api/conflicts/review': return reviewConflict_(session, payload);
     case '/api/admin/unlock':    return adminUnlock_(session, payload);
@@ -78,6 +81,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/admin/users/patch': return adminUserPatch_(session, payload);
     case '/api/logout':          return logout_(session);
     case '/api/admin/products':  return adminProducts_(session, payload);
+    case '/api/admin/customers': return adminCustomers_(session, payload);
     case '/api/admin/serials':   return adminSerials_(session, payload);
     case '/api/admin/inventory': return adminInventory_(session, payload);
     case '/api/admin/products/patch': return adminProductsPatch_(session, payload);
@@ -298,7 +302,8 @@ var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pi
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
-var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct'];
+var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id'];
+var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 
 function spreadSheet_() {
@@ -641,6 +646,7 @@ function seed_() {
   appendRows_('Serials', SERIAL_HEADERS, serialRows);
   sheet_('Transactions', TX_HEADERS);
   sheet_('Conflicts', CONFLICT_HEADERS);
+  sheet_('Customers', CUSTOMERS_HEADERS);
 }
 
 /* ------------------------------------------------------------------ *
@@ -996,6 +1002,7 @@ function syncPush_(session, payload) {
     var prodRows = readRows_('Products', PRODUCT_HEADERS);
     var serialRows = readRows_('Serials', SERIAL_HEADERS);
     var userRows = readRows_('Users', USER_HEADERS);
+    var customerRows = readRows_('Customers', CUSTOMERS_HEADERS);
 
     var prodById = {};
     for (var i = 0; i < prodRows.length; i++) prodById[String(prodRows[i].id)] = prodRows[i];
@@ -1003,6 +1010,8 @@ function syncPush_(session, payload) {
     for (var j = 0; j < serialRows.length; j++) serialBySn[String(serialRows[j].serial_number)] = serialRows[j];
     var userIds = {};
     for (var u = 0; u < userRows.length; u++) userIds[String(userRows[u].id)] = userRows[u];
+    var customerIds = {};
+    for (var cu = 0; cu < customerRows.length; cu++) customerIds[String(customerRows[cu].id)] = customerRows[cu];
 
     /* idempotency + duplicate-client detection: index existing rows by device+client */
     var deviceTx = {};
@@ -1136,6 +1145,13 @@ function syncPush_(session, payload) {
 
       var hasErrors = errors.length > 0;
       var txId = Utilities.getUuid();
+      /* a sale linked to a customer that does not exist must not complete —
+         it would create an unmatched receivable or empty the ledger book. */
+      var custId = String(tx.customerId || '');
+      if (custId !== '' && !customerIds[custId]) {
+        errors.push({ reason: 'unknown_customer' });
+        hasErrors = true;
+      }
       /* v1.2.6 sends discountPct on the envelope; pre-upgrade queued sales
          don't, so they keep their client totals (and stay untaxed) — you never
          retroactively tax a sale a cashier already rang up offline. */
@@ -1176,6 +1192,7 @@ function syncPush_(session, payload) {
         subtotal: totals ? totals.subtotal : grandTotal,
         tax_amount: totals ? totals.tax : 0,
         discount_pct: orderPct,
+        customer_id: custId,
       });
 
       var txConflicts = hasErrors ? errors.slice() : [];
@@ -1505,6 +1522,7 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
     items_json: JSON.stringify(resolvedItems_(resolved)),
     note: String(tx.note || ''),
     created_at: String(tx.createdAt || new Date().toISOString()),
+    customer_id: String(original.customer_id || ''),
   });
   return { transactionId: txId, errors: [], original: original };
 }
@@ -1568,6 +1586,9 @@ function transactions_(session, params) {
     var ln = String(userRows[i].last_name || '');
     nameById[uid] = (fn + ' ' + ln).trim();
   }
+  var custRows = readRows_('Customers', CUSTOMERS_HEADERS);
+  var custById = {};
+  for (var cc = 0; cc < custRows.length; cc++) custById[String(custRows[cc].id)] = custRows[cc];
 
   var out = [];
   for (var j = 0; j < txRows.length && out.length < limit; j++) {
@@ -1619,10 +1640,176 @@ function transactions_(session, params) {
       }),
       note: String(t.note || ''),
     });
+    var cust = t.customer_id ? custById[String(t.customer_id)] : null;
+    if (cust) {
+      out[out.length - 1].customerId = String(t.customer_id);
+      out[out.length - 1].customer = String(cust.name || '');
+    }
     /* Gross profit is a manager/admin figure and stays off cashier responses. */
     if (isStore) out[out.length - 1].grossProfit = grossProfit;
   }
   return { transactions: out };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Customer ledger — the store's book of who owes what and who is owed.
+ *  Balances are money-shaped facts, so they are admin/manager-only.
+ * ------------------------------------------------------------------ */
+
+/* checkout search: any signed-in role can look up a name to attach to a sale,
+   but the reply never carries balance figures. */
+function customers_(session, payload, params) {
+  var q = String(((params && params.q) || '').trim()).toLowerCase();
+  if (!q) return { customers: [] };
+  var rows = readRows_('Customers', CUSTOMERS_HEADERS);
+  var out = [];
+  for (var i = 0; i < rows.length && out.length < 10; i++) {
+    var c = rows[i];
+    var hay = (String(c.name || '') + ' ' + String(c.phone || '') + ' ' + String(c.email || '')).toLowerCase();
+    if (hay.indexOf(q) >= 0) {
+      out.push({ id: String(c.id), name: String(c.name || ''), phone: String(c.phone || ''), email: String(c.email || '') });
+    }
+  }
+  return { customers: out };
+}
+
+function adminCustomers_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  var name = String((payload && payload.name) || '').trim();
+  if (!name) throw statusError_(400, 'Customer name is required');
+  var row = {
+    id: Utilities.getUuid(),
+    store_id: getStore_().id,
+    name: name,
+    phone: String((payload && payload.phone) || '').trim(),
+    email: String((payload && payload.email) || '').trim(),
+    note: String((payload && payload.note) || '').trim(),
+    created_at: new Date().toISOString(),
+  };
+  appendRows_('Customers', CUSTOMERS_HEADERS, [row]);
+  return { customer: { id: row.id, name: row.name, phone: row.phone, email: row.email } };
+}
+
+/* How a customer's dollars lie:
+   - "credit"  = store credit the customer holds (refunds to store credit,
+                 minus store-credit tenders spent on sales).
+   - "account" = what the customer owes (net-30 / on-account tenders,
+                 minus any collections).
+   - "balance" = account − credit; positive means the customer owes the store.
+ */
+function customerLedger_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var cid = String((params && params.customerId) || '');
+  if (!cid) throw statusError_(400, 'customerId is required');
+  var cust = null;
+  var rows = readRows_('Customers', CUSTOMERS_HEADERS);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].id) === cid) { cust = rows[i]; break; }
+  }
+  if (!cust) throw statusError_(404, 'Customer not found');
+
+  var txRows = readRows_('Transactions', TX_HEADERS)
+    .filter(function (t) { return String(t.status) === 'COMPLETED' && String(t.customer_id) === cid; });
+  txRows.sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); });
+
+  var credit = 0, account = 0;
+  for (var j = 0; j < txRows.length; j++) {
+    var t = txRows[j];
+    var kind = String(t.kind || 'sale');
+    var tenders = [];
+    try { tenders = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
+    if (kind === 'sale') {
+      for (var k = 0; k < tenders.length; k++) {
+        var ty = String(tenders[k].type || '');
+        var amt = num_(tenders[k].amount);
+        if (ty === 'store_credit') credit -= amt;
+        else if (ty === 'net30' || ty === 'account') account += amt;
+      }
+    } else if (kind === 'refund') {
+      for (var m = 0; m < tenders.length; m++) {
+        if (String(tenders[m].type || '') === 'store_credit') credit += num_(tenders[m].amount);
+      }
+    } else if (kind === 'payment') {
+      account -= num_(t.grand_total);
+    }
+  }
+
+  var txs = txRows.slice(0, 100).map(function (t) {
+    var items = [];
+    try { items = JSON.parse(t.items_json || '[]'); } catch (_) {}
+    return {
+      id: String(t.id),
+      clientTxId: String(t.client_tx_id || ''),
+      kind: String(t.kind || 'sale'),
+      originalClientTx: String(t.original_client_tx || ''),
+      grandTotal: num_(t.grand_total),
+      createdAt: String(t.created_at),
+      items: items.map(function (it) { return { name: String(it.name || ''), quantity: it.quantity || 1 }; }),
+    };
+  });
+
+  return {
+    customer: { id: cust.id, name: String(cust.name || ''), phone: String(cust.phone || ''), email: String(cust.email || '') },
+    credit: credit,
+    account: account,
+    balance: account - credit,
+    transactions: txs,
+  };
+}
+
+/* one aggregate for the Customers screen: every customer with a non-zero
+   balance plus the total outstanding across the book. */
+function receivables_(session) {
+  requireRole_(session, ['admin', 'manager']);
+  var txRows = readRows_('Transactions', TX_HEADERS)
+    .filter(function (t) { return String(t.status) === 'COMPLETED' && String(t.customer_id || '') !== ''; });
+  var byCust = {};
+  for (var j = 0; j < txRows.length; j++) {
+    var ck = String(txRows[j].customer_id);
+    var e = byCust[ck] || { credit: 0, account: 0, lastSeen: '' };
+    var kind = String(txRows[j].kind || 'sale');
+    var tenders = [];
+    try { tenders = JSON.parse(txRows[j].tenders_json || '[]'); } catch (_) {}
+    if (kind === 'sale') {
+      for (var k = 0; k < tenders.length; k++) {
+        var ty = String(tenders[k].type || '');
+        var amt = num_(tenders[k].amount);
+        if (ty === 'store_credit') e.credit -= amt;
+        else if (ty === 'net30' || ty === 'account') e.account += amt;
+      }
+    } else if (kind === 'refund') {
+      for (var m = 0; m < tenders.length; m++) {
+        if (String(tenders[m].type || '') === 'store_credit') e.credit += num_(tenders[m].amount);
+      }
+    } else if (kind === 'payment') {
+      e.account -= num_(txRows[j].grand_total);
+    }
+    if (String(txRows[j].created_at) > e.lastSeen) e.lastSeen = String(txRows[j].created_at);
+    byCust[ck] = e;
+  }
+
+  var custRows = readRows_('Customers', CUSTOMERS_HEADERS);
+  var cells = [];
+  var totalOut = 0;
+  for (var c = 0; c < custRows.length; c++) {
+    var id = String(custRows[c].id);
+    var e = byCust[id];
+    if (!e) continue;
+    var balance = e.account - e.credit;
+    if (Math.abs(balance) < 0.005) continue;
+    cells.push({
+      id: id,
+      name: String(custRows[c].name || ''),
+      phone: String(custRows[c].phone || ''),
+      credit: e.credit,
+      account: e.account,
+      balance: balance,
+      lastSeen: e.lastSeen,
+    });
+    if (balance > 0) totalOut += balance;
+  }
+  cells.sort(function (a, b) { return b.balance - a.balance; });
+  return { customers: cells, totalOutstanding: totalOut };
 }
 
 /* ------------------------------------------------------------------ *

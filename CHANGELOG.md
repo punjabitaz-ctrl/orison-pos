@@ -5,6 +5,37 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-09-09
+
+Customers are people, not rows. The store can now attach any sale (especially
+Net-30 terms) to a named customer and watch the ledger balance build.
+
+### Added
+
+- **Customers workbook tab + API.** `/api/admin/customers` creates a customer
+  (name, phone, email; admin/manager). `/api/customers?q=` searches name,
+  phone, or email for any signed-in role — the reply never carries balances.
+- **Sale → customer.** Checkout has a customer search box (optional). Managers
+  can create a customer inline. A sale linked to a customer that doesn't exist
+  is rejected rather than silently writing an unmatched receivable.
+  Net-30 terms now require a customer to be picked first.
+- **Customer ledger** (`/api/customers/ledger`, admin/manager). Every
+  transaction against a customer plus their money state:
+  - *account* — what they owe: net-30 / on-account tenders.
+  - *credit* — store credit held: refunds to store credit, minus credit spent.
+  - *balance* = account − credit (positive means they owe the store).
+- **Customers screen** (admin/manager). Total outstanding receivables up top,
+  a searchable list of every customer with a balance, and a per-customer
+  ledger modal on tap.
+- **Name on the receipt and in History.** Charged sales print the customer's
+  name, and transaction details everywhere show who the sale belonged to.
+- Refunds inherit their sale's customer automatically.
+
+### Security
+
+- Balance figures (ledger + receivables) are admin/manager-only. Cashiers can
+  look a customer up and attach them to a sale, but never see what they owe.
+
 ## [1.3.1] — 2026-09-09
 
 Profit visibility, derived from the cost already tracked on each product —

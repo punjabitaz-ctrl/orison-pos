@@ -1342,6 +1342,98 @@ section('discounts & tax');
   void anchor; void mr;
 }
 
+{
+  section('customer ledger');
+
+  const custAdmTok = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const custCashLogin = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] });
+  const custCashTok = custCashLogin.data.token;
+  const custCashUserId = custCashLogin.data.user.id;
+
+  const joe = req('/api/admin/customers', {
+    name: 'Joe Bright', phone: '080-555-1212', email: 'joe@example.com',
+  }, { session: custAdmTok });
+  check('manager creates a customer', joe.ok && joe.data.customer && joe.data.customer.id, JSON.stringify(joe));
+  const joeId = joe.data.customer.id;
+  check('customer id is a uuid', /^[0-9a-f-]{36}$/.test(joeId));
+  check('create needs a name', req('/api/admin/customers', { phone: 'x' }, { session: custAdmTok }).status === 400);
+  check('cashier cannot create a customer', req('/api/admin/customers', { name: 'Nope' }, { session: custCashTok }).status === 403);
+
+  const foundByName = req('/api/customers', {}, { session: custCashTok, params: { q: 'joe' } }).data.customers;
+  const foundByPhone = req('/api/customers', {}, { session: custCashTok, params: { q: '1212' } }).data.customers;
+  check('checkout search finds by name and phone',
+    foundByName.length === 1 && foundByName[0].id === joeId
+      && foundByPhone.length === 1 && foundByPhone[0].id === joeId);
+  check('checkout search never leaks balances',
+    !('balance' in foundByName[0]) && !('credit' in foundByName[0]) && !('account' in foundByName[0]));
+
+  const cableC = req('/api/products', {}, { session: custAdmTok }).data.find((p) => p.sku === 'CB-USBC-1M');
+  const rcPush = req('/api/sync/push', {
+    deviceId: 'dev-cust-1',
+    batch: [{
+      clientTxId: 'tx-rc-1',
+      customerId: joeId,
+      userId: custCashUserId,
+      grandTotal: 48,
+      tenders: [{ type: 'net30', amount: 48 }],
+      createdAt: new Date().toISOString(),
+      items: [{ productId: cableC.id, quantity: 4, unitPrice: 12 }],
+    }],
+  }, { session: custAdmTok });
+  check('on-account sale to a customer accepted', rcPush.data.results[0].accepted === true);
+
+  const badPush = req('/api/sync/push', {
+    deviceId: 'dev-cust-1',
+    batch: [{
+      clientTxId: 'tx-rc-bad',
+      customerId: 'no-such-customer',
+      grandTotal: 10,
+      tenders: [{ type: 'net30', amount: 10 }],
+      createdAt: new Date().toISOString(),
+      items: [{ productId: cableC.id, quantity: 1, unitPrice: 10 }],
+    }],
+  }, { session: custAdmTok });
+  check('sale to an unknown customer is voided',
+    badPush.data.results[0].accepted === false
+      && badPush.data.results[0].conflicts.some((c) => c.reason === 'unknown_customer'));
+
+  const ledger = req('/api/customers/ledger', {}, { session: custAdmTok, params: { customerId: joeId } }).data;
+  check('ledger shows the account charge', ledger.account === 48 && Math.abs(ledger.balance - 48) < 0.001, JSON.stringify({ a: ledger.account, b: ledger.balance }));
+  check('ledger lists the customer transactions', ledger.transactions.some((t) => t.clientTxId === 'tx-rc-1'));
+
+  const rfPush = req('/api/sync/push', {
+    deviceId: 'dev-cust-1',
+    batch: [{
+      clientTxId: 'tx-rc-1-rf1',
+      kind: 'refund',
+      originalClientTx: 'tx-rc-1',
+      grandTotal: 12,
+      tenders: [{ type: 'store_credit', amount: 12 }],
+      createdAt: new Date().toISOString(),
+      items: [{ productId: cableC.id, }],
+    }],
+  }, { session: custAdmTok });
+  check('store-credit refund on a customer sale accepted', rfPush.data.results[0].accepted === true, JSON.stringify(rfPush));
+  const ledger2 = req('/api/customers/ledger', {}, { session: custAdmTok, params: { customerId: joeId } }).data;
+  check('store-credit refund adds credit and nets the balance',
+    ledger2.credit === 12 && Math.abs(ledger2.balance - 36) < 0.001, JSON.stringify({ c: ledger2.credit, b: ledger2.balance }));
+
+  const recv = req('/api/customers/receivables', {}, { session: custAdmTok }).data;
+  const joeCell = recv.customers.find((c) => c.id === joeId);
+  check('receivables aggregates the outstanding balance',
+    joeCell && Math.abs(joeCell.account - 48) < 0.001 && Math.abs(joeCell.balance - 36) < 0.001 && recv.totalOutstanding >= 36 - 0.001,
+    JSON.stringify(joeCell));
+  check('cashier cannot read receivables', req('/api/customers/receivables', {}, { session: custCashTok }).status === 403);
+
+  const storeTx = req('/api/transactions', {}, { session: custAdmTok, params: { limit: 500 } }).data.transactions;
+  const rcTx = storeTx.find((t) => t.clientTxId === 'tx-rc-1');
+  check('ledger transaction exposes the customer name', rcTx && rcTx.customer === 'Joe Bright' && rcTx.customerId === joeId);
+  const cashTx2 = req('/api/transactions', {}, { session: custCashTok, params: { limit: 500 } }).data.transactions;
+  check('cashier ledger rows also name the customer',
+    cashTx2.some((t) => t.clientTxId === 'tx-rc-1') && cashTx2.find((t) => t.clientTxId === 'tx-rc-1').customer === 'Joe Bright');
+  void custCashTok;
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

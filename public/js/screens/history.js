@@ -39,6 +39,7 @@ export const screen = {
           cashier: t.cashier,
           createdAt: t.createdAt,
           grossProfit: t.grossProfit,
+          customer: t.customer,
           items: t.items.map((i) => ({ productId: i.productId, name: i.name, quantity: i.quantity, unitPrice: i.unitPrice, discountPct: i.discountPct, serialNumber: i.serialNumber, unitCost: i.unitCost })),
           clientTxId: t.clientTxId,
         }));
@@ -112,6 +113,7 @@ export const screen = {
           <p class="muted">${esc(humanDate(t.createdAt))} · ${esc(t.cashier || '—')} · ${t.status}</p>
           ${t.originalClientTx ? `<p class="muted">refund of ${esc(t.originalClientTx)}</p>` : ''}
           ${t.counterparty ? `<p class="muted">${esc(t.counterparty)}</p>` : ''}
+          ${t.customer ? `<p class="muted">Customer: ${esc(t.customer)}</p>` : ''}
           ${t.clientTxId ? `<p class="muted">${esc(t.clientTxId)}</p>` : ''}
           <div class="tx-items">
             ${(t.items || []).map((i) => `

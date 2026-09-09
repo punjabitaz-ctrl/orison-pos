@@ -6,6 +6,7 @@
 import { fmt, esc, toast, beep } from '../ui.js';
 import { enqueueTransaction, pushImmediate } from '../sync.js';
 import { saleTotals, round2 } from '../money.js';
+import { api } from '../api.js';
 
 const TENDERS = [
   { id: 'cash', label: 'Cash' },
@@ -67,6 +68,9 @@ export const screen = {
     const tenders = [];
     let type = 'cash';
     let amount = 0;
+    let customer = null;
+    const role = (state.user || {}).role || 'cashier';
+    const canManage = role === 'admin' || role === 'manager';
 
     function remaining() {
       const tendered = tenders.reduce((s, t) => s + t.amount, 0);
@@ -110,6 +114,19 @@ export const screen = {
         </header>
 
         <div class="checkout">
+          <section class="co-cust">
+            <h3>Customer <em class="muted">optional</em></h3>
+            <div class="co-cust-search">
+              <input id="custSearch" class="field" placeholder="Search name, phone, email…" autocomplete="off" aria-label="Search customers">
+              <div id="custResults" class="cust-results"></div>
+            </div>
+            ${customer ? `
+            <div class="co-cust-chip">
+              <span>${esc(customer.name)}</span>
+              <button class="cl-remove" id="custClear" aria-label="Clear customer">✕</button>
+            </div>` : ''}
+          </section>
+
           <section class="co-items">
             ${sale.items.map((i) => `
               <div class="co-item">
@@ -214,6 +231,7 @@ export const screen = {
 
       root.querySelector('#addTender').addEventListener('click', () => {
         const t = TENDERS.find((x) => x.id === type);
+        if (type === 'net30' && !customer) { toast('Pick a customer for Net-30 terms', 'warn'); return; }
         const add = type === 'net30' ? remaining() : amount;
         if (add <= 0 && type !== 'net30') { toast('Enter an amount first', 'warn'); return; }
         if (type === 'net30' && add <= 0) { toast('Nothing left to put on terms', 'warn'); return; }
@@ -229,10 +247,49 @@ export const screen = {
       }));
 
       root.querySelector('#completeBtn').addEventListener('click', completeSale);
+
+      const custInput = root.querySelector('#custSearch');
+      const custResults = root.querySelector('#custResults');
+      if (custInput && custResults) {
+        let d = null;
+        custInput.addEventListener('input', () => {
+          clearTimeout(d);
+          const q = custInput.value.trim();
+          if (!q) { custResults.innerHTML = ''; return; }
+          d = setTimeout(async () => {
+            let matches = [];
+            try { matches = (await api.get('/api/customers?q=' + encodeURIComponent(q))).customers || []; } catch (_) {}
+            const rows = matches.map((c) => `
+              <button class="cust-row" data-id="${esc(c.id)}" data-name="${esc(c.name)}">
+                ${esc(c.name)}<em class="muted">${esc(c.phone || c.email || '')}</em>
+              </button>`).join('');
+            const create = canManage ? `<button class="cust-row cust-new" data-create="1" data-name="${esc(q)}">＋ New customer: ${esc(q)}</button>` : '';
+            custResults.innerHTML = rows + create;
+          }, 300);
+        });
+        custResults.addEventListener('click', async (e) => {
+          const btn = e.target.closest('.cust-row');
+          if (!btn) return;
+          if (btn.dataset.create) {
+            try {
+              const res = await api.post('/api/admin/customers', { name: btn.dataset.name });
+              customer = { id: res.customer.id, name: res.customer.name };
+              toast('Customer added', 'ok', 1800);
+              render();
+            } catch (_) { toast('Could not add customer', 'warn'); }
+            return;
+          }
+          customer = { id: btn.dataset.id, name: btn.dataset.name };
+          render();
+        });
+      }
+      const custClear = root.querySelector('#custClear');
+      if (custClear) custClear.addEventListener('click', () => { customer = null; render(); });
     }
 
     async function completeSale() {
       if (remaining() > 0) { toast('Not fully covered', 'warn'); return; }
+      if (tenders.some((t) => t.type === 'net30') && !customer) { toast('Pick a customer for Net-30 terms', 'warn'); return; }
       const tendered = tenders.filter((t) => t.amount > 0);
       const txItems = sale.items.map((i) => ({
         productId: i.productId,
@@ -253,6 +310,7 @@ export const screen = {
         taxAmount: sale.totals.tax,
         tenders: cleanTenders,
         items: txItems,
+        customerId: customer ? customer.id : undefined,
       });
 
       // Ship the sale immediately when connected; offline terminals queue it
@@ -322,6 +380,7 @@ export const screen = {
           <p class="r-store">${esc((state.store && state.store.name) || '')}</p>
           <p class="r-mid">${dateStr} ${timeStr}</p>
           <p class="r-mid">Cashier: ${esc(cashier)}</p>
+          ${customer ? `<p class="r-mid">Customer: ${esc(customer.name)}</p>` : ''}
           <div class="r-rule"></div>
           ${lines.map((l) => `<div class="r-line"><span>${esc(l.name)}${l.qty ? ` <em>${esc(l.qty)}</em>` : ''}${l.disc ? ` <em>${esc(l.disc)} off</em>` : ''}</span><b>${fmt(l.amt)}</b></div>`).join('')}
           <div class="r-rule"></div>
