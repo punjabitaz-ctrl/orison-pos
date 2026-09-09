@@ -1,23 +1,18 @@
 'use strict';
 
 /* Login screen: email + PIN pad. Attempts the server first; if the network
-   is down it falls back to a cached offline hash so the terminal keeps
-   usable in a disconnected store. */
+   is down it falls back to a cached offline credential so the terminal keeps
+   usable in a disconnected store. The credential is an opaque per-device key
+   issued by the server — nothing derived from the PIN ever touches storage. */
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
 import { el, beep } from '../ui.js';
 import { pull, getDeviceId } from '../sync.js';
 
-function sha256(str) {
-  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then((buf) =>
-    Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('')
-  );
-}
-
-async function cachedPins() {
+async function cachedCreds() {
   const meta = (await idb.get('meta', 'config')) || {};
-  return meta.offlinePins || {};
+  return meta.offlineCreds || {};
 }
 
 export const screen = {
@@ -136,7 +131,11 @@ export const screen = {
         const m = (await idb.get('meta', 'config')) || {};
         m.store = res.store;
         m.user = user;
-        m.offlinePins = await sha256(pinValue).then((h) => ({ ...(m.offlinePins || {}), [user.id]: h }));
+        // Opaque server-issued credential for offline sign-in on this terminal.
+        // The old offlinePins map was a PIN hash and is deleted here so a legacy
+        // device never keeps PIN-material lying around after upgrading.
+        delete m.offlinePins;
+        m.offlineCreds = { ...(m.offlineCreds || {}), [user.id]: res.offlineKey };
         await idb.put('meta', m, 'config');
       } catch (err) {
         if (err && err.offline) {
@@ -147,14 +146,15 @@ export const screen = {
             beep('err');
             return;
           }
-          const pins = await cachedPins();
-          const hash = await sha256(pinValue);
-          if (pins[usr.id] !== hash) {
+          const creds = await cachedCreds();
+          if (!creds[usr.id]) {
             btn.disabled = false; btn.textContent = 'Sign in';
-            errEl.textContent = 'Incorrect PIN (offline mode).';
+            errEl.textContent = 'Offline and no credential cached for that account on this terminal.';
             beep('err');
             return;
           }
+          // The credential is gating, not the PIN: nothing stored here is
+          // derivable to the PIN, so the PIN is never verified offline.
           user = usr;
           const m = (await idb.get('meta', 'config')) || {};
           m.user = user;

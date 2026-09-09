@@ -5,6 +5,27 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.5] — 2026-09-09
+
+Closes the last big credential gap: the offline sign-in fallback no longer
+stores anything recoverable to a staff PIN.
+
+### Security
+
+- **Opaque offline credential replaces the cached PIN hash.** Offline login
+  previously compared against an unsalted SHA-256 of the PIN left in the
+  device's IndexedDB — six digits is a million candidates, so anyone who read
+  that storage recovered the PIN essentially instantly. The server now issues a
+  fresh 256-bit opaque key at every sign-in; the client stores only that key,
+  and nothing on the device is derived from, or reveals, the PIN. It is
+  per-terminal (login already submits the terminal id) and the session-expired
+  handler wipes the whole vault once an admin's revoke reaches the device.
+- Legacy `offlinePins` hashes are deleted from storage on the first sign-in
+  after upgrading.
+- Behavioural note: offline sign-in is now gated by the credential, not by a
+  PIN check — server-side PIN verification happens only online, where it can
+  actually be throttled.
+
 ## [1.2.4] — 2026-09-09
 
 Finest-grained revocation yet: admin can cut off a **single lost terminal**

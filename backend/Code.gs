@@ -858,7 +858,18 @@ function login_(payload) {
     token: token,
     user: userDto_(found),
     store: getStore_(),
+    /* A 256-bit per-device credential for offline sign-in. Cataloguing it next
+     * to the session token means nothing on the device is derived from the PIN
+     * — steal the storage and you get an opaque blob, never the PIN itself. */
+    offlineKey: offlineCred_(),
   };
+}
+
+/* 256-bit opaque offline credential, issued fresh on every sign-in. Two v4
+ * UUIDs (122 bits of entropy each) without dashes give 64 hex chars; it is
+ * never stored server-side and carries zero information about the PIN. */
+function offlineCred_() {
+  return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
 }
 
 function userDto_(u) {

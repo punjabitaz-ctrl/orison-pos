@@ -97,10 +97,13 @@ window.addEventListener(SYNC_EVENT, refreshAlertBadge);
 const ctx = { idb, api, state, router };
 
 // A revoked or expired session (e.g. a lost device whose sessions an admin
-// killed) invalidates the current token. Drop it and return to sign-in.
+// killed) invalidates the current token. Drop it, wipe the local offline
+// vault (this terminal's cached sign-in credentials), and return to sign-in.
 setSessionExpiredHandler(async () => {
   await api.clearToken().catch(() => {});
   const m = (await idb.get('meta', 'config').catch(() => ({}))) || {};
+  delete m.offlineCreds;
+  delete m.offlinePins;
   delete m.user;
   state.user = null;
   await idb.put('meta', m, 'config').catch(() => {});

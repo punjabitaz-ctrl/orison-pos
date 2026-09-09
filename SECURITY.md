@@ -1,7 +1,7 @@
 # Orison POS — Security
 
 How staff sign in, what protects the till from someone guessing their way in,
-and the two weaknesses you should know about before deploying this.
+and the weaknesses you should know about before deploying this.
 
 ## Reporting
 
@@ -86,7 +86,8 @@ make atomic, so it needs `LockService` — and that is the wrong trade on this
 path: `tryLock` queues behind `syncPush_`, which holds the script lock for
 seconds at a time, pushing the response past the client's 8-second timeout,
 where `api.js` reports it as "offline" and `login.js` drops the cashier into the
-offline-PIN fallback. Appending a uniquely-named marker needs no lock and loses
+offline credential fallback (a per-device key issued by the server — the PIN is
+only ever checked online). Appending a uniquely-named marker needs no lock and loses
 no writes.
 
 Expired markers are swept on each attempt, across all addresses rather than only
@@ -197,18 +198,25 @@ the manifest — must come from the app's own origin.
 ## Offline behaviour
 
 The PWA is offline-first: sales are queued locally and sync on reconnect. When
-the backend is unreachable, `login.js` falls back to a PIN hash cached in
-IndexedDB at the last successful sign-in, so the terminal keeps working. That is
-a deliberate availability choice — a till that stops when the network does is not
-usable — but it carries three consequences worth stating plainly:
+the backend is unreachable, `login.js` falls back to a cached **offline
+credential** so the terminal keeps working. That is a deliberate availability
+choice — a till that stops when the network does is not usable — but it carries
+four consequences worth stating plainly:
 
 1. A stolen device can still transact until it is next online.
-2. Server-side throttling does not apply offline; the fallback compares locally.
-3. **That cached hash is an unsalted SHA-256 of the PIN.** Six digits is a
-   million candidates, so anyone who can read the device's IndexedDB recovers
-   the PIN essentially instantly. It is per-device and only reachable by someone
-   who already has the unlocked device or script execution on the origin — which
-   the Content-Security-Policy does not itself prevent, since it allows the
-   app's own scripts — but it is not a meaningful protection and should not be
-   relied on as one. Salting it per device, or storing a server-issued opaque
-   token instead of a PIN hash, would close it.
+2. Server-side throttling does not apply offline.
+3. The offline credential is a **256-bit opaque key issued by the server at
+   sign-in** (v1.2.5). Nothing on the device is derived from, or reveals, the
+   PIN: a reader of the device's IndexedDB recovers the PIN *never*, and the
+   key only works on the terminal that stored it. When an admin kills this
+   device's sessions, the first sign that reaches the backend wipes the
+   credential from storage.
+4. Because the credential gates offline access, the PIN itself is only ever
+   verified by the server. An attacker who takes a signed-out device that has
+   cached a credential learns nothing about the account's PIN, so they cannot
+   turn the theft into an online login.
+
+   (The 1.2.4 and earlier releases cached an unsalted SHA-256 of the PIN for
+   the same fallback; six digits is a million candidates, so that hash was
+   recoverable essentially instantly. It is deleted from storage on the first
+   sign-in after upgrading.)

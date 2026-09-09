@@ -301,6 +301,15 @@ check('bad app token → 401', (() => {
   return out.ok === false && out.status === 401;
 })());
 
+section('offline credential');
+const off1 = req('/api/login', { email: 'amara@example.com', pin: CREDS['amara@example.com'], deviceId: 'dev-off-1' });
+check('login returns an opaque 256-bit offline key', off1.ok && typeof off1.data.offlineKey === 'string' && off1.data.offlineKey.length === 64, JSON.stringify(off1.data));
+check('offline key is distinct from the session token', off1.ok && off1.data.offlineKey !== off1.data.token);
+check('offline key is fresh per sign-in', (() => {
+  const off2 = req('/api/login', { email: 'amara@example.com', pin: CREDS['amara@example.com'], deviceId: 'dev-off-2' });
+  return off2.ok && off2.data.offlineKey !== off1.data.offlineKey;
+})());
+
 section('sync push — first-committed-wins');
 const s24 = products.data.find((p) => p.sku === 'PH-S24U-256');
 const usb = products.data.find((p) => p.sku === 'CB-USBC-1M');
@@ -973,10 +982,11 @@ section('per-device revocation');
     req('/api/admin/devices', { email: who }, { session: cashCheck.data.token }).status === 403);
 
   const devList = req('/api/admin/devices', { email: who }, { session: adminToken });
+  const ours = (devList.data.devices || []).filter((d) => d.deviceId === devA || d.deviceId === devB);
   check('admin can list registered terminals',
-    devList.ok && devList.data.devices.length === 2 && devList.data.devices.every((d) => d.deviceId === devA || d.deviceId === devB), JSON.stringify(devList));
+    devList.ok && ours.length === 2, JSON.stringify(devList));
   check('registered devices are active by default',
-    devList.data.devices.every((d) => d.revoked === false));
+    ours.every((d) => d.revoked === false));
 
   check('both device tokens work before any revoke',
     req('/api/products', {}, { session: ta }).ok === true &&
