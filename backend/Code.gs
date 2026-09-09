@@ -73,6 +73,9 @@ function dispatch_(action, session, payload, params) {
     case '/api/admin/devices':   return adminDevices_(session, payload);
     case '/api/admin/revoke-device': return adminRevokeDevice_(session, payload);
     case '/api/pin':             return changeOwnPin_(session, payload);
+    case '/api/admin/users':     return adminUsers_(session, payload);
+    case '/api/admin/users/list': return adminUsersList_(session);
+    case '/api/admin/users/patch': return adminUserPatch_(session, payload);
     case '/api/logout':          return logout_(session);
     case '/api/admin/products':  return adminProducts_(session, payload);
     case '/api/admin/serials':   return adminSerials_(session, payload);
@@ -1725,6 +1728,109 @@ function adminUnlock_(session, payload) {
   clearLoginFailures_(email);
   Logger.log('[orison-pos] lockout cleared for ' + email + ' by ' + session.uid);
   return { ok: true };
+}
+
+/* Create a staff account. Admin only.
+ *
+ * The PIN is generated server-side and returned exactly once in the response
+ * (and logged once) so the admin can hand it off; the sheet only ever stores
+ * the salted hash, so there is no second copy to leak. Staff change their own
+ * PIN afterwards via /api/pin. */
+function adminUsers_(session, payload) {
+  requireRole_(session, ['admin']);
+  var firstName = String((payload && payload.firstName) || '').trim();
+  var lastName = String((payload && payload.lastName) || '').trim();
+  var email = String((payload && payload.email) || '').trim().toLowerCase();
+  var role = String((payload && payload.role) || 'cashier').trim();
+  if (!firstName || !lastName) throw statusError_(400, 'First and last name are required');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw statusError_(400, 'A valid email is required');
+  if (['admin', 'manager', 'cashier'].indexOf(role) < 0) {
+    throw statusError_(400, 'role must be admin, manager or cashier');
+  }
+
+  var users = readRows_('Users', USER_HEADERS);
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].email).toLowerCase() === email) {
+      throw statusError_(409, 'An account with that email already exists');
+    }
+  }
+
+  var pin = randomPin_();
+  var salt = Utilities.getUuid().split('-')[0];
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    appendRows_('Users', USER_HEADERS, [{
+      id: Utilities.getUuid(),
+      store_id: kv_().store_id || '',
+      first_name: firstName,
+      last_name: lastName,
+      email: email,
+      pin_salt: salt,
+      pin_hash: sha256Hex_(salt + ':' + pin),
+      role: role,
+      active: 1,
+      created_at: new Date().toISOString(),
+    }]);
+  } finally {
+    lock.releaseLock();
+  }
+  Logger.log('[orison-pos] new staff account ' + email + ' (' + role + ') created by ' + session.uid);
+  Logger.log('[orison-pos]   one-time PIN ' + pin + ' for ' + email);
+  return { ok: true, oneTimePin: pin, email: email };
+}
+
+/* Full staff roster for the Settings screen. Admin only. Deliberately omits
+ * anything credential-shaped; the client only needs identity + role + state. */
+function adminUsersList_(session) {
+  requireRole_(session, ['admin']);
+  return {
+    users: readRows_('Users', USER_HEADERS).map(function (u) {
+      return {
+        id: u.id,
+        firstName: u.first_name,
+        lastName: u.last_name,
+        email: u.email,
+        role: u.role,
+        active: String(u.active) === '1',
+      };
+    }),
+  };
+}
+
+/* Edit a staff account: role, active flag. Admin only. Deactivating a user
+ * revokes their sessions and marks their terminals revoked so a lost device
+ * stays out even after the auth-cache markers lapse. */
+function adminUserPatch_(session, payload) {
+  requireRole_(session, ['admin']);
+  var id = String((payload && payload.id) || '');
+  if (!id) throw statusError_(400, 'id is required');
+
+  var users = readRows_('Users', USER_HEADERS);
+  var found = null;
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].id) === id) { found = users[i]; break; }
+  }
+  if (!found) throw statusError_(404, 'No such user');
+  if (String(found.role) === 'admin' && String(session.uid) === id) {
+    throw statusError_(400, 'You cannot deactivate or demote yourself');
+  }
+
+  var patch = {};
+  if (typeof payload.active === 'boolean') {
+    patch.active = payload.active ? 1 : 0;
+  } else if (payload.active === 0 || payload.active === 1) {
+    patch.active = payload.active;
+  }
+  if (typeof payload.role === 'string' && ['admin', 'manager', 'cashier'].indexOf(payload.role) >= 0) {
+    patch.role = payload.role;
+  }
+  if (!Object.keys(patch).length) return { ok: true, changed: false };
+
+  applyPatches_('Users', USER_HEADERS, 'id', { [id]: patch });
+  if (patch.active === 0) { revokeTokensForUser_(id); markAllDevicesRevoked_(id); }
+  Logger.log('[orison-pos] user ' + id + ' patched ' + JSON.stringify(patch) + ' by ' + session.uid);
+  return { ok: true, changed: true };
 }
 
 /* Revoke all active sessions for the calling user.  Called on sign-out so a

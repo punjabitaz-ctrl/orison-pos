@@ -5,6 +5,30 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-09-09
+
+Staff accounts are no longer hand-edited in the Users sheet.
+
+### Added
+
+- **Settings → Staff** (admin only): add a staff member, pick their role,
+  reset a forgotten PIN, or deactivate a leaver.
+- **One-time PIN on creation.** The server generates a fresh 6-digit PIN,
+  returns it once to the creating admin, and never stores it — the sheet holds
+  only the salted hash. Staff are told to change it at their own terminal.
+- **Settings → Change PIN** (everyone): rotate your own sign-in PIN (verified
+  against the current one); all of your terminals are signed out on change.
+- **Deactivation.** Turning a staff member off immediately signs them out on
+  every device and marks their terminals revoked, so a lost terminal cannot
+  quietly re-login. Admins cannot deactivate or demote themselves.
+- New backend endpoints `/api/admin/users` (create), `/api/admin/users/list`
+  (roster, no credential material), `/api/admin/users/patch` (role / active).
+
+### Changed
+
+- The roster endpoint omits anything credential-shaped — identity, role, and
+  active state only.
+
 ## [1.2.7] — 2026-09-09
 
 ### Added

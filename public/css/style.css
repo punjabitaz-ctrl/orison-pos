@@ -587,6 +587,7 @@ button:disabled { cursor: default; }
 .hx-count { display: block; font-size: 11px; color: var(--muted); }
 
 .tx-detail { position: relative; }
+.staff-pin { font-size: 30px; font-weight: 800; letter-spacing: 8px; text-align: center; padding: 14px 0; color: var(--act, #1c5d99); }
 .abs-close { position: absolute; top: 0; right: 0; }
 .tx-items { margin: 12px 0; }
 .tx-item-row { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }

@@ -1223,6 +1223,72 @@ section('discounts & tax');
       && alert.body.includes('tx-email-a') && alert.body.includes('Same device + transaction id pushed twice'), alert.body);
 }
 
+{
+  section('staff management');
+
+  /* cashierToken/mgr were issued at seed and killed by the PIN-rotation blocks
+     above, so use fresh sessions for role-gating checks. */
+  const staffCashierTok = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const staffMgrTok = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+
+  check('cashier may not list staff',
+    req('/api/admin/users/list', {}, { session: staffCashierTok }).status === 403);
+  check('manager may not create staff',
+    req('/api/admin/users', { firstName: 'Nina', lastName: 'Peters', email: 'nina@example.com', role: 'cashier' }, { session: staffMgrTok }).status === 403);
+  check('create requires name and a valid email',
+    req('/api/admin/users', { firstName: 'Nina', lastName: '', email: 'nina@example.com', role: 'cashier' }, { session: adminToken }).status === 400
+      && req('/api/admin/users', { firstName: 'Nina', lastName: 'Peters', email: 'not-an-email', role: 'cashier' }, { session: adminToken }).status === 400);
+  check('create rejects an unknown role',
+    req('/api/admin/users', { firstName: 'Nina', lastName: 'Peters', email: 'nina@example.com', role: 'owner' }, { session: adminToken }).status === 400);
+
+  const made = req('/api/admin/users', { firstName: 'Luca', lastName: 'Moretti', email: 'luca@example.com', role: 'cashier' }, { session: adminToken });
+  check('admin creates a staff account with a one-time PIN',
+    made.ok === true && /^[0-9]{6}$/.test(made.data.oneTimePin));
+  check('a duplicate email is refused',
+    req('/api/admin/users', { firstName: 'Luca', lastName: 'Moretti', email: 'luca@example.com', role: 'cashier' }, { session: adminToken }).status === 409);
+  const lucaPin = made.data.oneTimePin;
+
+  const l1 = req('/api/login', { email: 'luca@example.com', pin: lucaPin });
+  check('the one-time PIN signs the new account in', l1.ok === true && l1.data.user.email === 'luca@example.com' && l1.data.user.role === 'cashier');
+
+  const roster = req('/api/admin/users/list', {}, { session: adminToken });
+  const lucaRow = roster.data.users.find((u) => u.email === 'luca@example.com');
+  check('roster lists the new staff with their state',
+    lucaRow && lucaRow.active === true && lucaRow.role === 'cashier' && roster.data.users.length === 5);
+  check('roster never contains credential material',
+    roster.data.users.every((u) => !('pin' in u) && !('salt' in u) && !('pin_hash' in u)));
+
+  req('/api/admin/users/patch', { id: lucaRow.id, role: 'manager' }, { session: adminToken });
+  const l2 = req('/api/login', { email: 'luca@example.com', pin: lucaPin });
+  check('role change takes effect on the next sign-in',
+    l2.ok === true && l2.data.user.role === 'manager');
+
+  req('/api/admin/users/patch', { id: lucaRow.id, active: false }, { session: adminToken });
+  check('deactivated account cannot sign in',
+    req('/api/login', { email: 'luca@example.com', pin: lucaPin }).status === 401);
+  check('deactivated account is refused even with a fresh session',
+    req('/api/transactions', {}, { params: { limit: '10' }, session: l1.data.token }).status === 401);
+
+  req('/api/admin/users/patch', { id: lucaRow.id, active: true }, { session: adminToken });
+  const l3 = req('/api/login', { email: 'luca@example.com', pin: lucaPin });
+  check('reactivation restores access', l3.ok === true);
+
+  const cf = req('/api/config', {}, { session: adminToken }).data;
+  const tariqId = cf.users.find((u) => u.email === 'tariq@example.com').id;
+  check('admin cannot deactivate themselves',
+    req('/api/admin/users/patch', { id: tariqId, active: false }, { session: adminToken }).status === 400);
+  check('admin cannot demote themselves',
+    req('/api/admin/users/patch', { id: tariqId, role: 'cashier' }, { session: adminToken }).status === 400);
+
+  req('/api/login', { email: 'luca@example.com', pin: lucaPin, deviceId: 'dev-luca-1' });
+  const l4 = req('/api/login', { email: 'luca@example.com', pin: lucaPin });
+  req('/api/admin/users/patch', { id: lucaRow.id, active: false }, { session: adminToken });
+  check('deactivating revokes every registered terminal',
+    req('/api/login', { email: 'luca@example.com', pin: lucaPin, deviceId: 'dev-luca-1' }).status === 401
+      && req('/api/login', { email: 'luca@example.com', pin: lucaPin }).status === 401);
+  void l4;
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);
