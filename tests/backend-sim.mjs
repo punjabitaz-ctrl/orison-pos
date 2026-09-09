@@ -1289,6 +1289,59 @@ section('discounts & tax');
   void l4;
 }
 
+{
+  section('profit & margin');
+
+  const mgrTok = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const cashLogin = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] });
+  const cashTok = cashLogin.data.token;
+  const cashUserId = cashLogin.data.user.id;
+  const cat = req('/api/products', {}, { session: mgrTok }).data;
+  const anchor = cat.find((p) => p.name === 'Anchor');
+  const usbC = cat.find((p) => p.sku === 'CB-USBC-1M');
+
+  const mr = req('/api/sync/push', {
+    deviceId: 'dev-margin-1',
+    batch: [{
+      clientTxId: 'tx-margin-1',
+      userId: cashUserId,
+      grandTotal: 24,
+      tenders: [{ type: 'cash', amount: 24 }],
+      createdAt: new Date().toISOString(),
+      items: [{ productId: usbC.id, quantity: 2, unitPrice: 12 }],
+    }],
+  }, { session: mgrTok });
+  check('add-cost sale accepted', mr.data.results[0].accepted === true);
+
+  const storeLedger = req('/api/transactions', {}, { session: mgrTok, params: { limit: 500 } }).data.transactions;
+  const marginTx = storeLedger.find((t) => t.clientTxId === 'tx-margin-1');
+  check('item carries unitCost for managers',
+    marginTx.items[0].unitCost === 6, JSON.stringify(marginTx.items));
+  check('tx carries gross profit for managers',
+    marginTx.grossProfit === 12, String(marginTx.grossProfit));
+
+  const cashLedger = req('/api/transactions', {}, { session: cashTok, params: { limit: 500 } }).data.transactions;
+  const cashTx = cashLedger.find((t) => t.clientTxId === 'tx-margin-1');
+  check('cashier copy has no unitCost', cashTx && cashTx.items[0].unitCost === undefined, JSON.stringify(cashTx && cashTx.items[0]));
+  check('cashier copy has no grossProfit', cashTx && cashTx.grossProfit === undefined);
+
+  const anchorTx = storeLedger.find((t) => t.clientTxId === 'tx-tax-0');
+  check('discounted sale profit is net of discount',
+    anchorTx && anchorTx.subtotal === 100 && anchorTx.grossProfit === 40 && Math.abs(anchorTx.taxAmount - 6.53) < 0.001,
+    JSON.stringify(anchorTx && { sub: anchorTx.subtotal, gp: anchorTx.grossProfit }));
+
+  const day = new Date().toISOString().slice(0, 10);
+  req('/api/drive/export', { date: day }, { session: mgrTok });
+  const storeCsv = driveFiles[driveFiles.length - 1].content;
+  check('store CSV has cost + gross profit columns',
+    storeCsv.includes('cost,gross_profit') && storeCsv.includes('GROSS PROFIT'));
+  req('/api/drive/export', { date: day }, { session: cashTok });
+  const cashCsv = driveFiles[driveFiles.length - 1].content;
+  check('cashier CSV never includes cost or margin',
+    !cashCsv.includes('gross_profit') && !cashCsv.includes('GROSS PROFIT') && !cashCsv.includes('TOTAL COST') && !cashCsv.includes(',cost,'));
+  void anchor; void mr;
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

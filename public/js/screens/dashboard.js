@@ -91,6 +91,7 @@ export const screen = {
       const todayPayouts = sumTx(payoutsTx);
       const todayRevenue = todaySales - todayRefunds - todayPayouts;
       const todayUnits = salesTx.reduce((s, t) => s + (t.items || []).reduce((a, i) => a + (i.quantity || 1), 0), 0);
+      const todayGP = todayTx.reduce((s, t) => s + (Number(t.grossProfit) || 0), 0);
 
       const recent = [...relevant].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 4);
       const alerts = inventoryAlerts(products);
@@ -114,7 +115,8 @@ export const screen = {
           <div class="dash-kpi"><span>Units today</span><strong>${todayUnits}</strong></div>
           ${isManager ? `
           <div class="dash-kpi warn"><span>Refunds</span><strong>−${money(todayRefunds)}</strong></div>
-          <div class="dash-kpi warn"><span>Paid out</span><strong>−${money(todayPayouts)}</strong></div>` : ''}
+          <div class="dash-kpi warn"><span>Paid out</span><strong>−${money(todayPayouts)}</strong></div>
+          <div class="dash-kpi dash-gp"><span>Gross profit today</span><strong>${money(todayGP)}</strong></div>` : ''}
         </div>
 
         ${isManager ? `
@@ -152,7 +154,7 @@ export const screen = {
                 <div class="rank-row">
                   <span class="rank-idx">${i + 1}</span>
                   <div class="rank-main"><div class="rank-name">${esc(t.name)}</div><div class="muted">${t.units} unit${t.units === 1 ? '' : 's'}</div></div>
-                  <b>${money(t.rev)}</b>
+                  <b>${money(t.rev)}${t.gp !== 0 ? `<span class="gp">&nbsp;·&nbsp;${money(t.gp)} margin</span>` : ''}</b>
                 </div>`).join('')}</div>`
             : `<p class="empty">No sales synced yet.</p>`}
         </section>
@@ -400,9 +402,10 @@ function topSellers(txs) {
     if ((t.kind || 'sale') !== 'sale') continue; // refund/payout lines aren't units sold
     for (const it of t.items || []) {
       const name = String(it.name || 'Item');
-      const e = tally.get(name) || { name, units: 0, rev: 0 };
+      const e = tally.get(name) || { name, units: 0, rev: 0, gp: 0 };
       e.units += it.quantity || 1;
       e.rev += (it.unitPrice || 0) * (it.quantity || 1);
+      if (it.unitCost != null) e.gp += ((it.unitPrice || 0) - (it.unitCost || 0)) * (it.quantity || 1);
       tally.set(name, e);
     }
   }

@@ -5,6 +5,38 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] — 2026-09-09
+
+Profit visibility, derived from the cost already tracked on each product —
+and kept out of cashiers' hands. Cost is snapshotted per sale line at the
+moment of the sale, so retroactively editing a product's cost never rewrites
+historical profit.
+
+### Added
+
+- **Gross profit in the API.** Each transaction now reports its cost total and
+  gross profit (net revenue minus cost, with refunds counted negative). Only
+  admins and managers ever see the figures, and only when they read via the
+  role-aware transactions endpoint.
+- **Dashboard "Gross profit today"** KPI (admin/manager) and per-product
+  margin next to revenue in Top sellers.
+- **History detail.** Transaction modals show a Gross profit line, and each
+  line item's cost basis is included in the manager's view.
+- **Drive exports carry margin.** The CSV detail gains `cost` and
+  `gross_profit` columns, and the summary block adds `TOTAL COST` and
+  `GROSS PROFIT` rows — store copies only. A cashier's report is unchanged.
+
+### Changed
+
+- Line cost is captured at sale time into each pushed item, preserving the
+  profit picture for historical reports even if costs change later.
+
+### Security
+
+- Margin, cost columns, and unit costs are gated behind the store role
+  (`admin`/`manager`). A cashier receives no cost data in the API, history, or
+  their own CSV export.
+
 ## [1.3.0] — 2026-09-09
 
 Staff accounts are no longer hand-edited in the Users sheet.

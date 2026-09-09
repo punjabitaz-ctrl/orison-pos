@@ -1279,6 +1279,11 @@ function resolvedItems_(resolved) {
     var dp = clampPct_(num_(r.discountPct));
     if (dp > 0) it.discountPct = dp;
     if (String(r.product.taxable) === '0') it.taxable = false;
+    /* Cost is captured at sale time so profit history is stable even if the
+       product's cost is edited later. Omitted when zero so costless lines
+       (and legacy rows) stay compact. */
+    var uc = Math.round(num_(r.product.cost_price) * 100) / 100;
+    if (uc > 0) it.unitCost = uc;
     return it;
   });
 }
@@ -1571,13 +1576,24 @@ function transactions_(session, params) {
     try { tenders = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
     var items = [];
     try { items = JSON.parse(t.items_json || '[]'); } catch (_) {}
+    var costTotal = 0;
+    for (var ii = 0; ii < items.length; ii++) costTotal += (num_(items[ii].unitCost)) * (items[ii].quantity || 1);
+    var kindName = String(t.kind || 'sale');
+    var hasMoney = t.subtotal !== '' && t.subtotal != null && num_(t.subtotal) > 0;
+    var grossProfit = null;
+    if (kindName === 'refund') grossProfit = -costTotal;
+    else if (kindName === 'payout') grossProfit = 0;
+    else if (hasMoney) {
+      /* net revenue = line subtotal − order discount; margin = that − cost. */
+      grossProfit = num_(t.subtotal) - Math.round(num_(t.subtotal) * num_(t.discount_pct) / 100) - costTotal;
+    }
     out.push({
       id: String(t.id),
       storeId: String(t.store_id),
       user_id: String(t.user_id),
       deviceId: String(t.device_id),
       clientTxId: String(t.client_tx_id || ''),
-      kind: String(t.kind || 'sale'),
+      kind: kindName,
       originalClientTx: String(t.original_client_tx || ''),
       counterparty: String(t.counterparty || ''),
       cashier: nameById[String(t.user_id)] || '',
@@ -1588,7 +1604,7 @@ function transactions_(session, params) {
       tenders: tenders,
       createdAt: String(t.created_at),
       items: items.map(function (it) {
-        return {
+        var mapped = {
           productId: String(it.productId || ''),
           name: String(it.name || ''),
           quantity: it.quantity || 1,
@@ -1597,9 +1613,14 @@ function transactions_(session, params) {
           taxable: !(String(it.taxable) === '0'),
           serialNumber: it.serialNumber ? String(it.serialNumber) : null,
         };
+        /* Cost is manager/admin-only: a cashier's copy never carries it. */
+        if (isStore) mapped.unitCost = num_(it.unitCost);
+        return mapped;
       }),
       note: String(t.note || ''),
     });
+    /* Gross profit is a manager/admin figure and stays off cashier responses. */
+    if (isStore) out[out.length - 1].grossProfit = grossProfit;
   }
   return { transactions: out };
 }
@@ -2131,8 +2152,8 @@ function driveExport_(session, payload, params) {
     nameById[String(userRows[i].id)] = (String(userRows[i].first_name || '') + ' ' + String(userRows[i].last_name || '')).trim();
   }
 
-  var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note\n';
-  var sales = 0, refunds = 0, payouts = 0, taxTotal = 0;
+  var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note' + (isStore ? ',cost,gross_profit' : '') + '\n';
+  var sales = 0, refunds = 0, payouts = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
     var k = String(t.kind || 'sale');
@@ -2147,7 +2168,11 @@ function driveExport_(session, payload, params) {
     var itemSummary = items
       .map(function (it) { return String(it.quantity || 1) + 'x ' + String(it.name || ''); })
       .join(' | ');
-    csv += [
+    var costTotal = 0;
+    for (var itx = 0; itx < items.length; itx++) costTotal += num_(items[itx].unitCost) * (items[itx].quantity || 1);
+    if (k === 'refund') costTotalDay -= costTotal;
+    else costTotalDay += costTotal;
+    var row = [
       csvCell_(t.created_at),
       csvCell_(t.client_tx_id),
       csvCell_(k),
@@ -2158,7 +2183,17 @@ function driveExport_(session, payload, params) {
       csvCell_(itemSummary),
       csvCell_(t.tenders_json),
       csvCell_(t.note),
-    ].join(',') + '\n';
+    ];
+    if (isStore) {
+      var gp = null;
+      if (k === 'refund') gp = -costTotal;
+      else if (k === 'payout') gp = 0;
+      else if (String(t.subtotal || '') !== '') gp = num_(t.subtotal) - Math.round(num_(t.subtotal) * num_(t.discount_pct) / 100) - costTotal;
+      if (gp != null) gpDay += gp;
+      row.push(String(costTotal));
+      row.push(gp == null ? '' : String(gp));
+    }
+    csv += row.join(',') + '\n';
   }
 
   /* Cash summary block appended after the detail rows so managers/admins
@@ -2171,6 +2206,10 @@ function driveExport_(session, payload, params) {
   csv += ',,REFUNDS,,' + String(refunds) + ',\n';
   csv += ',,PAID OUT,,' + String(payouts) + ',\n';
   csv += ',,NET CASH,,' + String(net) + ',\n';
+  if (isStore) {
+    csv += ',,TOTAL COST,,' + String(costTotalDay) + ',\n';
+    csv += ',,GROSS PROFIT,,' + String(gpDay) + ',\n';
+  }
   csv += ',,TRANSACTIONS,,' + String(dayRows.length) + ',\n';
 
   var folder = getDriveFolder_();

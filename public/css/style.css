@@ -756,6 +756,9 @@ button:disabled { cursor: default; }
 .k-payout { background: #fbe9e7; color: #b35500; }
 
 .dash-kpi.warn strong { color: #c62828; }
+.dash-kpi.dash-gp strong { color: #2e7d32; }
+.co-bd-row .gp { color: #2e7d32; }
+.rank-row b .gp { color: #2e7d32; font-size: 11px; font-weight: 700; }
 
 .refund-modal .refund-lines { display: flex; flex-direction: column; gap: 12px; margin: 12px 0; }
 .rf-group { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }

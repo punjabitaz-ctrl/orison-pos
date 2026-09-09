@@ -38,7 +38,8 @@ export const screen = {
           tenders: t.tenders,
           cashier: t.cashier,
           createdAt: t.createdAt,
-          items: t.items.map((i) => ({ productId: i.productId, name: i.name, quantity: i.quantity, unitPrice: i.unitPrice, discountPct: i.discountPct, serialNumber: i.serialNumber })),
+          grossProfit: t.grossProfit,
+          items: t.items.map((i) => ({ productId: i.productId, name: i.name, quantity: i.quantity, unitPrice: i.unitPrice, discountPct: i.discountPct, serialNumber: i.serialNumber, unitCost: i.unitCost })),
           clientTxId: t.clientTxId,
         }));
         loaded = true;
@@ -126,7 +127,8 @@ export const screen = {
           ${hasMoney ? `
           <div class="co-bd-row"><span>Subtotal</span><b>${fmt(t.subtotal != null ? t.subtotal : t.total)}</b></div>
           <div class="co-bd-row">${(t.discountPct || 0) > 0 ? `<span>Discount</span><b class="neg">−${fmt(t.discountPct)}%</b>` : ''}</div>
-          <div class="co-bd-row"><span>Tax</span><b>${fmt(t.taxAmount || 0)}</b></div>`
+          <div class="co-bd-row"><span>Tax</span><b>${fmt(t.taxAmount || 0)}</b></div>
+          ${t.grossProfit != null ? `<div class="co-bd-row"><span>Gross profit</span><b class="gp">${fmt(t.grossProfit)}</b></div>` : ''}`
             : ''}
           <div class="tx-tenders">
             ${(t.tenders || []).map((td) => `<div class="hx-tender"><span>${esc(td.label || td.type)}</span><b>${fmt(td.amount)}</b></div>`).join('')}
