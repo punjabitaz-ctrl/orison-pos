@@ -5,6 +5,34 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-09-09
+
+Receivables grow teeth. Managers can record payments against a customer account
+and see how old each outstanding dollar really is.
+
+### Added
+
+- **Collections (`kind: payment`).** `/api/sync/push` now accepts a `payment`
+  transaction — money in against a customer's account. Admin/manager only (a
+  cashier deciding what counts as paid is an accounts hazard), amount must be
+  positive, customer must exist. The ledger nets the account and the balance on
+  the spot; the **Customers screen** gets a *Collect payment* button on positive
+  balances (cash or transfer, optional note) that works offline through the
+  queue like everything else.
+- **Aging report.** Both the ledger and receivables now bucket the outstanding
+  balance by how long it's been owed: current (< 30d), 30–59, 60–89, and
+  90+. Payments settle the *oldest* dollars first (FIFO), so a pallet sold in
+  January and never paid ages past 90 days no matter how many new sales the
+  customer rings up. The Customers screen shows color-coded aging chips; the
+  ledger modal dates the oldest dollar still owed.
+
+### Fixed
+
+- **Customer link survived sync.** The checkout picked a customer but
+  `enqueueTransaction` never forwarded `customerId` to the push payload — the
+  sale was recorded without its customer. Now the picker's link actually lands
+  (it also persisted in the local transaction record).
+
 ## [1.4.0] — 2026-09-09
 
 Customers are people, not rows. The store can now attach any sale (especially

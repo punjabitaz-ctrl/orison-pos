@@ -6,7 +6,8 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
-import { fmt, esc, openModal, closeModal, toast } from '../ui.js';
+import { fmt, esc, openModal, closeModal, toast, beep } from '../ui.js';
+import { createCollection } from '../money.js';
 
 export const screen = {
   id: 'customers',
@@ -61,6 +62,7 @@ export const screen = {
               <div class="hx-right">
                 <strong class="${c.balance > 0 ? 'neg' : 'gp'}">${c.balance > 0 ? '' : '+ '}${fmt(c.balance)}</strong>
                 <span class="hx-count">${c.account > 0 ? `${fmt(c.account)} on account` : `${fmt(c.credit)} credit`}</span>
+                ${agingChips(c.aging)}
               </div>
             </button>`).join('')
             : `<div class="empty"><p>${loaded ? 'No balances yet — charge a sale to a customer to build the book.' : 'Offline — pull failed.'}</p></div>`}
@@ -110,7 +112,9 @@ export const screen = {
             <div><span>Owes on account</span><b>${fmt(l.account)}</b></div>
             <div><span>Holds credit</span><b class="gp">${fmt(l.credit)}</b></div>
             <div class="lg-total"><span>Balance</span><strong class="${l.balance > 0 ? 'neg' : 'gp'}">${l.balance > 0 ? '' : '+ '}${fmt(l.balance)}</strong></div>
+            <div class="lg-aging">${agingChips(l.aging)}</div>
           </div>
+          ${l.balance > 0 ? `<button class="btn btn-block" id="collectBtn" style="--bg:#2e7d32">Collect payment</button>` : ''}
           <div class="lg-txs">
             ${(l.transactions || []).length ? l.transactions.map((t) => `
               <div class="lg-tx">
@@ -127,6 +131,58 @@ export const screen = {
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
       modalEl.addEventListener('click', (e) => { if (e.target.classList.contains('modal-backdrop') || e.target.closest('[data-close]')) closeModal(); });
       modalEl.parentElement.querySelector('.modal-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeModal(); });
+
+      const collectBtn = modalEl.querySelector('#collectBtn');
+      if (collectBtn) collectBtn.addEventListener('click', () => openCollectModal(l));
+    }
+
+    function openCollectModal(l) {
+      let method = 'cash';
+      const modalEl = openModal(`
+        <div class="tx-detail">
+          <button class="icon-btn abs-close" data-x>✕</button>
+          <h3>Collect payment</h3>
+          <p class="muted">${esc(l.customer.name)} · ${fmt(l.balance)} on balance</p>
+          <label class="field-label">Amount (₦)
+            <input class="field" id="col-amt" type="number" min="0.01" step="0.01" placeholder="0.00">
+          </label>
+          <div class="seg">
+            <button class="seg-btn on" data-m="cash">Cash</button>
+            <button class="seg-btn" data-m="transfer">Transfer</button>
+          </div>
+          <label class="field-label">Note (optional)
+            <input class="field" id="col-note" placeholder="e.g. paid via transfer">
+          </label>
+          <button class="btn btn-block" id="col-confirm" style="--bg:#2e7d32">Record payment</button>
+        </div>`);
+      modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
+      modalEl.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => {
+        method = b.dataset.m;
+        modalEl.querySelectorAll('.seg-btn').forEach((x) => x.classList.toggle('on', x === b));
+      }));
+      const confirm = modalEl.querySelector('#col-confirm');
+      confirm.addEventListener('click', async () => {
+        const amount = Number(modalEl.querySelector('#col-amt').value);
+        if (!(amount > 0)) { toast('Enter an amount', 'warn'); return; }
+        confirm.disabled = true;
+        try {
+          await createCollection({
+            customerId: l.customer.id,
+            grandTotal: amount,
+            method,
+            note: modalEl.querySelector('#col-note').value.trim(),
+            user,
+          });
+          closeModal();
+          toast('Payment queued', 'ok', 1800);
+          beep('ok');
+          await loadReceivables();
+          openLedger(l.customer.id);
+        } catch (_) {
+          confirm.disabled = false;
+          toast('Failed — try again', 'warn', 2400);
+        }
+      });
     }
 
     function shortDate(iso) {
@@ -134,6 +190,16 @@ export const screen = {
       const d = new Date(iso);
       if (isNaN(d)) return iso;
       return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+
+    function agingChips(a) {
+      if (!a) return '';
+      const parts = [];
+      if (a.d90 > 0) parts.push(`<span class="age age90">${fmt(a.d90)} ≥90d</span>`);
+      if (a.d60 > 0) parts.push(`<span class="age age60">${fmt(a.d60)} 60d+</span>`);
+      if (a.d30 > 0) parts.push(`<span class="age age30">${fmt(a.d30)} 30d+</span>`);
+      if (a.current > 0) parts.push(`<span class="age age0">${fmt(a.current)} curr</span>`);
+      return parts.join('');
     }
 
     await loadReceivables();

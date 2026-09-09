@@ -1081,6 +1081,10 @@ function syncPush_(session, payload) {
         pushResult_(results, tx, processPayout_(session, store, newTxRows, tx, deviceId, userRows));
         continue;
       }
+      if (kind === 'payment') {
+        pushResult_(results, tx, processPayment_(session, store, newTxRows, tx, deviceId, userRows, customerIds));
+        continue;
+      }
       if (kind === 'refund') {
         pushResult_(results, tx, processRefund_(
           txRows, prodRows, serialRows, store, newTxRows, newConflictRows,
@@ -1372,6 +1376,42 @@ function processPayout_(session, store, newTxRows, tx, deviceId, userRows) {
     items_json: '[]',
     note: String(tx.note || ''),
     created_at: String(tx.createdAt || new Date().toISOString()),
+  });
+  return { transactionId: txId, errors: [] };
+}
+
+/* Money in against a customer's account ("collection"). Admin/manager only,
+   exactly like a payout — a cashier deciding what counts as paid is an
+   accounts hazard. Recorded as kind 'payment' so the ledger can net it. */
+function processPayment_(session, store, newTxRows, tx, deviceId, userRows, customerIds) {
+  var role = session ? String(session.role || '') : '';
+  if (role !== 'admin' && role !== 'manager') {
+    return { errors: [{ reason: 'unauthorized_role' }] };
+  }
+  var amount = num_(tx.grandTotal);
+  if (amount <= 0) return { errors: [{ reason: 'invalid_amount' }] };
+  var custId = String(tx.customerId || '');
+  if (!customerIds[custId]) return { errors: [{ reason: 'unknown_customer' }] };
+
+  var userIds = {};
+  for (var u = 0; u < userRows.length; u++) userIds[String(userRows[u].id)] = true;
+  var txId = Utilities.getUuid();
+  newTxRows.push({
+    id: txId,
+    store_id: store.id,
+    user_id: userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows),
+    device_id: deviceId,
+    client_tx_id: String(tx.clientTxId || ''),
+    kind: 'payment',
+    original_client_tx: '',
+    counterparty: '',
+    grand_total: amount,
+    status: 'COMPLETED',
+    tenders_json: JSON.stringify(Array.isArray(tx.tenders) && tx.tenders.length ? tx.tenders : [{ type: 'cash', amount: amount }]),
+    items_json: '[]',
+    note: String(tx.note || ''),
+    created_at: String(tx.createdAt || new Date().toISOString()),
+    customer_id: custId,
   });
   return { transactionId: txId, errors: [] };
 }
@@ -1753,6 +1793,7 @@ function customerLedger_(session, params) {
     credit: credit,
     account: account,
     balance: account - credit,
+    aging: agingBuckets_(txRows),
     transactions: txs,
   };
 }
@@ -1763,53 +1804,109 @@ function receivables_(session) {
   requireRole_(session, ['admin', 'manager']);
   var txRows = readRows_('Transactions', TX_HEADERS)
     .filter(function (t) { return String(t.status) === 'COMPLETED' && String(t.customer_id || '') !== ''; });
-  var byCust = {};
-  for (var j = 0; j < txRows.length; j++) {
-    var ck = String(txRows[j].customer_id);
-    var e = byCust[ck] || { credit: 0, account: 0, lastSeen: '' };
-    var kind = String(txRows[j].kind || 'sale');
-    var tenders = [];
-    try { tenders = JSON.parse(txRows[j].tenders_json || '[]'); } catch (_) {}
-    if (kind === 'sale') {
-      for (var k = 0; k < tenders.length; k++) {
-        var ty = String(tenders[k].type || '');
-        var amt = num_(tenders[k].amount);
-        if (ty === 'store_credit') e.credit -= amt;
-        else if (ty === 'net30' || ty === 'account') e.account += amt;
-      }
-    } else if (kind === 'refund') {
-      for (var m = 0; m < tenders.length; m++) {
-        if (String(tenders[m].type || '') === 'store_credit') e.credit += num_(tenders[m].amount);
-      }
-    } else if (kind === 'payment') {
-      e.account -= num_(txRows[j].grand_total);
-    }
-    if (String(txRows[j].created_at) > e.lastSeen) e.lastSeen = String(txRows[j].created_at);
-    byCust[ck] = e;
+
+  var byCustRows = {};
+  for (var r = 0; r < txRows.length; r++) {
+    var ck = String(txRows[r].customer_id);
+    if (!byCustRows[ck]) byCustRows[ck] = [];
+    byCustRows[ck].push(txRows[r]);
   }
 
-  var custRows = readRows_('Customers', CUSTOMERS_HEADERS);
   var cells = [];
   var totalOut = 0;
+  var custRows = readRows_('Customers', CUSTOMERS_HEADERS);
   for (var c = 0; c < custRows.length; c++) {
     var id = String(custRows[c].id);
-    var e = byCust[id];
-    if (!e) continue;
-    var balance = e.account - e.credit;
-    if (Math.abs(balance) < 0.005) continue;
+    var rows = byCustRows[id];
+    if (!rows) continue;
+    var credit = 0, account = 0, lastSeen = '';
+    for (var j = 0; j < rows.length; j++) {
+      var t = rows[j];
+      var kind = String(t.kind || 'sale');
+      var tenders = [];
+      try { tenders = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
+      if (kind === 'sale') {
+        for (var k = 0; k < tenders.length; k++) {
+          var ty = String(tenders[k].type || '');
+          var amt = num_(tenders[k].amount);
+          if (ty === 'store_credit') credit -= amt;
+          else if (ty === 'net30' || ty === 'account') account += amt;
+        }
+      } else if (kind === 'refund') {
+        for (var m = 0; m < tenders.length; m++) {
+          if (String(tenders[m].type || '') === 'store_credit') credit += num_(tenders[m].amount);
+        }
+      } else if (kind === 'payment') {
+        account -= num_(t.grand_total);
+      }
+      if (String(t.created_at) > lastSeen) lastSeen = String(t.created_at);
+    }
+    var balance = account - credit;
+    if (Math.abs(balance) < 0.005 && Math.abs(account) < 0.005 && Math.abs(credit) < 0.005) continue;
+    var aging = agingBuckets_(rows);
     cells.push({
       id: id,
       name: String(custRows[c].name || ''),
       phone: String(custRows[c].phone || ''),
-      credit: e.credit,
-      account: e.account,
+      credit: credit,
+      account: account,
       balance: balance,
-      lastSeen: e.lastSeen,
+      lastSeen: lastSeen,
+      aging: aging,
     });
     if (balance > 0) totalOut += balance;
   }
   cells.sort(function (a, b) { return b.balance - a.balance; });
   return { customers: cells, totalOutstanding: totalOut };
+}
+
+/* FIFO aging: the oldest dollar on account ages first. Bucket labels are the
+   day ranges: current (< 30), 30–59, 60–89, and 90+. */
+function agingBuckets_(txRows) {
+  var nowMs = Date.now();
+  var DAY = 24 * 3600 * 1000;
+  var sales = [];
+  var payTotal = 0;
+  for (var i = 0; i < txRows.length; i++) {
+    var t = txRows[i];
+    var kind = String(t.kind || 'sale');
+    var at = new Date(String(t.created_at || '')).getTime();
+    if (isNaN(at)) at = nowMs;
+    if (kind === 'sale') {
+      var tenders = [];
+      try { tenders = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
+      for (var k = 0; k < tenders.length; k++) {
+        var ty = String(tenders[k].type || '');
+        var amt = num_(tenders[k].amount);
+        if ((ty === 'net30' || ty === 'account') && amt > 0) sales.push({ amount: amt, at: at });
+      }
+    } else if (kind === 'payment') {
+      payTotal += num_(t.grand_total);
+    }
+  }
+  sales.sort(function (a, b) { return a.at - b.at; });
+  /* FIFO: every payment settles the oldest outstanding dollars first, so walk
+     the sales oldest→newest and zero out their amounts as payments are applied,
+     then age whatever is left by each sale's own age. */
+  var payLeft = payTotal;
+  for (var p = 0; p < sales.length && payLeft > 0; p++) {
+    var pm = Math.min(sales[p].amount, payLeft);
+    sales[p].amount -= pm;
+    payLeft -= pm;
+  }
+  var b = { current: 0, d30: 0, d60: 0, d90: 0 };
+  var oldestDays = 0;
+  for (var j = 0; j < sales.length; j++) {
+    var s = sales[j];
+    if (s.amount <= 0) continue;
+    var days = Math.max(0, Math.floor((nowMs - s.at) / DAY));
+    if (days < 30) b.current += s.amount;
+    else if (days < 60) b.d30 += s.amount;
+    else if (days < 90) b.d60 += s.amount;
+    else b.d90 += s.amount;
+    if (!oldestDays) oldestDays = days;
+  }
+  return { current: b.current, d30: b.d30, d60: b.d60, d90: b.d90, oldestDays: oldestDays };
 }
 
 /* ------------------------------------------------------------------ *

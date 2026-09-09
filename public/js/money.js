@@ -52,6 +52,7 @@ export function kindInfo(kind) {
     sale: { label: 'Sale', cls: 'k-sale', sign: 1 },
     refund: { label: 'Refund', cls: 'k-refund', sign: -1 },
     payout: { label: 'Paid out', cls: 'k-payout', sign: -1 },
+    payment: { label: 'Payment', cls: 'k-sale', sign: 1 },
   };
   return map[kind || 'sale'] || map.sale;
 }
@@ -113,6 +114,22 @@ export async function createPayout({ counterparty, grandTotal, note, user }) {
     counterparty: counterparty || '',
     grandTotal: amount,
     tenders: [{ type: 'cash', amount }],
+    note: note || '',
+    items: [],
+    userId: user.id,
+    cashier: user.name,
+  });
+  pushImmediate().catch(() => {});
+  return clientTxId;
+}
+
+export async function createCollection({ customerId, grandTotal, method, note, user }) {
+  const amount = round2(grandTotal);
+  const clientTxId = await enqueueTransaction({
+    kind: 'payment',
+    customerId,
+    grandTotal: amount,
+    tenders: [{ type: method === 'transfer' ? 'transfer' : 'cash', amount }],
     note: note || '',
     items: [],
     userId: user.id,

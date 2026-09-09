@@ -215,6 +215,7 @@ export async function enqueueTransaction(tx) {
     kind: tx.kind || 'sale',
     originalClientTx: tx.originalClientTx || '',
     counterparty: tx.counterparty || '',
+    customerId: tx.customerId || '',
     deviceId: await getDeviceId(),
     grandTotal: tx.grandTotal,
     discountPct: tx.discountPct,
@@ -244,6 +245,7 @@ export async function enqueueTransaction(tx) {
     discountPct: tx.discountPct,
     cashier: tx.cashier,
     userId: tx.userId,
+    customerId: tx.customerId || '',
     createdAt: payload.createdAt,
   }, clientTxId);
   emit({ kind: 'queued', clientTxId });

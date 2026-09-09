@@ -1434,6 +1434,85 @@ section('discounts & tax');
   void custCashTok;
 }
 
+{
+  section('collections & aging');
+
+  const colAdmTok = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const zoe = req('/api/admin/customers', { name: 'Zoe Old', phone: '080-333-9999' }, { session: colAdmTok });
+  const zoeId = zoe.data.customer.id;
+  const once = req('/api/admin/customers', { name: 'Once Current' }, { session: colAdmTok });
+  const onceId = once.data.customer.id;
+  const cableC2 = req('/api/products', {}, { session: colAdmTok }).data.find((p) => p.sku === 'CB-USBC-1M');
+  const atDaysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString();
+  const pushSale = (customerId, clientTxId, amount, daysAgo, session) => req('/api/sync/push', {
+    deviceId: 'dev-col-1',
+    batch: [{
+      clientTxId, customerId, grandTotal: amount,
+      tenders: [{ type: 'net30', amount }],
+      createdAt: atDaysAgo(daysAgo),
+      items: [{ productId: cableC2.id, quantity: Math.ceil(amount / 10), unitPrice: 10 }],
+    }],
+  }, { session });
+
+  check('oldest sale accepted', pushSale(zoeId, 'tx-zo-1', 50, 120, colAdmTok).data.results[0].accepted === true);
+  check('mid sale accepted', pushSale(zoeId, 'tx-zo-2', 100, 45, colAdmTok).data.results[0].accepted === true);
+  check('recent sale accepted', pushSale(onceId, 'tx-on-1', 25, 5, colAdmTok).data.results[0].accepted === true);
+
+  const zL0 = req('/api/customers/ledger', {}, { session: colAdmTok, params: { customerId: zoeId } }).data;
+  check('aging buckets split by sale age',
+    zL0.aging.d30 === 100 && zL0.aging.d90 === 50 && Math.abs(zL0.balance - 150) < 0.001,
+    JSON.stringify(zL0.aging));
+  const oL = req('/api/customers/ledger', {}, { session: colAdmTok, params: { customerId: onceId } }).data;
+  check('recent balance is current bucket only',
+    oL.aging.current === 25 && oL.aging.d30 === 0 && oL.aging.d60 === 0 && oL.aging.d90 === 0, JSON.stringify(oL.aging));
+
+  const payPush = req('/api/sync/push', {
+    deviceId: 'dev-col-1',
+    batch: [{
+      clientTxId: 'tx-col-pay-1',
+      kind: 'payment',
+      customerId: zoeId,
+      grandTotal: 60,
+      tenders: [{ type: 'transfer', amount: 60 }],
+      note: 'settled part of account',
+      createdAt: new Date().toISOString(),
+      items: [],
+    }],
+  }, { session: colAdmTok });
+  check('collection accepted', payPush.data.results[0].accepted === true, JSON.stringify(payPush));
+
+  const zL1 = req('/api/customers/ledger', {}, { session: colAdmTok, params: { customerId: zoeId } }).data;
+  check('collection nets the account and ages FIFO (oldest paid first)',
+    Math.abs(zL1.account - 90) < 0.001
+      && zL1.aging.d90 === 0
+      && zL1.aging.d30 === 90
+      && Math.abs(zL1.balance - 90) < 0.001,
+    JSON.stringify({ a: zL1.account, aging: zL1.aging, b: zL1.balance }));
+  check('ledger lists the payment row',
+    zL1.transactions.some((t) => t.clientTxId === 'tx-col-pay-1' && t.kind === 'payment' && t.grandTotal === 60));
+
+  const cashColPush = req('/api/sync/push', {
+    deviceId: 'dev-col-1',
+    batch: [{
+      clientTxId: 'tx-col-cash-1',
+      kind: 'payment',
+      customerId: zoeId,
+      grandTotal: 5,
+      tenders: [{ type: 'cash', amount: 5 }],
+      createdAt: new Date().toISOString(),
+      items: [],
+    }],
+  }, { session: req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token });
+  check('cashier cannot record a collection', cashColPush.data.results[0].accepted === false
+    && cashColPush.data.results[0].conflicts.some((c) => c.reason === 'unauthorized_role'));
+
+  const recv2 = req('/api/customers/receivables', {}, { session: colAdmTok }).data;
+  const zoeCell = recv2.customers.find((c) => c.id === zoeId);
+  check('receivables cells carry aging',
+    zoeCell && zoeCell.aging.d30 === 90 && Math.abs(zoeCell.balance - 90) < 0.001, JSON.stringify(zoeCell && zoeCell.aging));
+  void once;
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

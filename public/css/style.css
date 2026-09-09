@@ -794,3 +794,9 @@ button:disabled { cursor: default; }
 .lg-txs { display: flex; flex-direction: column; }
 .lg-tx { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .lg-tx .k-chip { margin-left: 0; margin-right: 6px; text-transform: capitalize; }
+.age { display: inline-block; margin: 2px 4px 0 0; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.age0 { background: #e3eefb; color: #1c5d99; }
+.age30 { background: #fff3e0; color: #b35500; }
+.age60 { background: #ffe0b2; color: #bf5b00; }
+.age90 { background: #fbe9e7; color: #c62828; }
+.lg-aging { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
