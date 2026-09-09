@@ -18,7 +18,7 @@ function meta() {
   return (idb.get('meta', 'config') || Promise.resolve(null)).then((m) => m || {});
 }
 
-async function getDeviceId() {
+export async function getDeviceId() {
   const m = await meta();
   if (!m.deviceId) {
     m.deviceId = (crypto.randomUUID ? crypto.randomUUID() : 'dev-' + Math.random().toString(36).slice(2));

@@ -84,13 +84,15 @@ export const screen = {
       ${(user && user.role === 'admin') ? `
       <section class="set-card">
         <h3>Security</h3>
-        <p class="muted">Kill sign-in on a lost terminal. Enter the staff email whose sessions to revoke — they must sign in again on every device.</p>
+        <p class="muted">Manage a staff member's terminals. Find the lost device — compare Terminal ID with Settings → Terminal ID on each device — and revoke just that one, or kill every session.</p>
         <div class="field">
           <span>Staff email</span>
-          <input id="revokeEmail" type="email" placeholder="staff@example.com" autocapitalize="none" spellcheck="false">
+          <input id="secEmail" type="email" placeholder="staff@example.com" autocapitalize="none" spellcheck="false">
         </div>
-        <div class="row"><button class="btn btn-danger" id="revokeBtn">Revoke all sessions</button></div>
-        <p id="revokeMsg" class="muted" role="status"></p>
+        <div class="row"><button class="btn" id="listDevicesBtn">List terminals</button></div>
+        <div id="deviceList"></div>
+        <div class="row"><button class="btn btn-danger" id="revokeAllBtn">Revoke all sessions</button></div>
+        <p id="secMsg" class="muted" role="status"></p>
       </section>` : ''}
 
       <section class="set-card set-about">
@@ -125,16 +127,64 @@ export const screen = {
       redraw();
     });
 
-    root.querySelector('#revokeBtn')?.addEventListener('click', async () => {
-      const email = root.querySelector('#revokeEmail').value.trim().toLowerCase();
-      const msg = root.querySelector('#revokeMsg');
-      if (!email.includes('@')) { msg.textContent = 'Enter a valid staff email.'; return; }
+    const secEmail = () => root.querySelector('#secEmail');
+    const secMsg = () => root.querySelector('#secMsg');
+    const deviceList = () => root.querySelector('#deviceList');
+
+    async function listDevices(email) {
+      const res = await api.post('/api/admin/devices', { email });
+      const list = deviceList();
+      if (!res.devices.length) {
+        list.innerHTML = '<p class="muted">No registered terminals for that account yet.</p>';
+        secMsg().textContent = '';
+        return;
+      }
+      list.innerHTML = res.devices.map((d) => `
+        <div class="set-row">
+          <span>
+            <code>${esc(d.deviceId.slice(0, 8).toUpperCase())}</code>
+            <span class="muted"> · last seen ${d.lastSeen ? esc(new Date(d.lastSeen).toLocaleString()) : 'never'}</span>
+            ${d.revoked ? '<span class="tag-bad">revoked</span>' : ''}
+          </span>
+          ${d.revoked ? '' : `<button class="btn btn-sm btn-danger" data-dev="${esc(d.deviceId)}">Revoke</button>`}
+        </div>`).join('');
+      list.querySelectorAll('button[data-dev]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          try {
+            await api.post('/api/admin/revoke-device', { email, deviceId: btn.dataset.dev });
+            secMsg().textContent = `Revoked terminal ${btn.dataset.dev.slice(0, 8).toUpperCase()}. It will be forced to sign in again.`;
+            beep('ok');
+            await listDevices(email);
+          } catch (err) {
+            secMsg().textContent = (err && (err.data && err.data.error)) || (err && err.message) || 'Revoke failed';
+            beep('err');
+          }
+        });
+      });
+    }
+
+    root.querySelector('#listDevicesBtn')?.addEventListener('click', async () => {
+      const email = secEmail().value.trim().toLowerCase();
+      if (!email.includes('@')) { secMsg().textContent = 'Enter a valid staff email.'; return; }
+      try {
+        await listDevices(email);
+      } catch (err) {
+        secMsg().textContent = (err && (err.data && err.data.error)) || (err && err.message) || 'List failed';
+        beep('err');
+      }
+    });
+
+    root.querySelector('#revokeAllBtn')?.addEventListener('click', async () => {
+      const email = secEmail().value.trim().toLowerCase();
+      if (!email.includes('@')) { secMsg().textContent = 'Enter a valid staff email.'; return; }
+      if (!window.confirm(`Revoke ALL sessions for ${email}?`)) return;
       try {
         await api.post('/api/admin/revoke', { email });
-        msg.textContent = `Sessions revoked for ${ email }. They must sign in again.`;
+        secMsg().textContent = `All sessions revoked for ${email}. They must sign in again on every device.`;
         beep('ok');
+        await listDevices(email);
       } catch (err) {
-        msg.textContent = (err && (err.data && err.data.error)) || (err && err.message) || 'Revoke failed';
+        secMsg().textContent = (err && (err.data && err.data.error)) || (err && err.message) || 'Revoke failed';
         beep('err');
       }
     });

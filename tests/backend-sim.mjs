@@ -950,6 +950,66 @@ section('session revoke on sign-out / PIN change');
   check('logout works with no payload body', req('/api/logout', {}, { session: t4 }).ok === true);
 }
 
+section('per-device revocation');
+{
+  // amara's PIN is 135791 from the admin PIN reset block; her per-user marker
+  // was refreshed by earlier revoke tests, so fresh logins still work.
+  const who = 'amara@example.com';
+  const amaraPin = '135791';
+  const devA = 'dev-aleph-0001';
+  const devB = 'dev-bet-0002';
+
+  const a1 = req('/api/login', { email: who, pin: amaraPin, deviceId: devA });
+  check('login with deviceId returns a token', a1.ok === true && !!a1.data.token);
+  const ta = a1.data.token;
+  check('issued token carries the device claim', sandbox.verifyToken_(ta).dev === devA);
+  const tb = req('/api/login', { email: who, pin: amaraPin, deviceId: devB }).data.token;
+
+  check('login without deviceId still works',
+    req('/api/login', { email: who, pin: amaraPin }).ok === true);
+
+  const cashCheck = req('/api/login', { email: who, pin: amaraPin });
+  check('list devices requires admin',
+    req('/api/admin/devices', { email: who }, { session: cashCheck.data.token }).status === 403);
+
+  const devList = req('/api/admin/devices', { email: who }, { session: adminToken });
+  check('admin can list registered terminals',
+    devList.ok && devList.data.devices.length === 2 && devList.data.devices.every((d) => d.deviceId === devA || d.deviceId === devB), JSON.stringify(devList));
+  check('registered devices are active by default',
+    devList.data.devices.every((d) => d.revoked === false));
+
+  check('both device tokens work before any revoke',
+    req('/api/products', {}, { session: ta }).ok === true &&
+    req('/api/products', {}, { session: tb }).ok === true);
+
+  check('revoking an unregistered device is refused',
+    req('/api/admin/revoke-device', { email: who, deviceId: 'dev-nope' }, { session: adminToken }).status === 404);
+
+  check('admin revokes one terminal',
+    req('/api/admin/revoke-device', { email: who, deviceId: devA }, { session: adminToken }).ok === true);
+  check('revoked device token is rejected', req('/api/products', {}, { session: ta }).status === 401);
+  check('other device token still valid', req('/api/products', {}, { session: tb }).ok === true);
+
+  const devList2 = req('/api/admin/devices', { email: who }, { session: adminToken });
+  check('revoked terminal is flagged in the list',
+    devList2.data.devices.some((d) => d.deviceId === devA && d.revoked) &&
+    devList2.data.devices.some((d) => d.deviceId === devB && !d.revoked));
+
+  // The row flag is what blocks re-login long after the cache marker lapses.
+  check('revoked device cannot sign back in with the right PIN',
+    req('/api/login', { email: who, pin: amaraPin, deviceId: devA }).status === 403);
+  check('other device can still sign in',
+    req('/api/login', { email: who, pin: amaraPin, deviceId: devB }).ok === true);
+
+  const tB2 = req('/api/login', { email: who, pin: amaraPin, deviceId: devB }).data.token;
+  check('revoke-all works over per-user marker',
+    req('/api/admin/revoke', { email: who }, { session: adminToken }).ok === true);
+  check('surviving device token now dead',
+    req('/api/products', {}, { session: tB2 }).status === 401);
+  check('revoked-by-all device cannot sign in again',
+    req('/api/login', { email: who, pin: amaraPin, deviceId: devB }).status === 403);
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

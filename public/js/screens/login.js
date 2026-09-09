@@ -7,7 +7,7 @@
 import { idb } from '../db.js';
 import { api } from '../api.js';
 import { el, beep } from '../ui.js';
-import { pull } from '../sync.js';
+import { pull, getDeviceId } from '../sync.js';
 
 function sha256(str) {
   return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then((buf) =>
@@ -126,7 +126,10 @@ export const screen = {
       let token = null;
 
       try {
-        const res = await api.post('/api/login', { email: cleanEmail, pin: pinValue }, { timeout: 8000 });
+        // Send the terminal id so the backend registers this device and can
+        // revoke it individually if the terminal is lost.
+        const deviceId = await getDeviceId();
+        const res = await api.post('/api/login', { email: cleanEmail, pin: pinValue, deviceId }, { timeout: 8000 });
         user = res.user;
         token = res.token;
         await api.setToken(token);

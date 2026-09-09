@@ -5,6 +5,29 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] — 2026-09-09
+
+Finest-grained revocation yet: admin can cut off a **single lost terminal**
+instead of every session a staff member holds. Extends the 1.2.3 token
+revocation with per-device tracking and a sign-in block that survives the cache
+marker's lifetime.
+
+### Security
+
+- **Per-device revocation.** Each login now submits the terminal's stable
+  `deviceId`; the backend records it in a Devices sheet tab and stamps the
+  issued token with a `dev` claim. Two layers kill a device: a per-device
+  CacheService marker rejects its current tokens, and a `revoked` flag on the
+  device row refuses sign-in from that device **even with the correct PIN** —
+  which is what keeps a lost terminal dead after the 25 h marker lapses.
+- **Terminal registry.** Settings' Security card (admin) lists a staff member's
+  terminals with first/last-seen, lets the admin match the short id against
+  each device's Settings → Terminal ID, then revoke just that one — or fall
+  back to revoking all sessions, which now also flags every device row so no
+  terminal can quietly re-login later.
+- Device rows are also refreshed on `sync/pull` (max once per 10 minutes per
+  terminal) so the registry stays live without a write on every request.
+
 ## [1.2.3] — 2026-09-08
 
 Hardening for the portable-terminal rollout: a Content-Security-Policy on the

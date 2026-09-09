@@ -70,6 +70,8 @@ function dispatch_(action, session, payload, params) {
     case '/api/admin/unlock':    return adminUnlock_(session, payload);
     case '/api/admin/pin':       return adminSetPin_(session, payload);
     case '/api/admin/revoke':    return adminRevoke_(session, payload);
+    case '/api/admin/devices':   return adminDevices_(session, payload);
+    case '/api/admin/revoke-device': return adminRevokeDevice_(session, payload);
     case '/api/pin':             return changeOwnPin_(session, payload);
     case '/api/logout':          return logout_(session);
     case '/api/admin/products':  return adminProducts_(session, payload);
@@ -143,6 +145,9 @@ function verifyToken_(token) {
     var payload = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[0])).getDataAsString());
     if (!payload.exp || Date.now() > payload.exp) return null;
     if (isTokenRevoked_(payload.uid, payload.iat)) return null;
+    // Tokens issued with a device id (v1.2.4+) can be killed per terminal.
+    // Older tokens carry no dev claim and stay per-user revocable only.
+    if (payload.dev && isDeviceTokenRevoked_(payload.uid, payload.dev, payload.iat)) return null;
     return payload;
   } catch (_) {
     return null;
@@ -165,23 +170,25 @@ function sha256Hex_(str) {
  *  Token revocation
  *
  *  Tokens are stateless HMAC-SHA256 with a 12 h expiry.  To invalidate
- *  all sessions for a user without rotating SESSION_SECRET, we store a
- *  single "revoked at" timestamp per uid in CacheService (25 h TTL,
- *  matching the worst-case token lifetime).  verifyToken_ rejects any
- *  token whose iat predates the marker.
+ *  sessions without rotating SESSION_SECRET, we store "revoked at"
+ *  timestamps in CacheService (25 h TTL, matching the worst-case token
+ *  lifetime).  verifyToken_ rejects any token whose iat predates the
+ *  marker — per user (kills every session) or per device (kills just
+ *  one lost terminal).
  * ------------------------------------------------------------------ */
 
 var TOKEN_CACHE_PREFIX = 'tok_rev_';
+var TOKEN_DEVICE_CACHE_PREFIX = 'tok_dev_';
 var TOKEN_CACHE_TTL = 25 * 60 * 60;  // 25 hours (longer than 12 h max token life)
 
+function cache_() { return CacheService.getScriptCache(); }
+
 function revokeTokensForUser_(uid) {
-  var cache = CacheService.getScriptCache();
-  cache.put(TOKEN_CACHE_PREFIX + uid, String(Date.now()), TOKEN_CACHE_TTL);
+  cache_().put(TOKEN_CACHE_PREFIX + uid, String(Date.now()), TOKEN_CACHE_TTL);
 }
 
 function tokenRevokedAt_(uid) {
-  var cache = CacheService.getScriptCache();
-  var val = cache.get(TOKEN_CACHE_PREFIX + uid);
+  var val = cache_().get(TOKEN_CACHE_PREFIX + uid);
   return val ? Number(val) : 0;
 }
 
@@ -192,12 +199,99 @@ function isTokenRevoked_(uid, iat) {
   return iat != null && iat <= tokenRevokedAt_(uid);
 }
 
+/* Per-device markers.  The cache key hashes the device id so the store never
+   becomes a list of device identifiers. */
+function deviceCacheKey_(uid, deviceId) {
+  return TOKEN_DEVICE_CACHE_PREFIX + uid + '_' + sha256Hex_(String(deviceId || '')).slice(0, 16);
+}
+
+function revokeDeviceTokens_(uid, deviceId) {
+  cache_().put(deviceCacheKey_(uid, deviceId), String(Date.now()), TOKEN_CACHE_TTL);
+}
+
+function deviceTokenRevokedAt_(uid, deviceId) {
+  var val = cache_().get(deviceCacheKey_(uid, deviceId));
+  return val ? Number(val) : 0;
+}
+
+function isDeviceTokenRevoked_(uid, deviceId, iat) {
+  return iat != null && iat <= deviceTokenRevokedAt_(uid, deviceId);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Device registry
+ *
+ *  The Devices sheet records which terminal ids a user signs in from, so
+ *  an admin can see the fleet and kill just the one that was lost.  When
+ *  a device row is flagged revoked, that device can no longer acquire a
+ *  token — not even after the 25 h cache marker expires — until an admin
+ *  scrubs the flag (restoring no sessions; the user just signs in
+ *  afresh).
+ * ------------------------------------------------------------------ */
+
+function deviceRow_(uid, deviceId) {
+  var rows = readRows_('Devices', DEVICE_HEADERS);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].user_id) === String(uid) && String(rows[i].device_id) === String(deviceId)) {
+      return rows[i];
+    }
+  }
+  return null;
+}
+
+/* Register (or refresh) the device row for a user.  ifStaleMs > 0 makes the
+   write conditional so a busy pull path does not rewrite a row that was
+   touched moments ago. */
+function touchDevice_(uid, deviceId, ifStaleMs) {
+  if (!deviceId) return;
+  var row = deviceRow_(uid, deviceId);
+  var nowIso = new Date().toISOString();
+  if (row) {
+    if (ifStaleMs) {
+      var last = Date.parse(String(row.last_seen || ''));
+      if (!isNaN(last) && Date.now() - last < ifStaleMs) return;
+    }
+    applyPatches_('Devices', DEVICE_HEADERS, 'id', { [row.id]: { last_seen: nowIso } });
+  } else {
+    appendRows_('Devices', DEVICE_HEADERS, [{
+      id: Utilities.getUuid(),
+      user_id: uid,
+      device_id: deviceId,
+      first_seen: nowIso,
+      last_seen: nowIso,
+      revoked: 0,
+    }]);
+  }
+}
+
+function isDeviceRevoked_(uid, deviceId) {
+  var row = deviceRow_(uid, deviceId);
+  return row != null && String(row.revoked) === '1';
+}
+
+function setDeviceRevoked_(uid, deviceId, revoked) {
+  var row = deviceRow_(uid, deviceId);
+  if (row) applyPatches_('Devices', DEVICE_HEADERS, 'id', { [row.id]: { revoked: revoked ? 1 : 0 } });
+}
+
+function markAllDevicesRevoked_(uid) {
+  var rows = readRows_('Devices', DEVICE_HEADERS);
+  var patch = {};
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].user_id) === String(uid) && String(rows[i].revoked) !== '1') {
+      patch[rows[i].id] = { revoked: 1 };
+    }
+  }
+  applyPatches_('Devices', DEVICE_HEADERS, 'id', patch);
+}
+
 /* ------------------------------------------------------------------ *
  *  Workbook layout
  * ------------------------------------------------------------------ */
 
 var META_HEADERS    = ['key', 'value'];
 var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at'];
+var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
 var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at'];
@@ -718,6 +812,7 @@ function clearLoginLockout(email) {
 function login_(payload) {
   var email = String(payload.email || '').trim().toLowerCase();
   var pin = String(payload.pin || '');
+  var deviceId = String(payload.deviceId || '').trim();
 
   var lockedMs = loginLockoutRemainingMs_(email);
   if (lockedMs > 0) {
@@ -743,12 +838,21 @@ function login_(payload) {
     throw statusError_(401, 'Invalid email or PIN');
   }
 
+  // A revoked terminal is refused even with the right PIN: after the 25 h cache
+  // marker lapses this is what keeps a lost device from quietly re-logging in.
+  // Not a wrong PIN, so it does not count toward the lockout.
+  if (deviceId && isDeviceRevoked_(found.id, deviceId)) {
+    throw statusError_(403, 'This terminal has been deactivated — ask an admin.');
+  }
+
   clearLoginFailures_(email);
+  touchDevice_(found.id, deviceId, 0);
   var token = signToken_({
     uid: found.id,
     role: found.role,
     iat: Date.now(),
     exp: Date.now() + 12 * 60 * 60 * 1000,
+    dev: deviceId || undefined,
   });
   return {
     token: token,
@@ -785,6 +889,9 @@ function products_(session) {
 }
 
 function syncPull_(session, params) {
+  // Keep the admin's device list live across long-lived sessions: refresh the
+  // device row no more than once per 10 minutes per terminal.
+  touchDevice_(session.uid, session.dev, 10 * 60 * 1000);
   var cfRows = readRows_('Conflicts', CONFLICT_HEADERS);
   var openConflicts = 0;
   for (var i = 0; i < cfRows.length; i++) {
@@ -1542,7 +1649,9 @@ function logout_(session) {
 }
 
 /* Revoke all sessions for a target user.  Admin only.  Used after a PIN
- * reset or when a device is reported lost. */
+ * reset or when every device for a staff member is suspect.  Also marks each
+ * of the user's device rows revoked, so no lost terminal can re-login once
+ * the cache marker lapses. */
 function adminRevoke_(session, payload) {
   requireRole_(session, ['admin']);
   var email = String((payload && payload.email) || '').trim().toLowerCase();
@@ -1550,12 +1659,61 @@ function adminRevoke_(session, payload) {
   var users = readRows_('Users', USER_HEADERS);
   for (var i = 0; i < users.length; i++) {
     if (String(users[i].email).toLowerCase() === email) {
-      revokeTokensForUser_(users[i].id);
+      var uid = String(users[i].id);
+      revokeTokensForUser_(uid);
+      markAllDevicesRevoked_(uid);
       Logger.log('[orison-pos] sessions revoked for ' + email + ' by ' + session.uid);
       return { ok: true };
     }
   }
   throw statusError_(404, 'No such user');
+}
+
+/* List the terminals a staff member signs in from, so an admin can identify
+ * the lost one (compare the short id with Settings → Terminal ID on each
+ * terminal) before revoking just that device.  Admin only. */
+function adminDevices_(session, payload) {
+  requireRole_(session, ['admin']);
+  var email = String((payload && payload.email) || '').trim().toLowerCase();
+  if (!email) throw statusError_(400, 'email is required');
+  var users = readRows_('Users', USER_HEADERS);
+  var found = null;
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].email).toLowerCase() === email) { found = users[i]; break; }
+  }
+  if (!found) throw statusError_(404, 'No such user');
+  var rows = readRows_('Devices', DEVICE_HEADERS);
+  var devices = [];
+  for (var j = 0; j < rows.length; j++) {
+    if (String(rows[j].user_id) !== String(found.id)) continue;
+    devices.push({
+      deviceId: String(rows[j].device_id),
+      firstSeen: String(rows[j].first_seen || ''),
+      lastSeen: String(rows[j].last_seen || ''),
+      revoked: String(rows[j].revoked) === '1',
+    });
+  }
+  return { devices: devices };
+}
+
+/* Kill every session on one terminal: token marker (current sessions die) plus
+ * the device row flag (re-login from that device is refused).  Admin only. */
+function adminRevokeDevice_(session, payload) {
+  requireRole_(session, ['admin']);
+  var email = String((payload && payload.email) || '').trim().toLowerCase();
+  var deviceId = String((payload && payload.deviceId) || '').trim();
+  if (!email || !deviceId) throw statusError_(400, 'email and deviceId are required');
+  var users = readRows_('Users', USER_HEADERS);
+  var found = null;
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].email).toLowerCase() === email) { found = users[i]; break; }
+  }
+  if (!found) throw statusError_(404, 'No such user');
+  if (!deviceRow_(found.id, deviceId)) throw statusError_(404, 'Device not registered');
+  setDeviceRevoked_(found.id, deviceId, true);
+  revokeDeviceTokens_(found.id, deviceId);
+  Logger.log('[orison-pos] device revoked for ' + email + ' by ' + session.uid);
+  return { ok: true };
 }
 
 function adminProducts_(session, payload) {

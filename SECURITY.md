@@ -30,23 +30,44 @@ Instead the backend keeps one "revoked at" timestamp per user in CacheService
 (25 h TTL, outliving the longest-lived 12 h token). A token whose `iat` predates
 that marker is rejected on the next request.
 
-Revocation happens on:
+Session revocation happens at two granularities:
+
+**Per user.** One "revoked at" timestamp per user in CacheService kills every
+session for that account at once. This fires on:
 
 - **Sign-out** — `POST /api/logout` (Settings → Sign out) revokes every session
   held by the signing-in user, so signing out of a terminal kills that device's
-  token even if someone later recover the storage it was written to.
+  token even if someone later recovers the storage it was written to.
 - **Admin kill-switch** — `POST /api/admin/revoke { "email": "..." }`, surfaced
-  as a Security card in Settings, revokes all sessions for a staff email. This
-  is the action for a lost or stolen device: the moment that terminal next
-  contacts the backend it gets 401 and the app returns to the sign-in screen.
+  as the Security card in Settings, revokes all sessions for a staff email. This
+  is for a lost terminal where you don't know which device it was, or where
+  every one of a person's devices is suspect.
 - **PIN change** — changing your own PIN (`/api/pin`) or an admin resetting one
   (`/api/admin/pin`) revokes every prior session for that user. It is
   meaningless to keep old devices logged in to an account whose credentials
   changed because of a suspected compromise.
 
+**Per device.** Each terminal submits a stable `deviceId` when it signs in, the
+backend records it in a Devices sheet tab, and the token carries it as a `dev`
+claim. Two mechanisms work together to kill one terminal without touching the
+others:
+
+1. A per-device "revoked at" marker in CacheService rejects that device's
+   tokens immediately (current sessions die on next request).
+2. A `revoked` flag on the device's row in the Devices sheet **blocks sign-in
+   from that device** even with the correct PIN. This is what keeps a lost
+   terminal dead after the 25 h cache marker lapses — without it, the device
+   could simply sign back in once the marker aged out.
+
+From the Settings Security card an admin lists a staff member's terminals
+(`POST /api/admin/devices`), matches the short id shown against Settings →
+Terminal ID on each physical device, then revokes just that one (`POST
+/api/admin/revoke-device`). Per-user revoke-all also marks every device row for
+that account, closing the re-login loophole there too.
+
 A device that is stolen while **offline** keeps whatever it had until it next
-connects; there is no way to reach it sooner. The kill-switch then takes effect
-on first contact.
+connects; there is no way to reach it sooner. Revocation then takes effect on
+first contact.
 
 ## Login throttling
 
@@ -139,6 +160,7 @@ change takes effect at next sign-in rather than immediately.
 | `/api/conflicts`, `/api/conflicts/review` | admin, manager |
 | `/api/admin/unlock` | admin, manager |
 | `/api/admin/revoke` | admin |
+| `/api/admin/devices`, `/admin/revoke-device` | admin |
 | `/api/admin/pin` | admin |
 | `/api/pin` | any signed-in user, own PIN only |
 | `/api/logout` | any signed-in user, own sessions only |
@@ -152,8 +174,8 @@ Two consequences worth planning around:
 
 1. A single compromised device — or any script running on the origin — yields
    the credential that authorizes every device's requests. Sessions themselves
-   are revocable per user (see [Session revocation](#session-revocation)), but
-   the app token is not; rotating it means re-provisioning every device by hand.
+   are revocable per user and per device (see [Session revocation](#session-revocation)),
+   but the app token is not; rotating it means re-provisioning every device by hand.
 2. Because it is shared, it cannot identify a device. If that matters, a
    per-device credential is the next step.
 
