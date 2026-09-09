@@ -1020,6 +1020,157 @@ section('per-device revocation');
     req('/api/login', { email: who, pin: amaraPin, deviceId: devB }).status === 403);
 }
 
+section('discounts & tax');
+{
+  const adminTok = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const diegoLogin = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'], deviceId: 'dev-tax-cashier' });
+  const cashierTok = diegoLogin.data.token;
+  const diegoId = diegoLogin.data.user.id;
+  const mgrTok = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'], deviceId: 'dev-tax-mgr' }).data.token;
+  const cat = req('/api/products', {}, { session: adminTok }).data;
+  const cable = cat.find((p) => p.sku === 'CB-USBC-1M');
+  const phone = cat.find((p) => p.sku === 'PH-S24U-256');
+  const phoneSn = phone.serials[0];
+
+  check('products sheet carries taxable column', ss._sheets.get('Products')._grid[0].includes('taxable'));
+  check('transactions sheet carries money columns',
+    ['subtotal', 'tax_amount', 'discount_pct'].every((c) => ss._sheets.get('Transactions')._grid[0].includes(c)));
+  check('catalog defaults taxable on', cat.every((p) => p.taxable === true));
+
+  check('cashier cannot set tax rate', req('/api/admin/store', { taxRate: 5 }, { session: cashierTok }).status === 403);
+  check('manager cannot set tax rate', req('/api/admin/store', { taxRate: 5 }, { session: mgrTok }).status === 403);
+  check('admin rejects a tax rate over 100', req('/api/admin/store', { taxRate: 101 }, { session: adminTok }).status === 400);
+  const st = req('/api/admin/store', { taxRate: 7.25 }, { session: adminTok });
+  check('admin sets the store tax rate', st.ok && st.data.taxRate === 7.25);
+  const cfg = req('/api/config', {}, { session: mgrTok });
+  check('config surfaces the new tax rate', cfg.ok && cfg.data.store.taxRate === 7.25);
+
+  // reference mirror of backend saleTotals_ in integers-cents
+  const cents = (n) => Math.round((Number(n) || 0) * 100 + 0.000000001);
+  function totals(lines, orderPct, taxRate) {
+    const pct = Math.min(100, Math.max(0, Number(orderPct) || 0));
+    let sub = 0, taxable = 0, disc = 0;
+    for (const l of lines) {
+      const lineC = cents(l.unitPrice) * Math.max(1, l.quantity);
+      const ld = Math.round(lineC * Math.min(100, Math.max(0, l.discountPct || 0)) / 100);
+      const net = lineC - ld; disc += ld; sub += net;
+      if (l.taxable !== false) taxable += net;
+    }
+    const oC = Math.round(sub * pct / 100);
+    const tb = Math.round(taxable * (100 - pct) / 100);
+    const t = Math.round(tb * (Number(taxRate) || 0) / 100);
+    return { subtotal: sub / 100, discount: (disc + oC) / 100, tax: t / 100, total: (sub - oC + t) / 100 };
+  }
+
+  // hard-coded anchor: $100, 10% order discount, 7.25% tax, no line discounts
+  const anchorProd = req('/api/admin/products', {
+    name: 'Anchor', sku: 'TX-ANCHOR', itemType: 'product', retailPrice: 100, costPrice: 50, taxable: true,
+  }, { session: adminTok });
+  const anchorPush = req('/api/sync/push', {
+    deviceId: 'dev-tax-0',
+    batch: [{
+      clientTxId: 'tx-tax-0',
+      discountPct: 10,
+      grandTotal: 0,
+      tenders: [{ type: 'cash', amount: 96.53 }],
+      createdAt: new Date().toISOString(),
+      items: [{ productId: anchorProd.data.id, quantity: 1, unitPrice: 100 }],
+    }],
+  }, { session: adminTok });
+  const anchorLedger = req('/api/transactions', {}, { session: adminTok, params: { limit: 500 } }).data.transactions.find((t) => t.clientTxId === 'tx-tax-0');
+  check('$100 at 10% order discount + 7.25% tax → $96.53',
+    anchorPush.data.results[0].accepted && anchorLedger
+      && Math.abs(anchorLedger.grandTotal - 96.53) < 0.001
+      && Math.abs(anchorLedger.taxAmount - 6.53) < 0.001
+      && Math.abs(anchorLedger.discountPct - 10) < 0.001);
+
+  const exempt = req('/api/admin/products', {
+    name: 'Exempt Widget', sku: 'TX-EXEMPT', itemType: 'product', retailPrice: 20, taxable: false,
+  }, { session: adminTok });
+  const lines = [
+    { unitPrice: cable.retailPrice, quantity: 2, discountPct: 10, taxable: true },
+    { unitPrice: 20, quantity: 1, discountPct: 0, taxable: false },
+    { unitPrice: phone.retailPrice, quantity: 1, discountPct: 0, taxable: true },
+  ];
+  const exp = totals(lines, 5, 7.25);
+  const pushItems = [
+    { productId: cable.id, quantity: 2, unitPrice: cable.retailPrice, discountPct: 10 },
+    { productId: exempt.data.id, quantity: 1, unitPrice: 20 },
+    { productId: phone.id, quantity: 1, unitPrice: phone.retailPrice, serialNumber: phoneSn },
+  ];
+  const salePush = req('/api/sync/push', {
+    deviceId: 'dev-tax-1',
+    batch: [{
+      clientTxId: 'tx-tax-1',
+      userId: diegoId,
+      discountPct: 5,
+      grandTotal: exp.total,
+      tenders: [{ type: 'cash', amount: exp.total }],
+      createdAt: new Date().toISOString(),
+      items: pushItems,
+    }],
+  }, { session: adminTok });
+  check('mixed basket accepted', salePush.data.results[0].accepted === true, JSON.stringify(salePush));
+  const saleLedger = req('/api/transactions', {}, { session: adminTok, params: { limit: 500 } }).data.transactions.find((t) => t.clientTxId === 'tx-tax-1');
+  check('server grand total equals client-computed reference',
+    saleLedger && Math.abs(saleLedger.grandTotal - exp.total) < 0.001, JSON.stringify({ got: saleLedger && saleLedger.grandTotal, exp: exp.total }));
+  check('ledger stores subtotal + tax + order discount',
+    saleLedger && Math.abs(saleLedger.subtotal - exp.subtotal) < 0.001
+      && Math.abs(saleLedger.taxAmount - exp.tax) < 0.001
+      && Math.abs(saleLedger.discountPct - 5) < 0.001);
+  check('exempt line skipped the tax basis',
+    saleLedger && Math.abs(saleLedger.taxAmount - exp.tax) < 0.001
+      && exp.tax < totals(lines.map((l) => (l.unitPrice === 20 ? { ...l, taxable: true } : l)), 5, 7.25).tax);
+  check('ledger items carry line discount',
+    saleLedger && saleLedger.items.some((i) => i.productId === cable.id && i.discountPct === 10));
+
+  check('discounted sale re-push is idempotent', (() => {
+    const re = req('/api/sync/push', {
+      deviceId: 'dev-tax-1',
+      batch: [{
+        clientTxId: 'tx-tax-1',
+        userId: diegoId,
+        discountPct: 5,
+        grandTotal: exp.total,
+        tenders: [{ type: 'cash', amount: exp.total }],
+        createdAt: new Date().toISOString(),
+        items: pushItems,
+      }],
+    }, { session: adminTok });
+    return re.data.results[0].status === 'ALREADY_SYNCED';
+  })());
+
+  // a pre-1.2.6 queued sale (no discountPct on the envelope) must keep its
+  // own total and stay untaxed, whatever the current store rate.
+  const legacyPush = req('/api/sync/push', {
+    deviceId: 'dev-tax-2',
+    batch: [{
+      clientTxId: 'tx-tax-legacy',
+      userId: diegoId,
+      grandTotal: 55,
+      tenders: [{ type: 'cash', amount: 55 }],
+      createdAt: new Date().toISOString(),
+      items: [{ productId: cable.id, quantity: 5, unitPrice: 11 }],
+    }],
+  }, { session: adminTok });
+  const legacyLedger = req('/api/transactions', {}, { session: adminTok, params: { limit: 500 } }).data.transactions.find((t) => t.clientTxId === 'tx-tax-legacy');
+  check('legacy-format push keeps client total and no tax',
+    legacyPush.data.results[0].accepted && legacyLedger
+      && Math.abs(legacyLedger.grandTotal - 55) < 0.001 && Math.abs(legacyLedger.taxAmount) < 0.001);
+
+  const patch = req('/api/admin/products/patch', { productId: cable.id, taxable: false }, { session: adminTok });
+  const cat2 = req('/api/products', {}, { session: adminTok }).data;
+  const cable2 = cat2.find((p) => p.sku === 'CB-USBC-1M');
+  check('taxable flag toggles off via patch', patch.ok && cable2.taxable === false);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const beforeFiles = JSON.stringify(driveFiles);
+  req('/api/drive/export', { date: today }, { session: adminTok });
+  check('drive CSV reports TAX COLLECTED',
+    driveFiles.some((f) => f.name.includes(today) && f.content.includes('TAX COLLECTED')));
+  void beforeFiles;
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

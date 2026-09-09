@@ -9,6 +9,7 @@ import {
   openModal, closeModal, openSheet,
 } from '../ui.js';
 import { SYNC_EVENT, getSyncState } from '../sync.js';
+import { saleTotals } from '../money.js';
 
 function catColor(c) {
   const colors = ['#d97706', '#0ea5e9', '#059669', '#7c3aed', '#e11d48', '#0891b2', '#65a30d', '#c2410c', '#4f46e5', '#0d9488'];
@@ -204,24 +205,28 @@ export const screen = {
     function addCartLine(product, serial) {
       if (product.isSerialized) {
         const key = product.id + '|' + serial;
-        state.cart.set(key, { product, qty: 1, serials: [serial], price: product.retailPrice });
+        state.cart.set(key, { product, qty: 1, serials: [serial], price: product.retailPrice, discountPct: 0, taxable: product.taxable !== false });
         product.serials = (product.serials || []).filter((s) => s !== serial);
       } else {
         const existing = state.cart.get(product.id);
         if (existing) { existing.qty++; existing.price = product.retailPrice; }
-        else state.cart.set(product.id, { product, qty: 1, serials: [], price: product.retailPrice });
+        else state.cart.set(product.id, { product, qty: 1, serials: [], price: product.retailPrice, discountPct: 0, taxable: product.taxable !== false });
         if (product.itemType !== 'service') product.onHand = Math.max(0, (product.onHand || 0) - 1);
       }
       state.cartVersion++;
     }
 
     function cartTotals() {
-      let total = 0, count = 0;
-      for (const line of state.cart.values()) {
-        total += line.price * (line.qty || 1);
-        count += line.qty || 1;
-      }
-      return { total, count };
+      const lines = [...state.cart.values()].map((line) => ({
+        unitPrice: line.price,
+        quantity: line.qty || 1,
+        discountPct: line.discountPct || 0,
+        taxable: line.taxable !== false,
+      }));
+      const totals = saleTotals(lines, 0, 0);
+      let count = 0;
+      for (const line of state.cart.values()) count += line.qty || 1;
+      return { total: totals.total, count };
     }
 
     function lineRemove(line) {
@@ -238,6 +243,10 @@ export const screen = {
     }
 
     // ---- Cart sheet ----
+    function lineDiscPrice(line) {
+      return saleTotals([{ unitPrice: line.price, quantity: line.qty || 1, discountPct: line.discountPct || 0, taxable: true }], 0, 0).total;
+    }
+
     function renderCart() {
       const totals = cartTotals();
       const sheet = openSheet(`
@@ -259,10 +268,15 @@ export const screen = {
                        <span class="qty">${line.qty}</span>
                        <button class="qty-btn" data-plus data-key="${key}">+</button>
                      </div>`}
+                <div class="cl-disc">
+                  ${[0, 10, 15, 20, 25, 50].map((p) =>
+                    `<button class="disc-btn ${line.discountPct === p ? 'on' : ''}" data-disc data-key="${key}" data-p="${p}">${p ? p + '%' : 'Off'}</button>`).join('')}
+                </div>
               </div>
               <div class="cl-right">
-                <div class="cl-price">${fmt(line.price * line.qty)}</div>
+                <div class="cl-price">${fmt(lineDiscPrice(line))}</div>
                 <button class="cl-remove" data-remove="${key}" aria-label="Remove">✕</button>
+                ${line.discountPct ? `<div class="cl-price-was"><s>${fmt(line.price * line.qty)}</s></div>` : ''}
               </div>
             </div>`;
           }).join('') || '<p class="empty">Cart is empty — scan or tap products above.</p>'}
@@ -272,7 +286,7 @@ export const screen = {
           <button id="chargeBtn" class="btn btn-block" ${totals.count ? '' : 'disabled'}>Charge · ${fmt(totals.total)}</button>
         </div>`);
 
-      sheet.querySelectorAll('[data-min], [data-plus], [data-remove]').forEach((b) => {
+      sheet.querySelectorAll('[data-min], [data-plus], [data-remove], [data-disc]').forEach((b) => {
         b.addEventListener('click', () => {
           const line = [...state.cart.values()].find((l) => lineKeyOf(l) === b.dataset.key);
           if (!line) return;
@@ -280,6 +294,7 @@ export const screen = {
           if (b.hasAttribute('data-min') && line.qty > 1) { line.qty--; if (!isService) line.product.onHand++; }
           if (b.hasAttribute('data-plus') && (isService || (line.product.onHand || 0) > 0)) { line.qty++; if (!isService) line.product.onHand--; }
           if (b.hasAttribute('data-remove')) lineRemove(line);
+          if (b.hasAttribute('data-disc')) line.discountPct = Number(b.dataset.p) || 0;
           state.cartVersion++;
           renderCart();
         });

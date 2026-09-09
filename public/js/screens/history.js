@@ -32,10 +32,13 @@ export const screen = {
           originalClientTx: t.originalClientTx,
           counterparty: t.counterparty,
           total: t.grandTotal,
+          subtotal: t.subtotal,
+          taxAmount: t.taxAmount,
+          discountPct: t.discountPct,
           tenders: t.tenders,
           cashier: t.cashier,
           createdAt: t.createdAt,
-          items: t.items.map((i) => ({ productId: i.productId, name: i.name, quantity: i.quantity, unitPrice: i.unitPrice, serialNumber: i.serialNumber })),
+          items: t.items.map((i) => ({ productId: i.productId, name: i.name, quantity: i.quantity, unitPrice: i.unitPrice, discountPct: i.discountPct, serialNumber: i.serialNumber })),
           clientTxId: t.clientTxId,
         }));
         loaded = true;
@@ -95,6 +98,12 @@ export const screen = {
     function openDetail(t) {
       const k = kindInfo(t.kind);
       const refundable = (t.kind || 'sale') === 'sale' && (t.status === 'SYNCED' || t.status === 'SERVER') && (t.items || []).length > 0;
+      const lineTotal = (i) => {
+        const q = i.quantity || 1;
+        const disc = i.discountPct || 0;
+        return Math.round(i.unitPrice * q * (1 - disc / 100) * 100) / 100;
+      };
+      const hasMoney = t.subtotal != null || t.taxAmount != null || Number(t.discountPct || 0) > 0;
       const modalEl = openModal(`
         <div class="tx-detail">
           <button class="icon-btn abs-close" data-x>✕</button>
@@ -107,12 +116,18 @@ export const screen = {
             ${(t.items || []).map((i) => `
               <div class="tx-item-row">
                 <div>
-                  <div>${esc(i.name || 'Item')} <em>×${i.quantity || 1}</em></div>
+                  <div>${esc(i.name || 'Item')} <em>×${i.quantity || 1}</em>
+                    ${i.discountPct ? `<span class="k-chip k-disc">${i.discountPct}% off</span>` : ''}</div>
                   ${i.serialNumber ? `<div class="cl-serial">${esc(i.serialNumber)}</div>` : ''}
                 </div>
-                <b>${fmt((i.unitPrice || 0) * (i.quantity || 1))}</b>
+                <b>${fmt(lineTotal(i))}${i.discountPct ? ` <s class="muted">${fmt((i.unitPrice || 0) * (i.quantity || 1))}</s>` : ''}</b>
               </div>`).join('')}
           </div>
+          ${hasMoney ? `
+          <div class="co-bd-row"><span>Subtotal</span><b>${fmt(t.subtotal != null ? t.subtotal : t.total)}</b></div>
+          <div class="co-bd-row">${(t.discountPct || 0) > 0 ? `<span>Discount</span><b class="neg">−${fmt(t.discountPct)}%</b>` : ''}</div>
+          <div class="co-bd-row"><span>Tax</span><b>${fmt(t.taxAmount || 0)}</b></div>`
+            : ''}
           <div class="tx-tenders">
             ${(t.tenders || []).map((td) => `<div class="hx-tender"><span>${esc(td.label || td.type)}</span><b>${fmt(td.amount)}</b></div>`).join('')}
           </div>

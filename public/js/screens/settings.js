@@ -79,6 +79,15 @@ export const screen = {
         <div class="set-row"><span>Name</span><span>${esc(m.store.name)}</span></div>
         <div class="set-row"><span>Code</span><span>${esc(m.store.code)}</span></div>
         <div class="set-row"><span>Address</span><span>${esc(m.store.address || '—')}</span></div>
+        <div class="set-row"><span>Tax rate</span><span>${m.store.taxRate != null ? `${m.store.taxRate}%` : '0%'}</span></div>
+        ${(user && user.role === 'admin') ? `
+        <div class="set-row">
+          <span>Sales tax % (admin)</span>
+          <span class="set-inline">
+            <input id="taxRate" type="number" inputmode="decimal" min="0" max="100" step="0.01" value="${m.store.taxRate != null ? m.store.taxRate : 0}" style="width:6em">
+            <button class="btn btn-sm" id="saveTax">Save</button>
+          </span>
+        </div>` : ''}
       </section>` : ''}
 
       ${(user && user.role === 'admin') ? `
@@ -123,6 +132,19 @@ export const screen = {
         toast('Connected', 'ok'); beep('ok');
       } catch (_) {
         toast('Backend unreachable — will retry once online', 'warn');
+      }
+      redraw();
+    });
+
+    root.querySelector('#saveTax')?.addEventListener('click', async () => {
+      const rate = parseFloat(root.querySelector('#taxRate').value);
+      if (isNaN(rate) || rate < 0 || rate > 100) { toast('Tax rate must be between 0 and 100', 'warn'); return; }
+      try {
+        await api.post('/api/admin/store', { taxRate: rate });
+        await pull();
+        toast('Tax rate saved', 'ok'); beep('ok');
+      } catch (err) {
+        toast((err && (err.data && err.data.error)) || (err && err.message) || 'Save failed', 'warn');
       }
       redraw();
     });

@@ -12,6 +12,41 @@ export function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
+export function cents(n) {
+  return Math.round((Number(n) || 0) * 100 + 0.000000001);
+}
+
+export function clampPct(x) {
+  var n = Number(x) || 0;
+  if (n < 0) return 0;
+  if (n > 100) return 100;
+  return n;
+}
+
+export function saleTotals(lines, orderPct, taxRate) {
+  var pct = clampPct(orderPct);
+  var subC = 0, taxableSubC = 0, discC = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    var lineC = cents(l.unitPrice) * Math.max(1, l.quantity);
+    var ld = Math.round(lineC * clampPct(l.discountPct) / 100);
+    var net = lineC - ld;
+    discC += ld;
+    subC += net;
+    if (l.taxable) taxableSubC += net;
+  }
+  var oC = Math.round(subC * pct / 100);
+  var tb = Math.round(taxableSubC * (100 - pct) / 100);
+  var t = Math.round(tb * (Number(taxRate) || 0) / 100);
+  var grandC = subC - oC + t;
+  return {
+    subtotal: subC / 100,
+    discount: (discC + oC) / 100,
+    tax: t / 100,
+    total: grandC / 100,
+  };
+}
+
 export function kindInfo(kind) {
   const map = {
     sale: { label: 'Sale', cls: 'k-sale', sign: 1 },

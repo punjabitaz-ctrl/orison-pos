@@ -78,6 +78,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/admin/serials':   return adminSerials_(session, payload);
     case '/api/admin/inventory': return adminInventory_(session, payload);
     case '/api/admin/products/patch': return adminProductsPatch_(session, payload);
+    case '/api/admin/store':   return adminStore_(session, payload);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     default:
       throw statusError_(404, 'Unknown action: ' + action);
@@ -292,9 +293,9 @@ function markAllDevicesRevoked_(uid) {
 var META_HEADERS    = ['key', 'value'];
 var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at'];
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
-var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at'];
+var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
-var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at'];
+var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 
 function spreadSheet_() {
@@ -412,6 +413,9 @@ function getStore_() {
     name: String(k.store_name || 'Orison Electronics'),
     address: String(k.store_address || ''),
     phone: String(k.store_phone || ''),
+    /* single store-level sales tax, as a percent. Missing kv (pre-1.2.6
+       sheets) reads as 0 so older sales stay untaxed. */
+    taxRate: k.store_tax_rate == null || k.store_tax_rate === '' ? 0 : num_(k.store_tax_rate),
   };
 }
 
@@ -953,6 +957,9 @@ function productsSnapshot_(role) {
       locked: String(p.locked) === '1' || Boolean(p.locked),
       reorderPoint: p.reorder_point != null ? num_(p.reorder_point) : '',
       lastSoldAt: String(p.last_sold_at || ''),
+      /* pre-1.2.6 rows have no taxable cell; default them to taxable so a
+         store that sets tax later doesn't silently exempt older items. */
+      taxable: String(p.taxable) === '0' ? false : true,
     });
   }
   return out;
@@ -1096,10 +1103,10 @@ function syncPush_(session, payload) {
             if (claimId) errors[errSn].conflictId = claimId;
             continue;
           }
-          resolved.push({ product: product, serial: serial, quantity: 1, unitPrice: unitPrice });
+          resolved.push({ product: product, serial: serial, quantity: 1, unitPrice: unitPrice, discountPct: clampPct_(num_(item.discountPct)) });
         } else if (itemType === 'service') {
           // No stock tracked for a service / offering.
-          resolved.push({ product: product, serial: null, quantity: 1, unitPrice: unitPrice, onHand: null });
+          resolved.push({ product: product, serial: null, quantity: 1, unitPrice: unitPrice, onHand: null, discountPct: clampPct_(num_(item.discountPct)) });
         } else {
           if (product.lockedToggle) {
             if (product.lockedToggle.flag) {
@@ -1116,6 +1123,7 @@ function syncPush_(session, payload) {
             quantity: Math.max(1, item.quantity || 1),
             unitPrice: unitPrice,
             onHand: num_(product.on_hand),
+            discountPct: clampPct_(num_(item.discountPct)),
           });
         }
       }
@@ -1125,10 +1133,19 @@ function syncPush_(session, payload) {
 
       var hasErrors = errors.length > 0;
       var txId = Utilities.getUuid();
-      var grandTotal = num_(tx.grandTotal);
-      if (!grandTotal) {
-        grandTotal = resolved.reduce(function (sum, r) { return sum + r.unitPrice * r.quantity; }, 0);
+      /* v1.2.6 sends discountPct on the envelope; pre-upgrade queued sales
+         don't, so they keep their client totals (and stay untaxed) — you never
+         retroactively tax a sale a cashier already rang up offline. */
+      var newFormat = tx.discountPct !== undefined && tx.discountPct !== null;
+      var orderPct = clampPct_(num_(tx.discountPct));
+      var taxRate = num_(store.taxRate);
+      var totals = null;
+      if (newFormat && !hasErrors && resolved.length) {
+        totals = saleTotals_(resolved.map(saleLine_), orderPct, taxRate);
       }
+      var grandTotal = totals
+        ? totals.total
+        : (num_(tx.grandTotal) || resolved.reduce(function (sum, r) { return sum + r.unitPrice * r.quantity; }, 0));
       var userId = userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows);
       var created = String(tx.createdAt || new Date().toISOString());
       var createdMs = new Date(created).getTime();
@@ -1144,12 +1161,18 @@ function syncPush_(session, payload) {
         user_id: userId,
         device_id: deviceId,
         client_tx_id: String(tx.clientTxId || ''),
+        kind: 'sale',
+        original_client_tx: '',
+        counterparty: '',
         grand_total: grandTotal,
         status: hasErrors ? 'VOIDED' : 'COMPLETED',
         tenders_json: JSON.stringify(Array.isArray(tx.tenders) ? tx.tenders : []),
         items_json: itemsJson,
         note: note,
         created_at: created,
+        subtotal: totals ? totals.subtotal : grandTotal,
+        tax_amount: totals ? totals.tax : 0,
+        discount_pct: orderPct,
       });
 
       var txConflicts = hasErrors ? errors.slice() : [];
@@ -1199,13 +1222,19 @@ function syncPush_(session, payload) {
 
 function resolvedItems_(resolved) {
   return resolved.map(function (r) {
-    return {
+    /* discountPct/taxable are omitted at their defaults so legacy items keep
+       byte-identical signatures (idempotent re-pushes must not regress). */
+    var it = {
       productId: String(r.product.id),
       name: String(r.product.name),
       quantity: r.quantity,
       unitPrice: r.unitPrice,
       serialNumber: r.serial ? String(r.serial.serial_number) : null,
     };
+    var dp = clampPct_(num_(r.discountPct));
+    if (dp > 0) it.discountPct = dp;
+    if (String(r.product.taxable) === '0') it.taxable = false;
+    return it;
   });
 }
 
@@ -1220,6 +1249,7 @@ function txSignature_(items) {
       it.quantity || 1,
       typeof it.unitPrice === 'number' ? it.unitPrice : '',
       it.serialNumber != null ? String(it.serialNumber) : '',
+      typeof it.discountPct === 'number' ? it.discountPct : '',
     ].join('|'));
   }
   sig.sort();
@@ -1507,6 +1537,9 @@ function transactions_(session, params) {
       counterparty: String(t.counterparty || ''),
       cashier: nameById[String(t.user_id)] || '',
       grandTotal: num_(t.grand_total),
+      subtotal: num_(t.subtotal),
+      taxAmount: num_(t.tax_amount),
+      discountPct: num_(t.discount_pct),
       tenders: tenders,
       createdAt: String(t.created_at),
       items: items.map(function (it) {
@@ -1515,6 +1548,8 @@ function transactions_(session, params) {
           name: String(it.name || ''),
           quantity: it.quantity || 1,
           unitPrice: num_(it.unitPrice),
+          discountPct: typeof it.discountPct === 'number' ? (it.discountPct < 0 ? 0 : (it.discountPct > 100 ? 100 : it.discountPct)) : 0,
+          taxable: !(String(it.taxable) === '0'),
           serialNumber: it.serialNumber ? String(it.serialNumber) : null,
         };
       }),
@@ -1742,6 +1777,7 @@ function adminProducts_(session, payload) {
   var retail = num_(payload.retailPrice);
   var cost = num_(payload.costPrice);
   var locked = payload.locked ? 1 : 0;
+  var taxable = payload.taxable === false ? 0 : 1;
   var reorderPoint = itemType === 'product' && !isSerialized && payload.reorderPoint != null
     ? num_(payload.reorderPoint)
     : '';
@@ -1774,6 +1810,7 @@ function adminProducts_(session, payload) {
       last_sold_at: '',
       active: 1,
       updated_at: now,
+      taxable: taxable,
     }]);
     return { id: id };
   } finally {
@@ -1870,6 +1907,24 @@ function adminInventory_(session, payload) {
 
 /* Admin/manager: edit a product or service's core rules (price, lock status,
    and the reorder point that drives low-stock alerts). */
+/* Admin: edit the store's single sales-tax rate (a percent, 0–100). Only an
+   admin — a manager changing tax policy should be a visible act. */
+function adminStore_(session, payload) {
+  requireRole_(session, ['admin']);
+  var taxRate = num_(payload.taxRate);
+  if (taxRate < 0 || taxRate > 100) {
+    throw statusError_(400, 'taxRate must be between 0 and 100');
+  }
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    setKv_('store_tax_rate', taxRate);
+    return getStore_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function adminProductsPatch_(session, payload) {
   requireRole_(session, ['admin', 'manager']);
   var productId = String(payload.productId || '').trim();
@@ -1886,6 +1941,8 @@ function adminProductsPatch_(session, payload) {
   if (payload.retailPrice != null) patch.retail_price = num_(payload.retailPrice);
   if (payload.costPrice != null) patch.cost_price = num_(payload.costPrice);
   if (payload.locked != null) patch.locked = payload.locked ? 1 : 0;
+  if (payload.taxable === true) patch.taxable = 1;
+  else if (payload.taxable === false) patch.taxable = 0;
   var itemType = String(product.item_type || 'product');
   if (payload.reorderPoint !== undefined && payload.reorderPoint !== null) {
     if (itemType === 'service' || String(product.is_serialized) === '1') {
@@ -1926,8 +1983,8 @@ function driveExport_(session, payload, params) {
     nameById[String(userRows[i].id)] = (String(userRows[i].first_name || '') + ' ' + String(userRows[i].last_name || '')).trim();
   }
 
-  var csv = 'created_at,id,kind,counterparty,cashier,grand_total,items,tenders,note\n';
-  var sales = 0, refunds = 0, payouts = 0;
+  var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note\n';
+  var sales = 0, refunds = 0, payouts = 0, taxTotal = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
     var k = String(t.kind || 'sale');
@@ -1935,6 +1992,7 @@ function driveExport_(session, payload, params) {
     if (k === 'refund') refunds += v;
     else if (k === 'payout') payouts += v;
     else sales += v;
+    if (String(t.tax_amount || '') !== '') taxTotal += num_(t.tax_amount);
 
     var items = [];
     try { items = JSON.parse(t.items_json || '[]'); } catch (_) {}
@@ -1948,6 +2006,7 @@ function driveExport_(session, payload, params) {
       csvCell_(t.counterparty),
       csvCell_(nameById[String(t.user_id)] || ''),
       String(v),
+      csvCell_(t.tax_amount),
       csvCell_(itemSummary),
       csvCell_(t.tenders_json),
       csvCell_(t.note),
@@ -1960,6 +2019,7 @@ function driveExport_(session, payload, params) {
   csv += '\n';
   csv += ',,SUMMARY,,,,\n';
   csv += ',,SALES,,' + String(sales) + ',\n';
+  csv += ',,TAX COLLECTED,,' + String(taxTotal) + ',\n';
   csv += ',,REFUNDS,,' + String(refunds) + ',\n';
   csv += ',,PAID OUT,,' + String(payouts) + ',\n';
   csv += ',,NET CASH,,' + String(net) + ',\n';
@@ -2006,6 +2066,63 @@ function csvCell_(v) {
 function num_(v) {
   var n = Number(v);
   return isNaN(n) ? 0 : n;
+}
+
+function clampPct_(x) {
+  var n = Number(x) || 0;
+  if (n < 0) return 0;
+  if (n > 100) return 100;
+  return n;
+}
+
+/* integer-cents money. The +1e-9 epsilon swallows binary float dust the same
+   way on GAS and in browsers, and this exact shape is mirrored in
+   public/js/money.js so the register and the server agree to the cent. */
+function cents_(n) {
+  return Math.round((Number(n) || 0) * 100 + 0.000000001);
+}
+
+function saleLine_(r) {
+  return {
+    unitPrice: r.unitPrice,
+    quantity: r.quantity,
+    discountPct: clampPct_(num_(r.discountPct)),
+    taxable: !(String(r.product.taxable) === '0'),
+  };
+}
+
+/* One money engine. Line price is taxed only on 100% of the order's post-
+   discount basis for the taxable lines — order percent prorates across all
+   lines, including exempt ones, so mixed baskets never over-withhold. */
+function saleTotals_(lines, orderPct, taxRate) {
+  var pct = clampPct_(orderPct);
+  var rate = num_(taxRate);
+  var subC = 0, taxableSubC = 0, discC = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    var lineC = cents_(l.unitPrice) * Math.max(1, l.quantity);
+    var lineDiscC = Math.round(lineC * clampPct_(l.discountPct) / 100);
+    var netC = lineC - lineDiscC;
+    discC += lineDiscC;
+    subC += netC;
+    if (l.taxable) taxableSubC += netC;
+  }
+  var orderC = Math.round(subC * pct / 100);
+  var taxBasisC = Math.round(taxableSubC * (100 - pct) / 100);
+  var taxC = Math.round(taxBasisC * rate / 100);
+  var grandC = subC - orderC + taxC;
+  return {
+    subC: subC,
+    discC: discC,
+    taxableSubC: taxableSubC,
+    orderC: orderC,
+    taxC: taxC,
+    grandC: grandC,
+    subtotal: subC / 100,
+    discount: (discC + orderC) / 100,
+    tax: taxC / 100,
+    total: grandC / 100,
+  };
 }
 
 function uuid_() {

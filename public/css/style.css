@@ -461,6 +461,13 @@ button:disabled { cursor: default; }
 .cart-foot { padding-top: 14px; border-top: 1px solid var(--line); }
 .cart-total { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; font-size: 15px; }
 .cart-total strong { font-size: 26px; }
+.cl-disc { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.disc-btn {
+  border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+}
+.disc-btn.on { background: var(--navy); color: #fff; border-color: var(--navy); }
+.cl-price-was { color: var(--muted); font-size: 11px; font-weight: 500; }
 
 /* ---------------- Checkout ---------------- */
 .checkout { display: flex; flex-direction: column; gap: 14px; padding: 4px 16px 24px; }
@@ -471,6 +478,15 @@ button:disabled { cursor: default; }
 .co-price { font-weight: 700; }
 .co-total { display: flex; justify-content: space-between; align-items: baseline; padding-top: 10px; font-size: 15px; }
 .co-total strong { font-size: 22px; }
+.co-notes { padding: 6px 0; }
+.co-breakdown { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 14px; }
+.co-bd-row { display: flex; justify-content: space-between; align-items: baseline; color: var(--muted); }
+.co-bd-row b { color: var(--text); font-variant-numeric: tabular-nums; }
+.co-bd-row .neg { color: var(--danger); }
+.co-bd-total { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 16px; }
+.co-bd-total b, .co-bd-total strong { color: var(--text); font-size: 22px; }
+.co-field { margin: 0; }
+.k-disc { background: #fdf1e3; color: #935f00; }
 
 .co-tenders { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
 .co-tenders h3 { font-size: 14px; margin-bottom: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
@@ -611,6 +627,8 @@ button:disabled { cursor: default; }
 .set-card h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 10px; }
 .set-row { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .set-row span:first-child { color: var(--muted); }
+.set-inline { display: flex; align-items: center; gap: 6px; }
+.set-inline input { max-width: 90px; }
 .set-row code { font-family: ui-monospace, monospace; word-break: break-all; text-align: right; }
 .set-user { display: flex; align-items: center; gap: 12px; }
 .avatar {

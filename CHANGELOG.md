@@ -5,6 +5,39 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.6] — 2026-09-09
+
+Discounts and sales tax, computed in integer cents so the register and the
+server agree to the cent. Adds per-line and per-order percentage discounts,
+taxable flags on products, and an administrator-set store tax rate.
+
+### Added
+
+- **Line discounts in the cart.** Each cart line has a quick-tap discount:
+  Off / 10% / 15% / 20% / 25% / 50%. The discounted line price shows inline
+  with the original struck through.
+- **Order discount at checkout.** The cashier enters an order-level discount %
+  (0–100), with a live Subtotal / Discount / Tax / Total due breakdown. The
+  order percent prorates across all lines and is applied before tax.
+- **Store sales tax.** Admins set a tax rate (0–100%) in Settings → Store; it is
+  shown in checkout and on receipts. Taxable/non-taxable is a per-product flag
+  (defaults on for existing products), editable in Inventory.
+- **One money engine, mirrored.** `saleTotals()` in `public/js/money.js` mirrors
+  `saleTotals_` in `backend/Code.gs` exactly (integer cents with a float-dust
+  epsilon), so the displayed total is the total the server records.
+- History shows the Subtotal / Discount / Tax split and per-item discount
+  badges; receipts carry the breakdown too.
+
+### Changed
+
+- Sales pushed to the server now carry an envelope `discountPct` plus per-item
+  `discountPct`; the server computes authoritative totals and stores `subtotal`,
+  `tax_amount`, and `discount_pct` on the transaction row.
+- The backend rejects any `/api/admin/store` `taxRate` outside 0–100.
+- Pre-1.2.6 offline-queued sales (no `discountPct` on the envelope) keep their
+  client totals and stay untaxed — never retroactively taxed.
+- CSV export now includes a `tax` column and a `TAX COLLECTED` summary.
+
 ## [1.2.5] — 2026-09-09
 
 Closes the last big credential gap: the offline sign-in fallback no longer

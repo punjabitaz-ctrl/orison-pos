@@ -132,6 +132,7 @@ export const screen = {
             <div class="field"><span>Reorder at (low-stock alert threshold)</span><input id="fReorder" type="number" inputmode="numeric" min="0" step="1" value="5"></div>
           </div>
           <label class="check"><input id="fLocked" type="checkbox"> Locked (cannot be sold until unlocked)</label>
+          <label class="check"><input id="fTaxable" type="checkbox" checked> Taxable (subject to store sales tax)</label>
           <p id="pErr" class="login-err"></p>
           <div class="row"><button class="btn btn-ghost" data-cancel>Cancel</button><button class="btn" id="pSave">Save</button></div>
         </div>`);
@@ -154,6 +155,7 @@ export const screen = {
           onHand: isService ? 0 : (parseInt(modal.querySelector('#fQty').value, 10) || 0),
           reorderPoint: isService ? null : (parseInt(modal.querySelector('#fReorder').value, 10) || 5),
           locked: modal.querySelector('#fLocked').checked,
+          taxable: modal.querySelector('#fTaxable').checked,
         };
         if (!body.name) { modal.querySelector('#pErr').textContent = 'Name is required.'; return; }
         try {
@@ -242,6 +244,7 @@ export const screen = {
             ? `<div class="field"><span>Reorder at (low-stock alert threshold)</span><input id="oReorder" type="number" inputmode="numeric" min="0" step="1" value="${(p.reorderPoint != null && p.reorderPoint !== '') ? p.reorderPoint : 5}"></div>`
             : ''}
           ${!isService ? `<label class="check"><input id="oLocked" type="checkbox" ${locked ? 'checked' : ''}> Locked (cannot be sold)</label>` : ''}
+          ${!isService ? `<label class="check"><input id="oTaxable" type="checkbox" ${p.taxable !== false ? 'checked' : ''}> Taxable</label>` : ''}
           <p id="oErr" class="login-err"></p>
           <div class="row"><button class="btn btn-ghost" data-cancel>Cancel</button><button class="btn" id="oSave">Save</button></div>
         </div>`);
@@ -251,6 +254,8 @@ export const screen = {
         body.retailPrice = parseFloat(modal.querySelector('#oPrice').value) || 0;
         body.costPrice = parseFloat(modal.querySelector('#oCost').value) || 0;
         if (!isService) body.locked = modal.querySelector('#oLocked').checked;
+        const taxableEl = modal.querySelector('#oTaxable');
+        if (taxableEl) body.taxable = taxableEl.checked;
         const reorderEl = modal.querySelector('#oReorder');
         if (reorderEl) body.reorderPoint = parseInt(reorderEl.value, 10) || 0;
         try {

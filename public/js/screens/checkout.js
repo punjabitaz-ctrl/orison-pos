@@ -5,6 +5,7 @@
 
 import { fmt, esc, toast, beep } from '../ui.js';
 import { enqueueTransaction, pushImmediate } from '../sync.js';
+import { saleTotals, round2 } from '../money.js';
 
 const TENDERS = [
   { id: 'cash', label: 'Cash' },
@@ -21,7 +22,22 @@ export const screen = {
     const { state, router } = ctx;
     document.getElementById('tabbar').classList.add('hidden');
 
-    // Freeze the cart into a sale snapshot.
+    // Best-effort store config (tax rate) — refresh asynchronously once we know
+    // the checkout's tax may need a saved rate the state snapshot lacks.
+    let store = state.store || {};
+    (async () => {
+      const { idb } = await import('../db.js');
+      const m = await idb.get('meta', 'config');
+      if (m && m.store && m.store.taxRate != null && m.store.taxRate !== (store.taxRate || 0)) {
+        store = m.store;
+        sale.totals = computeTotals();
+        sale.total = sale.totals.total;
+        render();
+      }
+    })();
+
+    // Freeze the cart into a sale snapshot. Lines carry per-line discount%s
+    // picked in the register; the order-level discount% is entered here.
     const sale = {
       items: [...state.cart.values()].map((line) => ({
         productId: line.product.id,
@@ -31,9 +47,20 @@ export const screen = {
         serialNumber: line.serials && line.serials.length ? line.serials.join(', ') : null,
         quantity: line.qty || 1,
         unitPrice: line.price,
+        discountPct: line.discountPct || 0,
+        taxable: line.taxable !== false,
       })),
     };
-    sale.total = sale.items.reduce((s, i) => s + i.unitPrice * i.quantity, 0);
+    sale.orderPct = 0;
+    function computeTotals() {
+      return saleTotals(
+        sale.items.map((i) => ({ unitPrice: i.unitPrice, quantity: i.quantity, discountPct: i.discountPct, taxable: i.taxable })),
+        sale.orderPct,
+        store.taxRate || 0,
+      );
+    }
+    sale.totals = computeTotals();
+    sale.total = sale.totals.total;
 
     if (!sale.items.length) { router.show('register'); return; }
 
@@ -43,7 +70,18 @@ export const screen = {
 
     function remaining() {
       const tendered = tenders.reduce((s, t) => s + t.amount, 0);
-      return Math.max(0, Math.round((sale.total - tendered) * 100) / 100);
+      return Math.max(0, round2(sale.total - tendered));
+    }
+
+    function guardOrderPct(v) {
+      const n = Number(v);
+      if (!isFinite(n)) return 0;
+      return Math.min(100, Math.max(0, n));
+    }
+    function setOrderPct(v) {
+      sale.orderPct = guardOrderPct(v);
+      sale.totals = computeTotals();
+      sale.total = sale.totals.total;
     }
 
     function quickAmounts() {
@@ -58,7 +96,9 @@ export const screen = {
 
     function render() {
       const rem = remaining();
-      const change = amount >= rem && rem > 0 ? Math.round((amount - rem) * 100) / 100 : 0;
+      const change = amount >= rem && rem > 0 ? round2(amount - rem) : 0;
+      const t = sale.totals;
+      const lineTotal = (i) => saleTotals([{ unitPrice: i.unitPrice, quantity: i.quantity, discountPct: i.discountPct, taxable: i.taxable }], 0, 0).total;
 
       root.innerHTML = `
         <header class="scr-head">
@@ -73,11 +113,23 @@ export const screen = {
           <section class="co-items">
             ${sale.items.map((i) => `
               <div class="co-item">
-                <div class="co-name">${esc(i.name)} <span class="co-qty">×${i.quantity}</span></div>
+                <div class="co-name">${esc(i.name)} <span class="co-qty">×${i.quantity}</span>
+                  ${i.discountPct ? `<span class="k-chip k-disc">${i.discountPct}% off</span>` : ''}</div>
                 ${i.serialNumber ? `<div class="cl-serial">${esc(i.serialNumber)}</div>` : ''}
-                <div class="co-price">${fmt(i.unitPrice * i.quantity)}</div>
+                <div class="co-price">${fmt(lineTotal(i))}${i.discountPct ? ` <s>${fmt(i.unitPrice * i.quantity)}</s>` : ''}</div>
               </div>`).join('')}
-            <div class="co-total"><span>Total due</span><strong>${fmt(sale.total)}</strong></div>
+            <div class="co-notes">
+              <div class="field co-field">
+                <span>Order discount %</span>
+                <input id="orderDisc" type="number" inputmode="decimal" min="0" max="100" step="0.5" value="${sale.orderPct}" placeholder="0">
+              </div>
+            </div>
+            <div class="co-breakdown">
+              <div class="co-bd-row"><span>Subtotal</span><b>${fmt(t.subtotal)}</b></div>
+              <div class="co-bd-row">${t.discount > 0 ? `<span>Discount</span><b class="neg">−${fmt(t.discount)}</b>` : '<span>Discount</span><b>0.00</b>'}</div>
+              <div class="co-bd-row"><span>Tax${store.taxRate != null ? ` (${store.taxRate}%)` : ''}</span><b>${fmt(t.tax)}</b></div>
+              <div class="co-bd-row co-bd-total"><span>Total due</span><strong>${fmt(sale.total)}</strong></div>
+            </div>
           </section>
 
           <section class="co-tenders">
@@ -91,7 +143,7 @@ export const screen = {
                 </div>`).join('') : '<p class="muted">No tenders yet — add cash, store credit, or terms below.</p>'}
             </div>
             <div class="co-remain">${rem <= 0
-              ? `<span class="ok">Fully covered</span><strong>Change due: ${fmt(-1 * Math.round((tenders.reduce((s,t)=>s+t.amount,0)-sale.total)*100)/100)}</strong>`
+              ? `<span class="ok">Fully covered</span><strong>Change due: ${fmt(round2(tenders.reduce((s,t)=>s+t.amount,0)-sale.total))}</strong>`
               : `<span>Remaining</span><strong>${fmt(rem)}</strong>`}</div>
           </section>
 
@@ -143,6 +195,9 @@ export const screen = {
         render();
       }));
 
+      const orderDisc = root.querySelector('#orderDisc');
+      if (orderDisc) orderDisc.addEventListener('change', (e) => { setOrderPct(Number(e.target.value)); render(); });
+
       root.querySelectorAll('.quick').forEach((b) => b.addEventListener('click', () => {
         amount = Math.round(parseFloat(b.dataset.q) * 100) / 100;
         render();
@@ -184,6 +239,7 @@ export const screen = {
         quantity: i.quantity,
         unitPrice: i.unitPrice,
         serialNumber: i.isSerialized && i.serials && i.serials.length === 1 ? i.serials[0] : null,
+        discountPct: i.discountPct || 0,
       }));
       const cleanTenders = tendered.map((t) => ({ type: t.type, amount: t.amount, label: t.label }));
 
@@ -192,6 +248,9 @@ export const screen = {
         userId: state.user.id,
         cashier: `${state.user.firstName} ${state.user.lastName || ''}`,
         grandTotal: sale.total,
+        discountPct: sale.orderPct,
+        subtotal: sale.totals.subtotal,
+        taxAmount: sale.totals.tax,
         tenders: cleanTenders,
         items: txItems,
       });
@@ -253,8 +312,9 @@ export const screen = {
       const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       const lines = sale.items.map((i) => ({
         name: i.serialNumber ? `${i.name} [${i.serialNumber}]` : i.name,
-        amt: i.unitPrice * i.quantity,
+        amt: saleTotals([{ unitPrice: i.unitPrice, quantity: i.quantity, discountPct: i.discountPct, taxable: i.taxable }], 0, 0).total,
         qty: i.quantity > 1 ? `${i.quantity} × ${fmt(i.unitPrice)}` : '',
+        disc: i.discountPct ? `${i.discountPct}%` : '',
       }));
       return `
         <div class="receipt">
@@ -263,12 +323,15 @@ export const screen = {
           <p class="r-mid">${dateStr} ${timeStr}</p>
           <p class="r-mid">Cashier: ${esc(cashier)}</p>
           <div class="r-rule"></div>
-          ${lines.map((l) => `<div class="r-line"><span>${esc(l.name)}${l.qty ? ` <em>${esc(l.qty)}</em>` : ''}</span><b>${fmt(l.amt)}</b></div>`).join('')}
+          ${lines.map((l) => `<div class="r-line"><span>${esc(l.name)}${l.qty ? ` <em>${esc(l.qty)}</em>` : ''}${l.disc ? ` <em>${esc(l.disc)} off</em>` : ''}</span><b>${fmt(l.amt)}</b></div>`).join('')}
           <div class="r-rule"></div>
+          <div class="r-line"><span>Subtotal</span><b>${fmt(sale.totals.subtotal)}</b></div>
+          ${sale.totals.discount > 0 ? `<div class="r-line"><span>Discount</span><b>−${fmt(sale.totals.discount)}</b></div>` : ''}
+          ${store.taxRate != null && store.taxRate > 0 ? `<div class="r-line"><span>Tax (${store.taxRate}%)</span><b>${fmt(sale.totals.tax)}</b></div>` : ''}
           <div class="r-line total"><span>Total</span><b>${fmt(sale.total)}</b></div>
           ${tenders.filter((t) => t.amount > 0).map((t) => `
             <div class="r-line"><span>${esc(t.label)}</span><b>${fmt(t.amount)}</b></div>`).join('')}
-          <div class="r-line"><span>Change</span><b>${fmt(Math.round((tenders.reduce((s,t)=>s+t.amount,0)-sale.total)*100)/100)}</b></div>
+          <div class="r-line"><span>Change</span><b>${fmt(round2(tenders.reduce((s,t)=>s+t.amount,0)-sale.total))}</b></div>
           <div class="r-rule"></div>
           <p class="r-mid">Thank you for shopping at Orison!</p>
           <p class="r-mid small"># ${clientTxId}</p>
