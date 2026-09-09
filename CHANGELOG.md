@@ -5,6 +5,21 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.7] — 2026-09-09
+
+### Added
+
+- **Sync-conflict email alerts.** Whenever a sync push lands a new conflict row
+  in the Conflicts tab, one coalesced email digest is sent to every active admin
+  and manager. The message names the store and the conflict count, and lists each
+  conflict's type, serial, device, loser client tx, and winning tx. A mail
+  failure never fails a sale — the send is wrapped so the push still succeeds.
+
+### Changed
+
+- Conflict digests are emitted once per push (not once per row), so a burst of
+  conflicting offline sales produces a single "N new sync conflict(s)" message.
+
 ## [1.2.6] — 2026-09-09
 
 Discounts and sales tax, computed in integer cents so the register and the

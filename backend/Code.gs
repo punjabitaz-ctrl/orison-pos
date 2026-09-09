@@ -1217,7 +1217,49 @@ function syncPush_(session, payload) {
     lock.releaseLock();
   }
 
+  /* Sync conflicts are for humans, not just the Conflicts tab: one coalesced
+     digest per push to every active admin/manager. Mail failure must never
+     fail a sale, so the send is fire-and-forget. */
+  if (newConflictRows.length) {
+    try {
+      sendConflictAlerts_(store, userRows, newConflictRows);
+    } catch (e) {
+      Logger.log('[orison-pos] conflict alert mail failed: ' + (e && e.message));
+    }
+  }
+
   return { results: results };
+}
+
+function sendConflictAlerts_(store, userRows, conflictRows) {
+  var emails = [];
+  for (var i = 0; i < userRows.length; i++) {
+    var u = userRows[i];
+    var role = String(u.role || '');
+    if ((role === 'admin' || role === 'manager') && String(u.active) === '1') {
+      var email = String(u.email || '').trim();
+      if (email && emails.indexOf(email) === -1) emails.push(email);
+    }
+  }
+  if (!emails.length) return;
+
+  var storeName = String((store && (store.name || store.code)) || 'store');
+  var n = conflictRows.length;
+  var lines = [];
+  for (var j = 0; j < conflictRows.length; j++) {
+    var c = conflictRows[j];
+    lines.push('· ' + String(c.type || 'CONFLICT'));
+    if (c.serial_number) lines.push('  serial: ' + c.serial_number);
+    if (c.device_id) lines.push('  device: ' + c.device_id);
+    if (c.loser_client_tx) lines.push('  loser client tx: ' + c.loser_client_tx);
+    if (c.winner_tx_id) lines.push('  winner tx: ' + c.winner_tx_id);
+    if (c.summary) lines.push('  ' + c.summary);
+  }
+  MailApp.sendEmail({
+    to: emails.join(', '),
+    subject: '[' + storeName + '] ' + n + ' new sync conflict' + (n === 1 ? '' : 's') + ' — review required',
+    body: n + ' new sync conflict(s) waiting in the Conflicts tab:\n\n' + lines.join('\n'),
+  });
 }
 
 function resolvedItems_(resolved) {

@@ -121,6 +121,7 @@ const driveFolders = [{ id: 'folder-1', name: 'Orison POS Export' }];
 const sleeps = [];
 const lockAcquisitions = [];
 const cacheStore = new Map();
+const mails = [];
 
 const sandbox = {
   console,
@@ -168,6 +169,9 @@ const sandbox = {
       tryLock: () => { lockAcquisitions.push(Date.now()); return true; },
       releaseLock: () => {},
     }),
+  },
+  MailApp: {
+    sendEmail: (opts) => { mails.push(opts); },
   },
   CacheService: {
     getScriptCache: () => ({
@@ -1169,6 +1173,54 @@ section('discounts & tax');
   check('drive CSV reports TAX COLLECTED',
     driveFiles.some((f) => f.name.includes(today) && f.content.includes('TAX COLLECTED')));
   void beforeFiles;
+}
+
+{
+  section('conflict email alerts');
+
+  /* Earlier conflict-producing sections already exercised the coalesced digest;
+     reset so this section is deterministic about what a push emits. */
+  mails.length = 0;
+  const eAdmin = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'], deviceId: 'dev-email-admin' }).data.token;
+  const eCat = req('/api/products', {}, { session: eAdmin }).data;
+  const eProd = eCat.find((p) => p.itemType === 'product' && !p.isSerialized && (p.onHand || 0) > 10 && p.name !== 'Anchor' && p.sku !== 'TX-EXEMPT');
+  check('alert pickup product exists', !!eProd);
+
+  const first = req('/api/sync/push', {
+    deviceId: 'dev-email-1',
+    batch: [{
+      clientTxId: 'tx-email-a',
+      grandTotal: 9,
+      tenders: [{ type: 'cash', amount: 9 }],
+      createdAt: new Date().toISOString(),
+      items: [{ productId: eProd.id, quantity: 1, unitPrice: eProd.retailPrice }],
+    }],
+  }, { session: eAdmin });
+  check('clean push sends no alert', first.data.results[0].accepted && mails.length === 0, JSON.stringify({ mails: mails.length }));
+
+  /* same device+client id, different content → DUPLICATE_CLIENT conflict */
+  const dup = req('/api/sync/push', {
+    deviceId: 'dev-email-1',
+    batch: [{
+      clientTxId: 'tx-email-a',
+      grandTotal: 9,
+      tenders: [{ type: 'cash', amount: 9 }],
+      createdAt: new Date().toISOString(),
+      items: [{ productId: eProd.id, quantity: 2, unitPrice: eProd.retailPrice }],
+    }],
+  }, { session: eAdmin });
+  check('duplicate-content push flags a conflict', dup.data.results[0].accepted === true && dup.data.results[0].conflicts.length === 1);
+
+  check('conflict push sent exactly one coalesced digest', mails.length === 1, JSON.stringify(mails.map((m) => m.subject)));
+  const alert = mails[0];
+  check('alert goes to every active admin + manager',
+    alert.to.includes('tariq@example.com') && alert.to.includes('sarah@example.com')
+      && !alert.to.includes('amara@example.com') && !alert.to.includes('diego@example.com'), alert.to);
+  check('alert subject names the store and the count',
+    alert.subject === '[Orison Electronics - Main Street] 1 new sync conflict — review required', alert.subject);
+  check('alert body lists type, device, loser tx and summary',
+    alert.body.includes('DUPLICATE_CLIENT') && alert.body.includes('dev-email-1')
+      && alert.body.includes('tx-email-a') && alert.body.includes('Same device + transaction id pushed twice'), alert.body);
 }
 
 console.log('\n-------------------------------------');
