@@ -538,6 +538,17 @@ const saleRef = req('/api/sync/push', {
 }, { session: cashierToken });
 check('sale accepted before refund', saleRef.ok && saleRef.data.results[0].accepted === true, JSON.stringify(saleRef));
 
+const rfRejected = req('/api/sync/push', {
+  deviceId: 'dev-R',
+  batch: [{
+    clientTxId: 'tx-spk-1-rf0', kind: 'refund', originalClientTx: 'tx-spk-1',
+    userId: pin.data.user.id, grandTotal: 10, tenders: [], note: '',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: spkR.id, quantity: 1, unitPrice: 10 }],
+  }],
+}, { session: cashierToken });
+check('cashier refund → VOIDED unauthorized_role', rfRejected.ok && rfRejected.data.results[0].accepted === false && rfRejected.data.results[0].conflicts[0].reason === 'unauthorized_role', JSON.stringify(rfRejected));
+
 const rf1 = req('/api/sync/push', {
   deviceId: 'dev-R',
   batch: [{
@@ -546,7 +557,7 @@ const rf1 = req('/api/sync/push', {
     note: 'partial refund', createdAt: new Date().toISOString(),
     items: [{ productId: spkR.id, quantity: 1, unitPrice: 25 }],
   }],
-}, { session: cashierToken });
+}, { session: mgrToken });
 check('partial refund accepted + COMPLETED', rf1.ok && rf1.data.results[0].accepted === true && rf1.data.results[0].status === 'COMPLETED', JSON.stringify(rf1));
 let spkR1 = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'TS-SPK-01');
 check('stock restored after partial refund (3 → 4)', spkR1.onHand === 4);
@@ -559,7 +570,7 @@ const rf2 = req('/api/sync/push', {
     createdAt: new Date().toISOString(),
     items: [{ productId: spkR.id, quantity: 2, unitPrice: 10 }],
   }],
-}, { session: cashierToken });
+}, { session: mgrToken });
 check('refund exceeding outstanding per-line → VOIDED', rf2.ok && rf2.data.results[0].accepted === false && rf2.data.results[0].conflicts[0].reason === 'refund_exceeds_sale_lines', JSON.stringify(rf2));
 
 const rf3 = req('/api/sync/push', {
@@ -570,7 +581,7 @@ const rf3 = req('/api/sync/push', {
     createdAt: new Date().toISOString(),
     items: [{ productId: spkR.id, quantity: 1, unitPrice: 25 }],
   }],
-}, { session: cashierToken });
+}, { session: mgrToken });
 check('remaining outstanding refunded back to original stock', rf3.ok && rf3.data.results[0].accepted === true, JSON.stringify(rf3));
 spkR1 = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'TS-SPK-01');
 check('stock fully restored (5)', spkR1.onHand === 5);
@@ -583,7 +594,7 @@ const rf4 = req('/api/sync/push', {
     createdAt: new Date().toISOString(),
     items: [{ productId: spkR.id, quantity: 1, unitPrice: 25 }],
   }],
-}, { session: cashierToken });
+}, { session: mgrToken });
 check('refund beyond sale total → VOIDED refund_exceeds_sale', rf4.ok && rf4.data.results[0].accepted === false && rf4.data.results[0].conflicts[0].reason === 'refund_exceeds_sale', JSON.stringify(rf4));
 
 const rfSerial = req('/api/sync/push', {
@@ -594,7 +605,7 @@ const rfSerial = req('/api/sync/push', {
     note: 'serialized refund', createdAt: new Date().toISOString(),
     items: [{ productId: s24.id, serialNumber: serial, quantity: 1, unitPrice: 1299 }],
   }],
-}, { session: cashierToken });
+}, { session: mgrToken });
 check('serialized refund accepted', rfSerial.ok && rfSerial.data.results[0].accepted === true, JSON.stringify(rfSerial));
 const s24r = req('/api/products', {}, { session: adminToken }).data.find((p) => p.sku === 'PH-S24U-256');
 check('serial returned to IN_STOCK and stock restored', s24r.onHand === 5 && s24r.serials.includes(serial));
@@ -607,7 +618,7 @@ const rfOfRefund = req('/api/sync/push', {
     createdAt: new Date().toISOString(),
     items: [{ productId: spkR.id, quantity: 1, unitPrice: 10 }],
   }],
-}, { session: cashierToken });
+}, { session: mgrToken });
 check('cannot refund a refund → original_not_found', rfOfRefund.ok && rfOfRefund.data.results[0].accepted === false && rfOfRefund.data.results[0].conflicts[0].reason === 'original_not_found', JSON.stringify(rfOfRefund));
 
 const rfGhost = req('/api/sync/push', {
@@ -618,7 +629,7 @@ const rfGhost = req('/api/sync/push', {
     createdAt: new Date().toISOString(),
     items: [{ productId: spkR.id, quantity: 1, unitPrice: 10 }],
   }],
-}, { session: cashierToken });
+}, { session: mgrToken });
 check('refund with no original → original_not_found', rfGhost.ok && rfGhost.data.results[0].conflicts[0].reason === 'original_not_found', JSON.stringify(rfGhost));
 
 const rfUnsold = req('/api/sync/push', {
@@ -629,7 +640,7 @@ const rfUnsold = req('/api/sync/push', {
     createdAt: new Date().toISOString(),
     items: [{ productId: s24.id, serialNumber: 'NEW-SN-0001', quantity: 1, unitPrice: 10 }],
   }],
-}, { session: cashierToken });
+}, { session: mgrToken });
 check('refund of unsold serial → VOIDED serial_not_sold', rfUnsold.ok && rfUnsold.data.results[0].accepted === false && rfUnsold.data.results[0].conflicts[0].reason === 'serial_not_sold', JSON.stringify(rfUnsold));
 
 section('cash payouts');
@@ -1550,7 +1561,7 @@ section('discounts & tax');
         clientTxId: 'tx-sh-rf', userId: amaraId, kind: 'refund', originalClientTx: 'tx-sh-s2',
         grandTotal: 10, tenders: [{ type: 'cash', amount: 10 }], createdAt: new Date().toISOString(), items: [],
       }],
-    }, { session: shCash }).data.results[0].accepted === true);
+    }, { session: shSara }).data.results[0].accepted === true);
   const admId = usersL.find((u) => u.email === 'tariq@example.com').id;
   check('payout is admin/manager only (cashier denied)',
     pushS(shCash, amaraId, 'tx-sh-po', 'payout', 25, { tenders: [] }).data.results[0].accepted === false);
@@ -1618,7 +1629,7 @@ section('discounts & tax');
   check('three report-window sales accepted', s1.data.results[0].accepted && s2.data.results[0].accepted && s3.data.results[0].accepted);
   check('cashier can’t read reports', req('/api/reports', {}, { session: rDiego }).status === 403);
 
-  const rf = pushRep(rDiego, diegoId, 'tx-rp-rf', 'refund', 20, [{ type: 'cash', amount: 20 }], { originalClientTx: 'tx-rp-a' });
+  const rf = pushRep(rAdm, diegoId, 'tx-rp-rf', 'refund', 20, [{ type: 'cash', amount: 20 }], { originalClientTx: 'tx-rp-a' });
   const po = pushRep(rAdm, tariqId, 'tx-rp-po', 'payout', 30, [], {});
   const clCust = req('/api/admin/customers', { name: 'Rep Cashier' }, { session: rAdm });
   const cl = pushRep(rAdm, tariqId, 'tx-rp-cl', 'payment', 15, [{ type: 'transfer', amount: 15 }], { customerId: clCust.data.customer.id });
@@ -1774,6 +1785,27 @@ section('discounts & tax');
   check('each receipt leaves a purchase trail in the ledger', purTxs.length === 3 && purTxs.every((t) => t.note.includes(poRow.poNumber)), purTxs.map((t) => t.grandTotal).join(','));
   const purTotal = purTxs.reduce((s, t) => s + t.grandTotal, 0);
   check('purchase trail sums to received value', Math.abs(purTotal - 890) < 0.01);
+
+  const todayStart = new Date().toISOString().slice(0, 10);
+  const poLedger = req('/api/transactions', {}, { params: { limit: '500' }, session: poMgr }).data.transactions;
+  const dayRows2 = poLedger.filter((t) => String(t.createdAt || '').slice(0, 10) === todayStart);
+  const sumKind = (k) => dayRows2.filter((t) => (t.kind || 'sale') === k).reduce((s, t) => s + t.grandTotal, 0);
+  const expSales = sumKind('sale');
+  const expRefunds = sumKind('refund');
+  const expPayouts = sumKind('payout');
+  const expPayments = sumKind('payment');
+  const poExp = req('/api/drive/export', { date: todayStart }, { session: poMgr });
+  const poFile = driveFiles.find((f) => f.id === poExp.data.fileId);
+  const lineVal = (label) => {
+    const ln = poFile.content.split('\n').find((l) => l.includes(label));
+    return ln ? parseFloat(ln.split(',').filter(Boolean).pop()) : NaN;
+  };
+  check('receipts appear in the export but don’t inflate SALES',
+    poFile && poFile.content.includes('purchase') && Math.abs(lineVal('SALES') - expSales) < 0.01, poFile && lineVal('SALES'));
+  check('collections net as money in on the export',
+    Math.abs(lineVal('COLLECTIONS') - expPayments) < 0.01, lineVal('COLLECTIONS'));
+  check('purchase receipts never touch NET CASH',
+    Math.abs(lineVal('NET CASH') - (expSales - expRefunds - expPayouts + expPayments)) < 0.01, lineVal('NET CASH'));
 
   const draft = req('/api/purchase-orders', { supplierId: acmeRow.id, lines: [{ productId: mouseId, quantity: 1, unitCost: 13 }], status: 'DRAFT' }, { session: poMgr });
   check('draft PO created', draft.data.status === 'DRAFT');

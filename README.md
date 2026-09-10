@@ -4,21 +4,25 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 
 ## Features
 
-- **Offline-first**: products, users, and every sale are stored in the browser (IndexedDB). Cashiers can sell with zero connectivity; completed sales sync automatically when online.
+- **Offline-first**: products, users, and every sale are stored in the browser (IndexedDB). Cashiers can sell with zero connectivity; completed sales sync automatically when online. A server-issued offline credential keeps a terminal usable while the network is down.
 - **Sync with First-Committed-Wins**: devices reconcile against the backend. Double-selling the same IMEI is rejected; the losing device is marked **VOIDED** and its stock restored locally.
 - **Serialized (IMEI) inventory**: scan or type a serial per unit. Serialized items are tracked individually through stock, sale, history, and receipt.
-- **Split tender**: Cash / Store Credit / Net-30, with change calculation and quick-round keypad.
+- **Split tender**: Cash / Store Credit / On-account (Net-30), with change calculation and quick-round keypad.
 - **Receipts**: 80mm thermal-friendly print (CSS `@media print`), plus Share via Web Share API or clipboard.
 - **Scanning**: HID barcode scanner via the search field, with camera barcode fallback where supported.
-- **Role-gated dashboard**: admin/manager see store KPIs, a 14-day revenue chart, top sellers, low-stock alerts, and one-tap Drive export; cashiers get their own daily numbers.
-- **Admin tools** (in-app): create products, adjust non-serialized stock, add serials.
-- **POS lock**: staff sign in with a PIN pad.
+- **Customers, collections & aging**: customer accounts with net-30 terms, a per-customer ledger, money-in collections (admin/manager), receivables, and 30/60/90+ day aging buckets.
+- **Till shifts** (v1.5.0): open a shift with a float, close it with a denomination count, and get *declared / expected / over-or-short* in one view.
+- **Reports & analytics** (v1.6.0): period KPIs (gross sales, refunds, payouts, collections, net revenue, gross profit, average ticket) broken down by day, category, cashier, tender, plus top products/customers and one-click CSV export.
+- **Suppliers & purchase orders** (v1.7.0): vendor records, PO lifecycle (draft → ordered → partial/received, or cancelled) and receiving that posts stock in with weighted-average cost, per-unit serial intake, and a ledger trail that never touches drawer math.
+- **Role-gated dashboard**: admin/manager see store KPIs, a 14-day revenue chart, top sellers, low-stock alerts, open conflicts, recent shift closes, and one-tap Drive export; cashiers get their own daily numbers.
+- **Admin tools** (in-app): create products and users, adjust non-serialized stock, add serials, manage suppliers and purchase orders, release login lockouts, review conflicts, and revoke a stolen terminal's sessions.
+- **POS lock**: staff sign in with a PIN pad; five wrong PINs lock that account for 15 minutes.
 
 ## Stack
 
 - **Backend**: Google Apps Script Web App backed by **Google Sheets** + **Drive**. API bridge, sync, serial tracking, and admin mutations all run server-side. Zero hosting cost.
 - **Client**: Vanilla ES modules PWA — no build step. Service worker caches the shell (API is never cached).
-- **Auth**: shared `APP_TOKEN` (Script Property) on every call, plus an HMAC-signed 12-hour session token issued at login.
+- **Auth**: shared `APP_TOKEN` (Script Property) on every call, an HMAC-signed 12-hour session token issued at login, and a server-issued offline credential for terminals that keep selling while the network is down.
 
 ## Setup
 
@@ -126,6 +130,9 @@ npm run test:e2e
 # Both suites together
 npm run test:all
 
+# Receipt PDF/share smoke test (headless browser, no backend needed)
+npm run test:pdf
+
 # Local static serve of the PWA shell (backend still comes from the /exec URL)
 npm run serve   # http://127.0.0.1:8080
 ```
@@ -135,21 +142,36 @@ The browser E2E (tests/e2e.mjs) also runs against any same-origin backend when y
 ## Layout
 
 ```
-backend/Code.gs      Google Apps Script backend (API bridge, sync, seed)
-backend/README.md    Deploy guide for the Apps Script backend
-public/index.html    PWA shell
-public/js/app.js     Router/boot, tab bar, role-gated tabs, session restore
-public/js/api.js     GAS transport (envelope, token, session, offline flag)
-public/js/sync.js    Outbox push/pull, First-Committed-Wins + VOIDED handling
-public/js/screens/*.js  login, register, checkout, history, inventory, settings, dashboard
-public/css/style.css Full UI + @media print receipt mode
-tests/backend-sim.mjs  Backend logic tests vs an in-memory Apps Script mock
-tests/e2e.mjs          Headless-browser end-to-end test
+backend/Code.gs          Google Apps Script backend (API bridge, sync, admin, reports, purchase orders)
+backend/README.md        Deploy guide for the Apps Script backend
+public/index.html        PWA shell
+public/js/app.js         Router/boot, tab bar, role-gated tabs, session restore
+public/js/api.js         GAS transport (envelope, token, session, offline flag)
+public/js/db.js          IndexedDB layer (products, catalog, outbox, offline credential)
+public/js/sync.js        Outbox push/pull, First-Committed-Wins + VOIDED handling
+public/js/money.js       Money math (integer-cents engine, refund builder)
+public/js/receipt-send.js  Receipt PDF / share transport (thermal, clipboard, Web Share)
+public/js/screens/*.js   login, register, checkout, history, customers, reports, purchases, inventory, settings, dashboard, alerts
+public/css/style.css     Full UI + @media print receipt mode
+public/sw.js             Service worker — VERSION bumped every release; precaches the shell
+tests/backend-sim.mjs    Backend logic tests vs an in-memory Apps Script mock (303 cases)
+tests/e2e.mjs            Headless-browser E2E (needs a freshly-seeded live backend)
+tests/pdf-send-smoke.mjs Receipt PDF/share headless-browser smoke test
 ```
+
+## Releases stay in lockstep
+
+One feature = one validated revision = one git tag (v1.0.0 → v1.7.x, all
+tagged). Every release must bump `public/sw.js` `VERSION` and `package.json`,
+append `CHANGELOG.md`, and keep README / DEPLOY / SECURITY / the backend guide
+current — **do not ship a version whose docs still describe the previous
+one**. `AGENTS.md` encodes this protocol for AI agents; `HANDOVER.md` is the
+living state snapshot that survives between sessions.
 
 ## Notes / known constraints
 
 - Auth/session data lives in each browser's IndexedDB; it is **not** shared across devices. Every device syncs to the same backend.
 - The dashboard sync clock (`watermark`) is sheet-based; keep your seeded sheet as the single source of truth.
 - Sheet-level writes are serialized with Apps Script `LockService` (single instance) — not built for extreme horizontal scaling.
-- Admin + manager roles can create products, adjust stock, and add serials; cashiers cannot.
+- Admin + manager roles can create products and users, adjust stock, add serials, manage suppliers and purchase orders, run reports, and issue refunds; cashiers sell, run their own shift, and record customer sales.
+- After any release, terminals pick up the new shell on next load (the versioned service-worker cache replaces the old one automatically; a hard reload once is enough if anything looks stale).

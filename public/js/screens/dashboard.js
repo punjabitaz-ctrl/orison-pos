@@ -512,8 +512,8 @@ function last14(txs) {
     for (const b of buckets) {
       if (b.key === k) {
         const v = t.grandTotal || 0;
-        if (kindOf(t) === 'sale') b.total += v;
-        else b.total -= v; // refunds and payouts reduce net cash
+        if (kindOf(t) === 'sale' || (t.kind || '') === 'payment') b.total += v;
+        else b.total -= v; // refunds and payouts reduce net cash; payments are money in
         b.count += 1;
         break;
       }

@@ -136,6 +136,9 @@ web-accessible status page without app load.
       itself.
 - [ ] Re-run `node tests/backend-sim.mjs` after backend changes (green bar
       above is the contract).
+- [ ] After any release, the service-worker `VERSION` was bumped and the
+      changelog/docs were updated in the same commit (see `AGENTS.md`) so
+      installed terminals upgrade instead of serving a stale shell.
 
 ## Common workflows
 
@@ -145,6 +148,11 @@ web-accessible status page without app load.
 | Change sync cadence | Settings → *Offline sync window (minutes)* → Save. Default 30. Sales sync instantly when online. |
 | Owner live view | Set cadence to 2–5 min; dashboard reloads on focus/sync. |
 | Weekly sales file | Backend → *Export today → Drive* (store-wide for admin/manager). |
+| Daily numbers & GP | Reports tab → Today/Week/Month/Custom presets → CSV export. |
+| Add a supplier | Purchases tab → *New supplier* (name + optional phone/email/terms). |
+| Order stock | Purchases tab → *New PO* → lines with quantities + unit costs → Save draft / Place order. |
+| Receive a delivery | Purchases tab → order → *Receive* → enter what arrived (serials for serialized lines); stock and weighted cost update on post. |
+| Refund a sale | History (admin/manager) → the sale → *Refund items*. Cashiers cannot refund. |
 | See conflicts | Home → amber banner → Review → Keep winner / Dismiss. |
 | Bulk recall/restock | Apps Script `setup` re-seed (writes a backup CSV of transactions to Drive first). |
 

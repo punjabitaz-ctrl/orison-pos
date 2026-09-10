@@ -99,7 +99,10 @@ export const screen = {
 
     function openDetail(t) {
       const k = kindInfo(t.kind);
-      const refundable = (t.kind || 'sale') === 'sale' && (t.status === 'SYNCED' || t.status === 'SERVER') && (t.items || []).length > 0;
+      const refundable = (user.role === 'admin' || user.role === 'manager')
+        && (t.kind || 'sale') === 'sale'
+        && (t.status === 'SYNCED' || t.status === 'SERVER')
+        && (t.items || []).length > 0;
       const lineTotal = (i) => {
         const q = i.quantity || 1;
         const disc = i.discountPct || 0;

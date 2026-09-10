@@ -5,23 +5,32 @@
 ## What it provides
 
 - `POST /exec` bridge — every endpoint is an `action` string in the JSON body (see envelope below).
-- Auth: shared `APP_TOKEN` + per-login HMAC session token (12 h).
-- Seed: 4 users (admin/manager/cashier/cashier), 42 products, serialized IMEI stock, store config, transactions tab, watermark.
+- Auth: shared `APP_TOKEN` + per-login HMAC session token (12 h), per-user + per-device revocation, login lockout, offline credentials for terminals, admin/manager role gates on every money and admin route (payouts, collections, and refunds are admin/manager-only).
+- Seed: 4 users (admin/manager/cashier/cashier), 42 products, serialized IMEI stock, store config, one supplier, transactions tab, watermark.
 - Sync: pull (`products`, `users`, `store`, `watermark`, `openConflicts`) and First-Committed-Wins push that rejects duplicate serials (loser → `VOIDED`), under `LockService`. Re-pushes of an already-recorded transaction are idempotent (`ALREADY_SYNCED`).
 - **Conflict registry**: when two devices disagree, a row is recorded in the `Conflicts` tab and surfaced via `/api/conflicts` (admin/manager) and in every sync pull as `openConflicts`. Types: `SERIAL_CLAIM` (same IMEI sold by two devices), `DUPLICATE_CLIENT` (same terminal+purchase pushed twice with different contents), `CLOCK_SKEW` (device clock far outside range — sale accepted but flagged). Admin/manager review them with `/api/conflicts/review` (`dismiss` | `resolve`).
-- Admin: create product, add serials, inventory adjust (admin **or** manager).
-- **Drive export** (`/api/drive/export`): admin/manager export the whole store's day to Drive; **cashiers can export their own day's report** (rows scoped server-side to their user id, distinct filename).
+- **Customers & receivables**: accounts, net-30 terms, per-customer ledger, collections (`kind: payment`), and 30/60/90+ day aging buckets via `/api/customers/ledger` and `/api/customers/receivables`.
+- **Till shifts**: `/api/shifts/open` (any role) and `/api/shifts/close` with denomination count → *declared / expected / over-or-short*, scoped per user with `kind`-aware cash math (sales + cash collections − cash refunds − payouts).
+- **Reports**: `/api/reports` (manager/admin) — gross sales, refunds, payouts, collections, net revenue, GP, by day / category / cashier / tender, top products and customers, over a date window.
+- **Suppliers & purchase orders**: `/api/suppliers`, `/api/purchase-orders` (draft → ordered → partial/received → cancelled), `/detail`, `/receive` (posts stock with weighted-average cost, per-unit serial intake, and a `purchase` ledger row that never touches drawer math), `/cancel`.
+- Admin: create products/users/customers, add serials, inventory adjust, PIN reset/unlock, revoke devices, store config.
+- **Drive export** (`/api/drive/export`): admin/manager export the whole store's day to Drive with a SALES / REFUNDS / PAID OUT / COLLECTIONS / NET CASH summary (purchase receipts appear as detail rows but never inflate SALES); cashiers export their own day (rows scoped server-side to their user id, distinct filename).
 
 ## Tab layout in the Sheet
 
 | Tab | Purpose |
 | --- | --- |
 | `Meta` | key/value store — **header row required** (the API writes a header so the first row isn't misread) |
-| `Users` | id, firstName, lastName, email, pinHash, role, active |
+| `Users` | id, firstName, lastName, email, pinHash (+pinSalt), role, active |
 | `Products` | id, sku, name, category, retailPrice, unitCost, qty, isSerialized, serials (JSON), createdBy, createdAt |
 | `Serials` | id/lot#, serial, productId, status (AVAILABLE/SOLD/VOIDED), createdAt |
-| `Transactions` | the transaction ledger; header row written at seed time |
+| `Transactions` | the transaction ledger (kind sale/refund/payout/payment/purchase); header row written at seed time |
 | `Conflicts` | multi-device disagreements (type, serial, losing client id, winning tx, summary, status OPEN/RESOLVED/DISMISSED, reviewedBy/at) |
+| `Devices` | per-terminal rows (id, user, deviceId, first/last seen, revoked) backing per-device revocation |
+| `Customers` | id, storeId, name, phone, email, note, createdAt |
+| `Shifts` | id, userId, openedAt/closedAt, openingFloat, cashExpected, cashDeclared, overShort, tendersJson (denomination count), status |
+| `Suppliers` | id, storeId, name, phone, email, address, paymentTerms, active, createdAt |
+| `PurchaseOrders` | id, storeId, supplierId, poNumber, orderDate, expectedDate, status, itemsJson, receivedJson, subtotal, discountPct, taxAmount, total, note, createdBy |
 
 Only `APP_TOKEN` knows which sheet is the "backend" — keep it secret.
 
@@ -62,7 +71,8 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `Code.gs` is exercised locally by `tests/backend-sim.mjs` — an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`) running `Code.gs` through `node:vm`. No network or Google account needed:
 
 ```bash
-npm run test:backend
+npm run test:backend   # 303 cases: auth, throttle, FCW, refunds, payouts, shifts,
+                       # customers/aging, reports, purchase orders, exports
 ```
 
 Directories on the server (e.g. `/api/sync/push`) map to `action` strings in the Scripts — the Files want `doPost` to route on the same strings so the web/browser transport and mock transport match exactly.

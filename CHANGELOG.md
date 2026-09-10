@@ -5,6 +5,45 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] — 2026-09-09
+
+Post-review hardening. A full code / process / scope / UX / security review
+surfaced a handful of real defects; this revision closes the ones with teeth
+and syncs every doc and asset to the latest version.
+
+### Security
+
+- **Refunds are now admin/manager only.** A cashier refund reached the server
+  with no role check (unlike payouts and collections), so any signed-in
+  cashier could reverse any sale on any device. It now voids with
+  `unauthorized_role`, and the client hides the Refund button from cashiers.
+- **Role changes revoke sessions immediately.** Demoting someone from admin /
+  manager no longer waits up to 12 h for the old token to expire — the change
+  kicks their sessions out at the first request after the downgrade.
+- `config_()` stops leaking **deactivated** staff into the device roster.
+
+### Money & ledger
+
+- **The Drive export stopped counting purchase receipts as SALES.** Deliveries
+  still appear in the CSV detail rows (kind `purchase`) but no longer inflate
+  SALES or NET CASH — "a delivery is never drawer math" now holds for reports,
+  shifts, and the spreadsheet export.
+- **Collections net as money-in on the export.** `kind: payment` rows were
+  being lumped into SALES; they now land on their own `COLLECTIONS` line that
+  is included in NET CASH, and the dashboard 14-day chart nets them the same
+  way instead of subtracting them.
+
+### Assets & delivery
+
+- **Service worker versioned to v1.7.1** and precaching `customers.js`,
+  `reports.js`, `purchases.js` — installed terminals pinned to the stale
+  v1.2.0 cache will finally upgrade instead of serving an ever-older shell.
+- `package.json` version synced to the release line (was 0.2.1) and now wires
+  `test:pdf` into `test:all`.
+- **Docs in lockstep with the code**: README, DEPLOY, SECURITY, the backend
+  guide, and this changelog all reflect v1.7.x. `AGENTS.md` encodes the
+  release protocol so future revisions keep them current automatically.
+
 ## [1.7.0] — 2026-09-09
 
 Buy stock like an office and receive it like a warehouse. Suppliers, purchase

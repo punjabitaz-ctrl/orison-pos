@@ -46,6 +46,9 @@ session for that account at once. This fires on:
   (`/api/admin/pin`) revokes every prior session for that user. It is
   meaningless to keep old devices logged in to an account whose credentials
   changed because of a suspected compromise.
+- **Role change** — demoting or promoting staff (`/api/admin/users/patch`)
+  revokes their existing sessions on the spot, so a downgrade takes effect at
+  the first request instead of waiting out up to 12 h of token expiry.
 
 **Per device.** Each terminal submits a stable `deviceId` when it signs in, the
 backend records it in a Devices sheet tab, and the token carries it as a `dev`
@@ -149,20 +152,34 @@ because the throttle above bounds online guessing, and the sheet itself is
 protected by Google account access rather than being public. If this ever moves
 off Sheets, use a memory-hard hash.
 
+New staff accounts created from Settings (`/api/admin/users`) also report a
+one-time PIN to the execution log so the admin can hand it off — same
+first-day-credential tradeoff as the seed, and staff should change it right
+away via `/api/pin`.
+
 ## Roles
 
 `admin`, `manager`, `cashier`, checked server-side by `requireRole_` on every
-privileged action. The role is carried in the signed session token, so a role
-change takes effect at next sign-in rather than immediately.
+privileged action. The role is carried in the signed session token; because a
+role **change** revokes that user's sessions immediately, a promotion or
+demotion takes effect at the first request after the change (no 12-hour lag).
 
 | Route | Roles |
 |---|---|
+| `/api/sync/push` — sale    | any signed-in role |
+| `/api/sync/push` — payout, payment (collection), refund | admin, manager |
+| `/api/reports`, `/api/drive/export` (store scope) | admin, manager (cashiers export only their own rows) |
+| `/api/shifts` (all shifts) | admin, manager (cashiers see their own) |
+| `/api/customers/ledger`, `/api/customers/receivables` | admin, manager |
+| `/api/suppliers`, `/api/purchase-orders`, `/api/purchase-orders/detail`, `/receive`, `/cancel` | admin, manager |
 | `/api/admin/products`, `/serials`, `/inventory`, `/products/patch` | admin, manager |
 | `/api/conflicts`, `/api/conflicts/review` | admin, manager |
 | `/api/admin/unlock` | admin, manager |
+| `/api/admin/users*` | admin |
 | `/api/admin/revoke` | admin |
 | `/api/admin/devices`, `/admin/revoke-device` | admin |
 | `/api/admin/pin` | admin |
+| `/api/admin/customers` | admin, manager |
 | `/api/pin` | any signed-in user, own PIN only |
 | `/api/logout` | any signed-in user, own sessions only |
 
@@ -220,3 +237,38 @@ four consequences worth stating plainly:
    the same fallback; six digits is a million candidates, so that hash was
    recoverable essentially instantly. It is deleted from storage on the first
    sign-in after upgrading.)
+
+## Acknowledged weaknesses (hardening backlog)
+
+These are known, deliberately-documented tradeoffs — mostly consequences of
+the offline-first design or the single-secret deployment model. Fixing them
+is tracked; none is silent.
+
+1. **Client-trusted money facts.** Because sales are recorded offline and
+   synced later, `unitPrice`, `quantity`, and `tenders` arrive from the device
+   and are recomputed server-side only for totals/discounts — the server does
+   not enforce "price = retail" or "Σ tenders = total". A signed-in cashier can
+   under-ring. Enforcing price/tender invariants server-side would require
+   either online-only sales or a signed-price mechanism; both are bigger
+   changes than a hardening release.
+2. **Lost-terminal offline window.** A device stolen while offline keeps its
+   cached offline credential until it next connects; there is no way to reach
+   it sooner. Revocation (admin → Security → revoke device) closes it on first
+   contact. This is inherent to offline-first point-of-sale.
+3. **`APP_TOKEN` is shared** by every terminal and lives in each device's
+   IndexedDB (see [The shared app token](#the-shared-app-token)). A single
+   compromised install yields it; rotation is manual.
+4. **Client-side CSV export** (`reports.js`) quotes cells but does not prefix
+   formula characters (`= + - @`); the server-side `csvCell_` does. Export a
+   server CSV (`/api/drive/export`) for spreadsheet-grade safety.
+5. **Client-supplied report keys** (tender type, category) are used as object
+   keys in `reports_`; a hostile payload could collide with prototype keys.
+   Harmless today (data is single-store, post-auth) but should switch to
+   `Object.create(null)` maps.
+6. **Account-based lockout is a cheap DoS** against a known email (see
+   [Login throttling](#login-throttling)); an admin can clear it any time.
+   Per-device/IP throttling would need call metadata the Web App does not
+   expose.
+7. **Salted single SHA-256 PIN hashes** are fast to brute-force if the
+   workbook ever leaks; bounded by the login throttle and Google account
+   access. Move to a memory-hard hash if the store moves off Sheets.

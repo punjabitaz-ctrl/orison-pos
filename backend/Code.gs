@@ -924,7 +924,9 @@ function userDto_(u) {
 function config_() {
   return {
     store: getStore_(),
-    users: readRows_('Users', USER_HEADERS).map(userDto_),
+    users: readRows_('Users', USER_HEADERS)
+      .filter(function (u) { return String(u.active) === '1'; })
+      .map(userDto_),
   };
 }
 
@@ -1443,12 +1445,17 @@ function processPayment_(session, store, newTxRows, tx, deviceId, userRows, cust
 }
 
 /* Refund: reverses part or all of a completed sale. Serialized units return
-   to IN_STOCK; non-serialized products regain stock. Guards: the original
-   sale must exist, refund amount can't exceed the outstanding balance, and
-   returned quantities/serials must still be outstanding. Idempotent via the
-   normal device+clientTxId duplicate check. */
+   to IN_STOCK; non-serialized products regain stock. Guards: admin/manager
+   only (a cashier deciding what gets reversed is an accounts hazard, exactly
+   like payouts and collections), the original sale must exist, refund amount
+   can't exceed the outstanding balance, and returned quantities/serials must
+   still be outstanding. Idempotent via the normal device+clientTxId check. */
 function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConflictRows,
                         serialPatches, productPatches, session, deviceId, tx, userRows) {
+  var role = session ? String(session.role || '') : '';
+  if (role !== 'admin' && role !== 'manager') {
+    return { errors: [{ reason: 'unauthorized_role' }] };
+  }
   var errors = [];
   var originalClientTx = String(tx.originalClientTx || '');
   var original = null;
@@ -2866,6 +2873,7 @@ function adminUserPatch_(session, payload) {
 
   applyPatches_('Users', USER_HEADERS, 'id', { [id]: patch });
   if (patch.active === 0) { revokeTokensForUser_(id); markAllDevicesRevoked_(id); }
+  else if (patch.role && patch.role !== String(found.role)) { revokeTokensForUser_(id); }
   Logger.log('[orison-pos] user ' + id + ' patched ' + JSON.stringify(patch) + ' by ' + session.uid);
   return { ok: true, changed: true };
 }
@@ -3169,14 +3177,15 @@ function driveExport_(session, payload, params) {
   }
 
   var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note' + (isStore ? ',cost,gross_profit' : '') + '\n';
-  var sales = 0, refunds = 0, payouts = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
+  var sales = 0, refunds = 0, payouts = 0, collections = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
     var k = String(t.kind || 'sale');
     var v = num_(t.grand_total);
     if (k === 'refund') refunds += v;
     else if (k === 'payout') payouts += v;
-    else sales += v;
+    else if (k === 'payment') collections += v;
+    else if (k !== 'purchase') sales += v;
     if (String(t.tax_amount || '') !== '') taxTotal += num_(t.tax_amount);
 
     var items = [];
@@ -3214,13 +3223,14 @@ function driveExport_(session, payload, params) {
 
   /* Cash summary block appended after the detail rows so managers/admins
      can reconcile drawer cash in one glance. */
-  var net = sales - refunds - payouts;
+  var net = sales - refunds - payouts + collections;
   csv += '\n';
   csv += ',,SUMMARY,,,,\n';
   csv += ',,SALES,,' + String(sales) + ',\n';
   csv += ',,TAX COLLECTED,,' + String(taxTotal) + ',\n';
   csv += ',,REFUNDS,,' + String(refunds) + ',\n';
   csv += ',,PAID OUT,,' + String(payouts) + ',\n';
+  csv += ',,COLLECTIONS,,' + String(collections) + ',\n';
   csv += ',,NET CASH,,' + String(net) + ',\n';
   if (isStore) {
     csv += ',,TOTAL COST,,' + String(costTotalDay) + ',\n';
