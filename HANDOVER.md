@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.16.0** — store localisation & multi-currency (`2026-09-10`) |
-| Validation bar | `backend-sim` **PASS 446 / FAIL 0** · client units **PASS 237 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.17.0** — shell & navigation (`2026-09-10`) |
+| Validation bar | `backend-sim` **PASS 446 / FAIL 0** · client units **PASS 269 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,23 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.17.0** Shell & navigation — first of three releases from
+  `docs/superpowers/specs/2026-09-10-pos-interface-v2-design.md`. New
+  **`nav.js`** holds the navigation model (`primaryTabs`, `menuTiles(role)`,
+  `isRestricted`) and **`components.js`** renders it (`tile`, `tileGrid`,
+  `navButton`, `appHeaderHtml`, `ICONS`); both navs are now renderings of that
+  one model, so `index.html` lost ~100 lines of duplicated SVG and a
+  destination is added in one line. **Three-item bottom bar** (Menu · Sell ·
+  History) replaces the ten-item scrolling strip, Menu being the primary
+  control and carrying the alert badge. New **launcher** screen (`menu`): one
+  flat grid, no headings, no nesting, 10 tiles for a manager and 3 for a
+  cashier. New **app header** (store, live clock, one connectivity indicator
+  with queued count, user chip). `openPayoutModal` moved out of `dashboard.js`
+  into **`money-dialogs.js`** so the Paid Out tile opens Paid Out. The app now
+  **opens on Sell**. **Fixed:** at ≥1024px a bare `#appbar` became a column
+  beside the sidebar — header and screen now share a `.main` column.
+  **Removed:** the v1.14.0 tabbar scroll rules and `scrollIntoView`, and the
+  dead `.scr-status` rules. 37 new unit checks in `tests/client-nav.mjs`.
 - **v1.16.0** Store localisation & multi-currency: `getStore_()` carries
   **`locale` / `country` / `currency` / `denoms` / `configured`**; admin-only
   `/api/admin/store` validates and writes any subset of them (every field

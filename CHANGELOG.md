@@ -5,6 +5,71 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] — 2026-09-10
+
+First release of the interface-v2 rebuild
+(`docs/superpowers/specs/2026-09-10-pos-interface-v2-design.md`): the shell and
+its navigation. The app opens on Sell, and one large button opens a flat grid
+of every job the signed-in account can do.
+
+### Added
+
+- **`public/js/nav.js`** — the navigation model. One list of destinations plus
+  `primaryTabs()`, `menuTiles(role)` and `isRestricted(id, role)`. Pure, so the
+  shape of the app's navigation is asserted in tests rather than discovered by
+  tapping around a phone.
+- **`public/js/components.js`** — `ICONS`, `icon()`, `tile()`, `tileGrid()`,
+  `navButton()` and `appHeaderHtml()`: destinations rendered as markup. `ui.js`
+  keeps primitives that know nothing about this app; this is the layer that
+  knows what a destination is.
+- **The launcher** (`public/js/screens/menu.js`) — one flat grid of big
+  labelled tiles, colour chip and icon, **no group headings and no submenus**.
+  Ten tiles for an admin or manager (Refund, Paid Out, Time Clock, Customers,
+  Products, Alerts, Purchases, Reports, Dashboard, Settings); a cashier sees the
+  three their role permits. Role gating removes a tile rather than disabling it.
+- **App header** — store name, a live clock, one connectivity indicator with the
+  queued-push count, and a user chip that opens Settings. Rendered once for the
+  whole app instead of per screen.
+- **`public/js/money-dialogs.js`** — `openPayoutDialog(ctx, onDone)`, lifted out
+  of `dashboard.js` so the launcher's Paid Out tile opens Paid Out instead of
+  dropping someone on a screen to hunt for a button.
+- 37 unit checks in `tests/client-nav.mjs` covering the model and the markup:
+  tab count and order per role, cashier scoping, unknown roles falling back to
+  cashier rather than admin, every destination having an icon and a label that
+  fits, and every rendered field being escaped.
+
+### Changed
+
+- **Three-item bottom bar — Menu · Sell · History** — replacing ten destinations
+  in a horizontally scrolling strip. Menu is left-most, thumb-nearest and
+  visually heavier, and carries the inventory-alert count so a manager sees it
+  without opening the launcher. Every target is now 125×61px on a 375px phone.
+- **Both navs render from the model.** The same ten buttons used to be written
+  twice in `index.html`, once per nav, which is how they drifted — the sidebar's
+  alerts badge carried a different id from the tab bar's. `index.html` drops
+  ~100 lines of duplicated inline SVG. Adding a destination is one line in
+  `nav.js`.
+- **The desktop sidebar lists every destination flat**, in the launcher's order,
+  with no headings — the two navigations are one list in two shapes.
+- **The app opens on Sell**, not the dashboard.
+- `applyRoleTabs()` asks the model instead of hard-coding a list of restricted
+  ids.
+- The register's own connectivity pill is gone; the header owns it, so two
+  indicators can no longer disagree.
+
+### Fixed
+
+- **Desktop shell layout** — at ≥1024px `.app` is a flex row, so a bare header
+  became a 240px column beside the sidebar rather than a bar above the content.
+  The header and screen now share a `.main` column, which also survives the
+  rail toggle changing the sidebar's width.
+
+### Removed
+
+- The v1.14.0 horizontal-scroll rules on `.tabbar` and the `scrollIntoView` call
+  that went with them. Both existed only to fit ten destinations on a phone.
+- The dead `.scr-status` rules.
+
 ## [1.16.0] — 2026-09-10
 
 Store localisation. The app used to print every figure as US dollars while the

@@ -7,7 +7,54 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.16.0 — store localisation & multi-currency
+## Latest: v1.17.0 — shell & navigation
+
+**2026-09-10.** The first of three releases rebuilding the interface around the
+job staff actually do. The app opens on **Sell**, and one large button opens a
+flat grid of every job — the screen the shop already knows, rebuilt.
+
+**What shipped**
+
+- **Three-item bottom bar — Menu · Sell · History**, replacing ten destinations
+  in a scrolling strip. **Menu** is left-most, thumb-nearest and visually
+  heavier, and carries the inventory-alert count. Each target is 125×61px on a
+  375px phone.
+- **The launcher** — one flat grid of big labelled tiles, colour chip and icon,
+  no group headings and no submenus. Ten tiles for an admin or manager; a
+  cashier sees the three their role permits, because role gating removes a tile
+  rather than greying it out.
+- **App header** on every screen — store name, live clock, one connectivity
+  indicator with the queued-push count, and a user chip that opens Settings.
+- **Navigation is data.** Both navs render from `nav.js`, so `index.html` loses
+  ~100 lines of duplicated SVG and a destination is added in one line rather
+  than as two buttons in two places.
+- **Paid Out opens Paid Out.** Its dialog moved out of `dashboard.js` into
+  `money-dialogs.js` so the tile does what its label says.
+
+**Two deliberate departures from the spec,** both recorded in the plan:
+`primaryTabs()` lives in `nav.js` rather than `app.js`, because `app.js` boots
+on import and could not otherwise be unit-tested; and the launcher ships **10**
+tiles rather than 13 — Cash Pick Up, Employee Expense and Shift arrive in
+v1.19.0 with the transaction kinds they need, and no tile ships that does not
+do what its label says.
+
+**Validation:** backend-sim **PASS 446 / FAIL 0** (untouched this release) ·
+client units **PASS 269 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** ·
+`node --check` clean on every touched file. Verified in-browser at 375px, 834px
+and 1280px: bar never scrolls, role gating correct for both roles, all ten
+tiles route, zero JS console errors.
+
+### Deploying
+
+1. **Front-end only.** `backend/Code.gs` is untouched — no Apps Script redeploy.
+2. Push `public/` to Cloudflare Pages as usual (no build step).
+3. Terminals pick up the **v1.17.0** shell on next load; the service worker
+   drops the old cache and precaches `nav.js`, `components.js`,
+   `money-dialogs.js` and the launcher.
+
+---
+
+## v1.16.0 — store localisation & multi-currency
 
 **2026-09-10.** A store now says what language, country and currency it trades
 in, and everything that prints or counts money follows.

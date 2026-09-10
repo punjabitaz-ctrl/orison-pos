@@ -21,12 +21,15 @@ public/js/api.js         /exec transport (envelope, APP_TOKEN, session, offline 
 public/js/db.js          IndexedDB layer
 public/js/sync.js        Outbox push/pull + VOIDED handling
 public/js/money.js       Money math
+public/js/nav.js         Navigation model (primaryTabs, menuTiles, isRestricted)
+public/js/components.js  Destinations as markup (tile, tileGrid, navButton, appHeaderHtml)
+public/js/money-dialogs.js  Money-out dialogs the launcher opens directly
 public/js/stats.js       Shared aggregation (day totals, trends, hourly buckets, top sellers, hours)
 public/js/labels.js      Code 128-B encoder + shelf-label markup
 public/js/print-sheet.js Full-page printing (labels, worksheets) in its own window
 public/js/customer-display.js  Register side of the second-screen mirror
 public/display.html + public/js/display.js + public/css/display.css   The customer-facing display
-public/js/screens/*.js   login register checkout history customers reports purchases inventory inventory-tools store-setup settings dashboard alerts staff
+public/js/screens/*.js   login register checkout history customers reports purchases inventory inventory-tools store-setup settings dashboard alerts staff menu
 public/js/receipt-send.js  Receipt PDF/share
 public/css/style.css     UI + @media print receipt mode
 public/sw.js             Service worker (VERSION must be bumped every release)
@@ -98,6 +101,9 @@ npm run test:client               # client unit tests (money/sync/db/alerts/ui)
   through `fmt()` (store locale + currency, installed at boot/login/pull);
   a currency symbol in a label comes from `currencySymbol()`, a note or coin
   from `denomLabel()`, and the ladder itself from `store.denoms`.
+- **Navigation is data.** Add a destination to `public/js/nav.js`; never paste a
+  button into `index.html`. Both navs and the launcher render from that model,
+  and role gating comes from `isRestricted`, not a hard-coded id list.
 - New backend endpoints: register in `doPost` dispatch, add a handler block
   with a `requireRole_` gate for privileged actions, then add sim coverage.
   New UI tabs: register the screen in `app.js` `SCREENS` **and** the restricted
