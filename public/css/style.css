@@ -616,6 +616,9 @@ button:disabled { cursor: default; }
 .inv-qty.zero { color: var(--danger); }
 .inv-price { font-weight: 800; font-size: 14px; flex: none; }
 .inv-actions { display: flex; gap: 6px; flex: none; }
+.btn-row { display: flex; gap: 8px; align-items: center; }
+.ag-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.ag-summary .ag-total { flex-basis: 100%; padding-top: 6px; border-top: 1px solid var(--line); font-size: 13px; }
 
 /* ---------------- Settings ---------------- */
 .set-wrap { padding: 4px 16px 20px; }

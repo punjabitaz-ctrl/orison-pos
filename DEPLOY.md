@@ -154,6 +154,7 @@ web-accessible status page without app load.
 | Receive a delivery | Purchases tab → order → *Receive* → enter what arrived (serials for serialized lines); stock and weighted cost update on post. |
 | See why a price changed | Products → 📈 on any item (admin/manager) — every cost/retail edit and each PO-receipt cost update with who, when, and the order. |
 | Send a customer their statement | Customers → ledger → *Statement* (admin/manager) — chronological debit/credit lines with running balance, printable and exportable as CSV. |
+| See what's sat in stock too long | Products → *Aging* (admin/manager) — 0–30 / 31–60 / 61–90 / 90+ day buckets with units and value at cost, oldest stock first. |
 | Refund a sale | History (admin/manager) → the sale → *Refund items*. Cashiers cannot refund. |
 | See conflicts | Home → amber banner → Review → Keep winner / Dismiss. |
 | Bulk recall/restock | Apps Script `setup` re-seed (writes a backup CSV of transactions to Drive first). |

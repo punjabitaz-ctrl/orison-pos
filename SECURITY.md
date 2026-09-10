@@ -175,6 +175,7 @@ demotion takes effect at the first request after the change (no 12-hour lag).
 | `/api/suppliers`, `/api/purchase-orders`, `/api/purchase-orders/detail`, `/receive`, `/cancel` | admin, manager |
 | `/api/price-history` | admin, manager |
 | `/api/admin/products`, `/serials`, `/inventory`, `/products/patch` | admin, manager |
+| `/api/inventory/aging` | admin, manager |
 | `/api/conflicts`, `/api/conflicts/review` | admin, manager |
 | `/api/admin/unlock` | admin, manager |
 | `/api/admin/users*` | admin |

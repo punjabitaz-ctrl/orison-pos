@@ -5,6 +5,27 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] — 2026-09-09
+
+Dead stock is now visible before it becomes a write-off.
+
+### Added
+
+- **Inventory aging.** `/api/inventory/aging` (admin/manager) answers "how long
+  has this been sitting?" for every stocked item: a product's clock starts at
+  creation and re-sets every time a purchase-order receipt brings more in.
+- **Products → *Aging* button** (admin/manager): one screen of 0–30 / 31–60 /
+  61–90 / 90+ day buckets with unit counts and value-at-cost per bucket, plus
+  an oldest-first item list (units left, days sitting, value at cost). The
+  summary totals reconcile exactly with the item list.
+- Serialized stock ages by **available serial count**, matching how the rest of
+  the app counts serialized on-hand.
+
+### Changed
+
+- Nothing — read-only view; receipts already flowed through `PriceHistory`
+  since v1.8.0, which is what makes "last in" available for the aging clock.
+
 ## [1.9.0] — 2026-09-09
 
 A customer's book can now be handed over as a proper document.

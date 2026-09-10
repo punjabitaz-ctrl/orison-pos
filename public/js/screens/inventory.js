@@ -46,7 +46,7 @@ export const screen = {
           <h2>Products</h2>
           <p>${this._products.length} items${isAdmin ? ' · admin' : ''}</p>
         </div>
-        ${isAdmin ? '<button class="btn btn-ghost btn-sm" id="newProdBtn">+ New</button>' : ''}
+        ${isAdmin ? `<div class="btn-row"><button class="btn btn-ghost btn-sm" id="agingBtn">Aging</button><button class="btn btn-ghost btn-sm" id="newProdBtn">+ New</button></div>` : ''}
       </header>
       <div class="search-row">
         <div class="search-box">
@@ -106,7 +106,10 @@ export const screen = {
 
     searchEl.addEventListener('input', debounced);
 
-    if (isAdmin) root.querySelector('#newProdBtn').addEventListener('click', newProductModal);
+    if (isAdmin) {
+      root.querySelector('#newProdBtn').addEventListener('click', newProductModal);
+      root.querySelector('#agingBtn').addEventListener('click', agingModal);
+    }
 
     function newProductModal() {
       const modal = openModal(`
@@ -280,6 +283,51 @@ export const screen = {
         const d = new Date(iso);
         return isNaN(d) ? iso : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
       }
+    }
+
+    function agingModal() {
+      const modal = openModal(`
+        <div class="form-modal inv-history">
+          <h3>Inventory aging</h3>
+          <p class="muted">How long on-hand stock has been sitting, valued at cost</p>
+          <div id="agBody" class="ph-body"><p class="empty">Loading…</p></div>
+          <div class="row"><button class="btn btn-ghost" data-close>Close</button></div>
+        </div>`);
+      modal.querySelector('[data-close]').addEventListener('click', closeModal);
+      (async () => {
+        const body = modal.querySelector('#agBody');
+        try {
+          const res = await api.get('/api/inventory/aging');
+          const s = res.summary || {};
+          const chips = [
+            ['current', '0–30d', s.current],
+            ['d30', '31–60d', s.d30],
+            ['d60', '61–90d', s.d60],
+            ['d90', '90d+', s.d90],
+          ];
+          const tot = (s.current && s.current.value || 0) + (s.d30 && s.d30.value || 0) + (s.d60 && s.d60.value || 0) + (s.d90 && s.d90.value || 0);
+          const chipCls = { current: 'age0', d30: 'age30', d60: 'age60', d90: 'age90' };
+          body.innerHTML = `
+            <div class="ag-summary">
+              ${chips.map(([k, label, b]) => `<span class="age ${chipCls[k]}">${esc(label)}: ${b ? b.units : 0} @ ${fmt(b ? b.value : 0)}</span>`).join('')}
+              <div class="ag-total">Total on hand <strong>${fmt(tot)}</strong> at cost</div>
+            </div>
+            ${(res.items || []).length ? res.items.map((it) => `
+              <div class="ph-row">
+                <div class="ph-top">
+                  <span class="inv-name">${esc(it.name)}</span>
+                  <span class="muted">${esc(it.sku || '')} · ${esc(it.category)}</span>
+                </div>
+                <div class="ph-chg">
+                  <span>${it.onHand} left · ${it.ageDays} days${it.ageDays >= 90 ? ' 🔴' : it.ageDays >= 60 ? ' 🟠' : it.ageDays >= 30 ? ' 🟡' : ' 🟢'}</span>
+                  <strong>${fmt(it.value)} @ cost</strong>
+                </div>
+              </div>`).join('')
+            : '<p class="empty">Everything in stock is fresh.</p>'}`;
+        } catch (_) {
+          body.innerHTML = '<p class="empty">Failed to load — check connection.</p>';
+        }
+      })();
     }
 
     function settingsModal(productId) {

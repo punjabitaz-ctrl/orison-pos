@@ -99,6 +99,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/purchase-orders/cancel': return purchaseOrderCancel_(session, payload);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
+    case '/api/inventory/aging': return inventoryAging_(session);
     default:
       throw statusError_(404, 'Unknown action: ' + action);
   }
@@ -2285,6 +2286,74 @@ function priceHistory_(session, params) {
     };
   });
   return { history: history, productId: productId || null };
+}
+
+/* stock aging: how long has the on-hand inventory been sitting? A product's
+   age starts at creation and is re-set every time a purchase-order receipt
+   brings more in (the receipt's own timestamp). Buckets 0-30/31-60/61-90/90+
+   days; every row valued at current cost. */
+function inventoryAging_(session) {
+  requireRole_(session, ['admin', 'manager']);
+  var nowMs = Date.now();
+  var dayMs = 86400000;
+
+  var lastIn = {};
+  var histRows = readRows_('PriceHistory', PRICE_HISTORY_HEADERS);
+  for (var h = 0; h < histRows.length; h++) {
+    var pr = histRows[h];
+    if (String(pr.source) !== 'po' || String(pr.field) !== 'cost_price') continue;
+    var pid = String(pr.product_id);
+    var ts = String(pr.created_at || '');
+    if (!lastIn[pid] || ts > lastIn[pid]) lastIn[pid] = ts;
+  }
+
+  var serialAvailable = {};
+  var serRows = readRows_('Serials', SERIAL_HEADERS);
+  for (var s = 0; s < serRows.length; s++) {
+    if (String(serRows[s].status) !== 'IN_STOCK') continue;
+    var spid = String(serRows[s].product_id);
+    serialAvailable[spid] = (serialAvailable[spid] || 0) + 1;
+  }
+
+  var summary = {
+    current: { units: 0, value: 0 },
+    d30: { units: 0, value: 0 },
+    d60: { units: 0, value: 0 },
+    d90: { units: 0, value: 0 },
+  };
+  var items = [];
+  var prods = readRows_('Products', PRODUCT_HEADERS);
+  for (var i = 0; i < prods.length; i++) {
+    var p = prods[i];
+    if (String(p.item_type) === 'service' || String(p.active) !== '1') continue;
+    var isSerialized = String(p.is_serialized) === '1';
+    var onHand = isSerialized ? (serialAvailable[String(p.id)] || 0) : num_(p.on_hand);
+    if (onHand <= 0) continue;
+
+    var lastInTs = lastIn[String(p.id)] || String(p.created_at || '');
+    var ageDays = 0;
+    var parsed = Date.parse(lastInTs);
+    if (!isNaN(parsed)) ageDays = Math.max(0, Math.floor((nowMs - parsed) / dayMs));
+    var bucket = ageDays >= 90 ? 'd90' : ageDays >= 60 ? 'd60' : ageDays >= 30 ? 'd30' : 'current';
+    var value = round2_(onHand * num_(p.cost_price));
+
+    items.push({
+      id: String(p.id),
+      name: String(p.name || ''),
+      sku: String(p.sku || ''),
+      category: String(p.category || ''),
+      onHand: onHand,
+      costPrice: num_(p.cost_price),
+      ageDays: ageDays,
+      value: value,
+      lastIn: lastInTs || '',
+    });
+    summary[bucket].units += onHand;
+    summary[bucket].value += value;
+  }
+
+  items.sort(function (a, b) { return b.ageDays - a.ageDays; });
+  return { asOf: new Date().toISOString(), items: items, summary: summary };
 }
 
 /* ------------------------------------------------------------------ *

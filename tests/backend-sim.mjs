@@ -1930,6 +1930,58 @@ check('statement carries the changer/cashier',
   check('limit caps the result set', lim.length <= 3);
 }
 
+{
+  section('inventory aging');
+
+  const agAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const agCas = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  check('cashier cannot read inventory aging', req('/api/inventory/aging', {}, { session: agCas }).status === 403);
+
+  const alphaId = req('/api/admin/products', {
+    name: 'Aging Alpha', sku: 'AG-ALPHA-01', category: 'Accessories', costPrice: 20, retailPrice: 40, onHand: 5,
+  }, { session: agAdm }).data.id;
+  const betaId = req('/api/admin/products', {
+    name: 'Aging Beta', sku: 'AG-BETA-01', category: 'Electronics', costPrice: 30, retailPrice: 70, isSerialized: true, onHand: 0,
+  }, { session: agAdm }).data.id;
+  const ser = req('/api/admin/serials', { productId: betaId, serialNumbers: ['AG-SN-1', 'AG-SN-2'] }, { session: agAdm });
+  check('serialized aging fixture set up', ser.ok === true || ser.data.added.length === 2, JSON.stringify(ser.data));
+
+  const ag0 = req('/api/inventory/aging', {}, { session: agAdm }).data;
+  const ag0Alpha = ag0.items.find((i) => i.id === alphaId);
+  const ag0Beta = ag0.items.find((i) => i.id === betaId);
+  check('aging values stock at cost',
+    ag0Alpha && ag0Alpha.onHand === 5 && Math.abs(ag0Alpha.value - 100) < 0.001 && Math.abs(ag0Alpha.costPrice - 20) < 0.001,
+    JSON.stringify(ag0Alpha));
+  check('serialized items age by available serial count',
+    ag0Beta && ag0Beta.onHand === 2 && Math.abs(ag0Beta.value - 60) < 0.001, JSON.stringify(ag0Beta));
+  check('fresh stock lands in the current bucket',
+    ag0Alpha.ageDays <= 1 && ag0Beta.ageDays <= 1 && ag0.summary.current.units >= 7 && ag0.summary.current.value >= 160,
+    JSON.stringify(ag0.summary));
+  const sorted = ag0.items.every((it, i) => i === 0 || ag0.items[i - 1].ageDays >= it.ageDays);
+  check('aging lists oldest stock first', sorted);
+  const valSum = ag0.items.reduce((a, i) => a + i.value, 0);
+  const sumBuckets = ag0.summary.current.value + ag0.summary.d30.value + ag0.summary.d60.value + ag0.summary.d90.value;
+  check('aging totals reconcile with the items list', Math.abs(valSum - sumBuckets) < 0.001, valSum + ' vs ' + sumBuckets);
+  check('aging needs no params / 404 for unknown actions',
+    req('/api/inventory/aging', {}, { session: agAdm }).ok === true);
+
+  const beforeLastIn = ag0Alpha.lastIn;
+  const sup = req('/api/suppliers', { name: 'Aging Wholesale' }, { session: agAdm });
+  const po = req('/api/purchase-orders', {
+    supplierId: sup.data.id, lines: [{ productId: alphaId, quantity: 3, unitCost: 25 }], status: 'ORDERED',
+  }, { session: agAdm });
+  const rec = req('/api/purchase-orders/receive', { id: po.data.id, lines: [{ productId: alphaId, quantity: 3 }] }, { session: agAdm });
+  check('aging fixture PO receive accepted', rec.ok === true && rec.data.lines.length === 1, JSON.stringify(rec.data));
+
+  const ag1 = req('/api/inventory/aging', {}, { session: agAdm }).data;
+  const ag1Alpha = ag1.items.find((i) => i.id === alphaId);
+  check('a PO receipt re-seeds the product’s last-in date',
+    ag1Alpha && ag1Alpha.lastIn !== beforeLastIn && ag1Alpha.onHand === 8 && ag1Alpha.ageDays <= 1, JSON.stringify({ b: beforeLastIn, a: ag1Alpha && ag1Alpha.lastIn }));
+  const newCost = ag1Alpha.costPrice;
+  check('receipt blended the weighted cost in the aging view',
+    Math.abs(newCost - 21.88) < 0.001 && Math.abs(ag1Alpha.value - 8 * newCost) < 0.001, String(newCost));
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

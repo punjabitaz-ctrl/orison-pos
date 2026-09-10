@@ -15,6 +15,12 @@
   charged on account debit, store-credit refunds and collections credit —
   with a running balance that closes exactly on the ledger balance. Each line
   names the cashier and reference for disputes.
+- **Inventory aging** (`/api/inventory/aging`, admin/manager): how long stock
+  has been sitting — a product's clock starts at creation and re-sets on every
+  PO receipt (the receipt's own `PriceHistory` timestamp). Bucketed
+  0-30 / 31-60 / 61-90 / 90+ days with units and value-at-cost per bucket,
+  oldest first. Serialized stock counts `IN_STOCK` serials, matching the
+  product DTO.
 - **Till shifts**: `/api/shifts/open` (any role) and `/api/shifts/close` with denomination count → *declared / expected / over-or-short*, scoped per user with `kind`-aware cash math (sales + cash collections − cash refunds − payouts).
 - **Reports**: `/api/reports` (manager/admin) — gross sales, refunds, payouts, collections, net revenue, GP, by day / category / cashier / tender, top products and customers, over a date window.
 - **Suppliers & purchase orders**: `/api/suppliers`, `/api/purchase-orders` (draft → ordered → partial/received → cancelled), `/detail`, `/receive` (posts stock with weighted-average cost, per-unit serial intake, and a `purchase` ledger row that never touches drawer math), `/cancel`.

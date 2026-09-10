@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.9.0** — customer statements (`2026-09-09`) |
-| Validation bar | `backend-sim` **PASS 330 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.10.0** — inventory aging (`2026-09-09`) |
+| Validation bar | `backend-sim` **PASS 341 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~3,340 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell |
 | Node | ≥ 20 (dev/test only) |
@@ -76,6 +76,11 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   and collections credit) via `/api/customers/statement`, closing exactly on
   the ledger balance; printed on 80 mm thermal or exported to CSV (formula-
   injection guard) from Customers → ledger → *Statement*.
+- **v1.10.0** Inventory aging: how long on-hand stock has been sitting —
+  clock starts at product creation and re-sets on every PO receipt (its
+  `PriceHistory` timestamp); buckets 0–30/31–60/61–90/90+ with units + value
+  at cost via `/api/inventory/aging`, viewed read-only from Products → *Aging*
+  (serialized stock counted from `IN_STOCK` serials).
 - **v1.7.1** Post-review hardening: **refunds now admin/manager-only**;
   role changes revoke sessions immediately; Drive export no longer counts
   purchase receipts as SALES and nets collections as money-in (`COLLECTIONS`
@@ -160,13 +165,16 @@ Status of every finding class:
 1. **Roadmap (user-directed order):**
    - ~~**Price history & tracking**~~ — shipped in **v1.8.0**.
    - ~~**Customer statements**~~ — shipped in **v1.9.0**.
-   - **Aging inventory** (stock aging) — next revision; user flagged
-     "especially aging inventory".
+   - ~~**Aging inventory**~~ — shipped in **v1.10.0**.
+   - **All three priority features are done.** Next candidate: knock down the
+     deferred hardening list (lock-scope race in `purchaseOrderReceive_` /
+     `suppliers_` / `adminProducts_` / `adminSerials_`, VOIDED re-push
+     idempotency, same-batch double refund, GP live-cost, UTC day windows).
 2. **Deploy current version** — re-deploy `backend/Code.gs` as the Apps Script
    Web App (new `PriceHistory` tab auto-creates on first read; `setup`
    re-seed also works, it backs up to Drive first) and make sure Cloudflare
    Pages is serving `public/` (no build, output dir `public`). Hardware
-   terminals will pick up the v1.9.0 shell automatically on next load.
+   terminals will pick up the v1.10.0 shell automatically on next load.
 3. Optionally knock down the deferred hardening list above (lock-scope + VOIDED
    re-push idempotency are the two with real teeth).
 4. Consider a client test harness for `money.js`/`sync.js` (biggest test gap).

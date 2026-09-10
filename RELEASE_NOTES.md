@@ -7,41 +7,41 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.9.0 — customer statements
+## Latest: v1.10.0 — inventory aging
 
-**2026-09-09.** A customer's book can now be handed over as a proper document:
-a chronological statement of account with debit/credit lines and a running
-balance, printable on the register's 80 mm thermal and exportable to CSV.
+**2026-09-09.** Dead stock is now visible before it becomes a write-off.
+`/api/inventory/aging` (admin/manager) answers "how long has this been
+sitting?" for every stocked item, bucket by bucket.
 
 **What shipped**
 
-- **Statement of account.** `/api/customers/statement` (admin/manager) walks
-  every completed transaction a customer has touched — sales charged net-30/on
-  account debit, store-credit refunds and collections credit — oldest first,
-  closing exactly on the ledger balance.
-- **From Customers → ledger → *Statement***: date / details / debit / credit /
-  balance rows, the closing balance, *Print* and *CSV* buttons.
-- Every line carries the original reference, the cashier's name, and the note,
-  so a disputed balance can be traced back to the till.
-- CSV export guards against formula injection (`= + - @` prefixed).
+- **Products → *Aging*** (admin/manager): one screen with 0–30 / 31–60 / 61–90 /
+  90+ day buckets — each with units on hand and value at cost — plus an
+  oldest-first item list showing units, days sitting, and value at cost.
+- **How the clock works:** a product's age starts at creation and re-sets every
+  time a purchase-order receipt brings more in (the receipt's own `PriceHistory`
+  timestamp, added in v1.8.0). No PO history → age from creation.
+- Serialized stock ages by **available serial count**, matching how the rest of
+  the app counts serialized on-hand.
+- Read-only: no new writes, no behavior change to stock math.
 
-**Validation:** backend-sim **PASS 330 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** ·
+**Validation:** backend-sim **PASS 341 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** ·
 `node --check` clean.
 
 ### Deploying
 
-1. Redeploy `backend/Code.gs` as the Apps Script Web App (no new tabs this
-   revision; existing workbook untouched).
+1. Redeploy `backend/Code.gs` as the Apps Script Web App. No new tabs.
 2. Cloudflare Pages keeps serving `public/` — the new shell rolls out on next
    load.
 3. One hard reload if anything looks stale on an installed terminal.
 
 ---
 
-## The road here (1.8.0 → 1.9.0)
+## The road here (1.9.0 → 1.10.0)
 
 | Version | What shipped |
 | --- | --- |
+| **v1.10.0** | Inventory aging — how long on-hand stock has been sitting, in 0–30 / 31–60 / 61–90 / 90+ day buckets with units and value at cost (clock starts at creation, re-sets on PO receipts); read-only view from Products → Aging. |
 | **v1.9.0** | Customer statements — chronological debit/credit statement of account with a running balance (sales on account debit; store-credit refunds and collections credit), printable and CSV-exportable from the ledger. |
 | **v1.8.0** | Price history & tracking — per-product audit of every cost/retail change (create baseline, manual patch, PO weighted-cost receipt with the order number) browsable from the Products screen. |
 | **v1.7.1** | Post-review hardening — refunds admin/manager-only, role changes revoke sessions immediately, export stops counting purchase receipts as SALES and nets collections as money-in, service-worker cache un-stuck (v1.7.1 versioned + precaches new screens), docs locked in step. |
