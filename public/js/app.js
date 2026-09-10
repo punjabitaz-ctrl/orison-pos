@@ -5,7 +5,7 @@
 
 import { idb } from './db.js';
 import { api, setSessionExpiredHandler } from './api.js';
-import { syncNow, SYNC_EVENT, applyStoreFormat } from './sync.js';
+import { syncNow, SYNC_EVENT, applyStoreFormat, outboxStats } from './sync.js';
 import { inventoryAlerts } from './alerts.js';
 import { screen as login } from './screens/login.js';
 import { screen as register } from './screens/register.js';
@@ -19,8 +19,11 @@ import { screen as settings } from './screens/settings.js';
 import { screen as dashboard } from './screens/dashboard.js';
 import { screen as alerts } from './screens/alerts.js';
 import { screen as staff } from './screens/staff.js';
+import { screen as menu } from './screens/menu.js';
+import { primaryTabs, menuTiles, isRestricted } from './nav.js';
+import { navButton, appHeaderHtml } from './components.js';
 
-const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff };
+const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff, menu };
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -70,37 +73,107 @@ const router = {
     current = def;
     const root = document.getElementById('screen');
     cleanup = (await def.render(ctx, root)) || null;
+    /* a launcher destination lights the Menu tab, because that is the button
+       that got you there. */
+    const barIds = primaryTabs().map((t) => t.id);
     document.querySelectorAll('[data-tab]').forEach((t) => {
-      t.classList.toggle('on', t.dataset.tab === def.tab);
+      const active = t.dataset.tab === def.tab
+        || (t.dataset.tab === 'menu' && !barIds.includes(def.tab));
+      t.classList.toggle('on', active);
     });
     applyRoleTabs();
-    /* the bar scrolls once a manager has every destination on it, so keep the
-       active tab visible instead of stranding it off-screen. */
-    const activeTab = document.querySelector('#tabbar [data-tab].on');
-    if (activeTab && activeTab.scrollIntoView) {
-      activeTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    }
     const tb = document.getElementById('tabbar');
     const sb = document.getElementById('sidebar');
+    const ab = document.getElementById('appbar');
     if (tb && sb) sb.classList.toggle('hidden', tb.classList.contains('hidden'));
+    if (tb && ab) ab.classList.toggle('hidden', tb.classList.contains('hidden'));
     window.scrollTo(0, 0);
   },
 };
 
 function applyRoleTabs() {
   const role = (state.user || {}).role || 'cashier';
-  const canManage = role === 'admin' || role === 'manager';
-  document.querySelectorAll('[data-tab]').forEach((t) => {
-    const restricted = (t.dataset.tab === 'inventory' || t.dataset.tab === 'alerts' || t.dataset.tab === 'customers' || t.dataset.tab === 'reports' || t.dataset.tab === 'purchases') && !canManage;
-    t.classList.toggle('hidden', restricted);
+  document.querySelectorAll('#sbNav [data-tab]').forEach((t) => {
+    t.classList.toggle('hidden', isRestricted(t.dataset.tab, role));
   });
 }
+
+/* Both navs are renderings of the same model, so a destination is added in
+   nav.js and appears in both - never a button pasted into index.html twice. */
+function renderNav() {
+  const role = (state.user || {}).role || 'cashier';
+  const tiles = menuTiles(role);
+  const bar = document.getElementById('tabbar');
+  if (bar) bar.innerHTML = primaryTabs(role).map((t) => navButton(t)).join('');
+  const side = document.getElementById('sbNav');
+  if (side) {
+    side.innerHTML = [
+      ...primaryTabs(role).filter((t) => t.id !== 'menu'),
+      ...tiles,
+    ].map((d) => navButton({ id: d.id, label: d.label, primary: false })).join('');
+  }
+  document.querySelectorAll('[data-tab]').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const hit = tiles.find((d) => d.id === tab.dataset.tab);
+      if (hit && hit.dialog === 'payout') {
+        import('./money-dialogs.js').then((m) => m.openPayoutDialog(ctx));
+        return;
+      }
+      router.show(hit ? hit.screen : tab.dataset.tab);
+    });
+  });
+  refreshAlertBadge();
+}
+
+function renderHeader() {
+  const bar = document.getElementById('appbar');
+  if (!bar) return;
+  const u = state.user || {};
+  bar.innerHTML = appHeaderHtml({
+    storeName: (state.store && state.store.name) || 'Orison POS',
+    userName: [u.firstName, u.lastName].filter(Boolean).join(' '),
+    role: u.role,
+  });
+  const userBtn = document.getElementById('appUser');
+  if (userBtn) userBtn.addEventListener('click', () => router.show('settings'));
+  tickClock();
+  refreshStatus();
+}
+
+let clockTimer = null;
+function tickClock() {
+  const el = document.getElementById('appClock');
+  if (!el) return;
+  el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  if (!clockTimer) clockTimer = setInterval(tickClock, 1000);
+}
+
+function refreshStatus() {
+  const el = document.getElementById('appStatus');
+  if (!el) return;
+  const online = navigator.onLine;
+  el.classList.toggle('online', online);
+  el.classList.toggle('offline', !online);
+  const txt = el.querySelector('.ab-status-text');
+  if (txt) txt.textContent = online ? 'Online' : 'Offline';
+  if (!online) return;
+  outboxStats()
+    .then((st) => {
+      if (txt) txt.textContent = st.pending ? `${st.pending} queued` : 'Online';
+    })
+    .catch(() => {});
+}
+window.addEventListener('online', refreshStatus);
+window.addEventListener('offline', refreshStatus);
+window.addEventListener(SYNC_EVENT, refreshStatus);
 
 function refreshAlertBadge() {
   idb.getAll('products')
     .then((prods) => {
       const n = inventoryAlerts(prods).length;
-      document.querySelectorAll('[data-tab="alerts"] .tab-badge').forEach((el) => {
+      /* Menu carries the count too, so a manager on a phone sees it without
+         opening the launcher first. */
+      document.querySelectorAll('[data-tab="alerts"] .tab-badge, [data-tab="menu"] .tab-badge').forEach((el) => {
         el.textContent = n > 99 ? '99+' : String(n);
         el.classList.toggle('hidden', n === 0);
       });
@@ -122,6 +195,8 @@ setSessionExpiredHandler(async () => {
   delete m.user;
   state.user = null;
   await idb.put('meta', m, 'config').catch(() => {});
+  renderNav();
+  renderHeader();
   if (current && current.id !== 'login') router.show('login');
 });
 
@@ -141,10 +216,8 @@ async function boot() {
      figure is ever briefly shown in the wrong currency. */
   applyStoreFormat(state.store);
 
-  // Tab bar + sidebar nav.
-  document.querySelectorAll('[data-tab]').forEach((tab) => {
-    tab.addEventListener('click', () => router.show(tab.dataset.tab));
-  });
+  renderNav();
+  renderHeader();
 
   // Connectivity reflex: when we come back online, catch up.
   const debounced = (() => {
@@ -152,16 +225,13 @@ async function boot() {
     return () => { clearTimeout(t); t = setTimeout(() => syncNow().catch(() => {}), 800); };
   })();
   window.addEventListener('online', debounced);
-  window.addEventListener('offline', () => {
-    const pill = document.querySelector('.scr-status');
-    if (pill) { pill.classList.remove('online'); pill.classList.add('offline'); }
-  });
+
 
   window.addEventListener('orison:sync-interval', armSync);
   armSync();
   refreshOnFocus();
 
-  await router.show(state.user ? 'dashboard' : 'login');
+  await router.show(state.user ? 'register' : 'login');
 }
 
 boot().catch((err) => {
