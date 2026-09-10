@@ -1044,11 +1044,6 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; le
    empty states, data tables, trend chips, time clock
    ========================================================= */
 
-/* The bar carries ten destinations for a manager. Rather than shave every
-   target below the thumb-friendly minimum, it scrolls. */
-.tabbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
-.tabbar::-webkit-scrollbar { display: none; }
-.tabbar .tab { flex: 1 0 auto; min-width: 64px; min-height: 44px; }
 
 .btn, .btn-sm, .seg-btn, .chip, .quick, .disc-btn { min-height: 44px; }
 .icon-btn { width: 44px; height: 44px; }
@@ -1251,3 +1246,77 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; le
   border-radius: 999px; padding: 5px 10px;
   font-variant-numeric: tabular-nums;
 }
+
+/* =========================================================
+   v1.17.0 — app header, three-item bar, launcher grid
+   ========================================================= */
+
+.appbar {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 10px 16px;
+  min-height: 52px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.ab-store { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+.ab-right { display: flex; align-items: center; gap: 10px; }
+.ab-clock { font-size: 13px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ab-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.ab-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
+.ab-status.online .dot { background: var(--ok); }
+.ab-status.offline .dot { background: var(--danger); }
+.ab-user {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--navy); color: #fff;
+  font-size: 13px; font-weight: 800;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* Three slots, so the bar no longer scrolls and each target is thumb-sized. */
+.tabbar .tab { flex: 1 1 0; min-width: 0; min-height: 58px; }
+.tab-primary { color: var(--navy); }
+.tab-primary svg {
+  width: 34px; height: 34px; padding: 6px;
+  border-radius: 12px;
+  background: var(--navy); color: #fff;
+}
+.tab-primary.on svg { background: var(--navy-3); }
+
+.menu-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 10px; padding: 4px 16px 24px;
+}
+.mtile {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 16px 8px;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 16px;
+  min-height: 108px;
+  text-align: center;
+  transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.mtile:active { transform: translateY(1px); }
+.mtile:hover { border-color: var(--line-2); }
+.mtile-icon {
+  width: 52px; height: 52px; border-radius: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--navy); color: #fff;
+}
+.mtile-icon svg { width: 26px; height: 26px; }
+.mtile-label { font-size: 13px; font-weight: 700; line-height: 1.2; }
+
+.i-refund    { background: #f97316; }
+.i-payout    { background: #ef4444; }
+.i-staff     { background: #64748b; }
+.i-customers { background: #0ea5e9; }
+.i-inventory { background: #059669; }
+.i-alerts    { background: #d97706; }
+.i-purchases { background: #7c3aed; }
+.i-reports   { background: #e11d48; }
+.i-dashboard { background: #2563eb; }
+.i-settings  { background: #0891b2; }
+
+@media (min-width: 560px) { .menu-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 900px) { .menu-grid { grid-template-columns: repeat(6, 1fr); } }
+@media (min-width: 1024px) { .appbar { padding-left: 20px; padding-right: 20px; } }
