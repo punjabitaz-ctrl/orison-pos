@@ -68,6 +68,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/transactions':    return transactions_(session, params);
     case '/api/customers':       return customers_(session, payload, params);
     case '/api/customers/ledger': return customerLedger_(session, params);
+    case '/api/customers/statement': return customerStatement_(session, params);
     case '/api/customers/receivables': return receivables_(session);
     case '/api/reports':         return reports_(session, params);
     case '/api/shifts':          return shifts_(session, params);
@@ -1851,6 +1852,93 @@ function customerLedger_(session, params) {
     balance: account - credit,
     aging: agingBuckets_(txRows),
     transactions: txs,
+  };
+}
+
+/* a formal statement of account: every transaction the customer touched, in
+   chronological order, as debit/credit lines with a running balance — so the
+   book can be printed or exported and trusted against the receivables total. */
+function customerStatement_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var cid = String((params && params.customerId) || '');
+  if (!cid) throw statusError_(400, 'customerId is required');
+  var cust = null;
+  var rows = readRows_('Customers', CUSTOMERS_HEADERS);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].id) === cid) { cust = rows[i]; break; }
+  }
+  if (!cust) throw statusError_(404, 'Customer not found');
+
+  var txRows = readRows_('Transactions', TX_HEADERS)
+    .filter(function (t) { return String(t.status) === 'COMPLETED' && String(t.customer_id) === cid; });
+  txRows.sort(function (a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
+
+  var users = readRows_('Users', USER_HEADERS);
+  var nameById = {};
+  for (var u = 0; u < users.length; u++) {
+    nameById[String(users[u].id)] =
+      String(users[u].first_name || '') + ' ' + String(users[u].last_name || '');
+  }
+
+  var running = 0;
+  var items = txRows.map(function (t) {
+    var kind = String(t.kind || 'sale');
+    var tenders = [];
+    try { tenders = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
+    var itemNames = [];
+    try {
+      var arr = JSON.parse(t.items_json || '[]');
+      for (var q = 0; q < arr.length; q++) {
+        var nm = String(arr[q].name || '');
+        var qt = num_(arr[q].quantity);
+        itemNames.push(nm + (qt > 1 ? ' \u00d7' + qt : ''));
+      }
+    } catch (_) {}
+
+    var debit = 0, credit = 0;
+    if (kind === 'sale') {
+      for (var k = 0; k < tenders.length; k++) {
+        var ty = String(tenders[k].type || '');
+        var amt = num_(tenders[k].amount);
+        if (ty === 'store_credit' || ty === 'net30' || ty === 'account') debit += amt;
+      }
+    } else if (kind === 'refund') {
+      for (var m = 0; m < tenders.length; m++) {
+        if (String(tenders[m].type || '') === 'store_credit') credit += num_(tenders[m].amount);
+      }
+    } else if (kind === 'payment') {
+      credit += num_(t.grand_total);
+    }
+    running += debit - credit;
+
+    var label = kind === 'sale' ? 'Sale'
+      : kind === 'refund' ? 'Refund'
+      : kind === 'payment' ? 'Payment received'
+      : kind === 'payout' ? 'Paid out'
+      : String(kind || 'sale');
+    var detail = itemNames.slice(0, 3).join(', ');
+    if (itemNames.length > 3) detail += ' +' + (itemNames.length - 3) + ' more';
+
+    return {
+      id: String(t.id),
+      reference: String(t.client_tx_id || ''),
+      kind: kind,
+      date: String(t.created_at || ''),
+      description: label + (detail ? ' \u2014 ' + detail : ''),
+      note: String(t.note || ''),
+      cashier: nameById[String(t.user_id || '')] || '',
+      debit: debit,
+      credit: credit,
+      balance: running,
+    };
+  });
+
+  return {
+    customer: { id: cust.id, name: String(cust.name || ''), phone: String(cust.phone || ''), email: String(cust.email || '') },
+    asOf: new Date().toISOString(),
+    opening: 0,
+    closing: running,
+    items: items,
   };
 }
 

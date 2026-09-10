@@ -114,7 +114,10 @@ export const screen = {
             <div class="lg-total"><span>Balance</span><strong class="${l.balance > 0 ? 'neg' : 'gp'}">${l.balance > 0 ? '' : '+ '}${fmt(l.balance)}</strong></div>
             <div class="lg-aging">${agingChips(l.aging)}</div>
           </div>
-          ${l.balance > 0 ? `<button class="btn btn-block" id="collectBtn" style="--bg:#2e7d32">Collect payment</button>` : ''}
+          <div class="ledger-actions">
+            ${l.balance > 0 ? `<button class="btn btn-sm" id="collectBtn" style="--bg:#2e7d32">Collect payment</button>` : ''}
+            <button class="btn btn-sm btn-ghost" id="stmtBtn">Statement</button>
+          </div>
           <div class="lg-txs">
             ${(l.transactions || []).length ? l.transactions.map((t) => `
               <div class="lg-tx">
@@ -134,6 +137,102 @@ export const screen = {
 
       const collectBtn = modalEl.querySelector('#collectBtn');
       if (collectBtn) collectBtn.addEventListener('click', () => openCollectModal(l));
+      modalEl.querySelector('#stmtBtn').addEventListener('click', () => openStatement(l));
+    }
+
+    async function openStatement(l) {
+      let s;
+      try {
+        s = await api.get('/api/customers/statement?customerId=' + encodeURIComponent(l.customer.id));
+      } catch (_) {
+        toast('Failed to load statement', 'warn');
+        return;
+      }
+      const modalEl = openModal(`
+        <div class="tx-detail cust-ledger">
+          <button class="icon-btn abs-close" data-x>✕</button>
+          <div class="stmt-head">
+            <div>
+              <h3>Statement of account</h3>
+              <p class="muted">${esc(s.customer.name)}${s.customer.phone ? ' · ' + esc(s.customer.phone) : ''}</p>
+            </div>
+            <div class="stmt-bal">
+              <span>Balance</span>
+              <strong class="${s.closing > 0 ? 'neg' : 'gp'}">${s.closing > 0 ? '' : '+ '}${fmt(s.closing)}</strong>
+            </div>
+          </div>
+          <div class="stmt-actions">
+            <button class="btn btn-sm" id="stmtPrint" style="--bg:#1c5d99">Print</button>
+            <button class="btn btn-sm btn-ghost" id="stmtCsv">CSV</button>
+          </div>
+          <div class="stmt-table">
+            <div class="stmt-row stmt-th">
+              <span>Date</span><span>Details</span><span class="r">Debit</span><span class="r">Credit</span><span class="r">Balance</span>
+            </div>
+            ${s.items.length ? s.items.map((it) => `
+              <div class="stmt-row">
+                <span>${esc(shortDate(it.date))}</span>
+                <span class="stmt-desc">${esc(it.description)}<i># ${esc(it.reference)}</i></span>
+                <span class="r">${it.debit ? fmt(it.debit) : '—'}</span>
+                <span class="r">${it.credit ? fmt(it.credit) : '—'}</span>
+                <span class="r b">${fmt(it.balance)}</span>
+              </div>`).join('')
+              : `<p class="empty">No activity.</p>`}
+          </div>
+        </div>`);
+      modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
+      modalEl.addEventListener('click', (e) => { if (e.target.classList.contains('modal-backdrop') || e.target.closest('[data-close]')) closeModal(); });
+      modalEl.parentElement.querySelector('.modal-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeModal(); });
+
+      modalEl.querySelector('#stmtPrint').addEventListener('click', () => printStatement(s));
+      modalEl.querySelector('#stmtCsv').addEventListener('click', () => statementCsv(s));
+    }
+
+    function printStatement(s) {
+      const oldNode = document.querySelector('.print-root');
+      if (oldNode) oldNode.remove();
+      const pr = document.createElement('div');
+      pr.className = 'print-root stmt';
+      pr.innerHTML = `
+        <div class="receipt">
+          <h1>Statement of account</h1>
+          <p>${esc(s.customer.name)}</p>
+          ${s.customer.phone ? `<p>${esc(s.customer.phone)}</p>` : ''}
+          <p class="muted">as of ${esc(shortDate(s.asOf))}</p>
+          ${s.items.map((it) => `
+            <div class="stmt-line">
+              <span>${esc(shortDate(it.date))} · ${esc(it.description)}</span>
+              <span>${it.debit ? 'DR ' + fmt(it.debit) : it.credit ? 'CR ' + fmt(it.credit) : ''}</span>
+              <span>bal ${fmt(it.balance)}</span>
+            </div>`).join('')}
+          <p class="receipt-total">Balance ${fmt(s.closing)}</p>
+        </div>`;
+      document.body.appendChild(pr);
+      document.body.classList.add('printing');
+      requestAnimationFrame(() => {
+        window.print();
+        setTimeout(() => { document.body.classList.remove('printing'); pr.remove(); }, 600);
+      });
+    }
+
+    function statementCsv(s) {
+      const csvEsc = (v) => {
+        const t = String(v == null ? '' : v);
+        return /^[=+\-@]/.test(t) ? "'" + t : t;
+      };
+      const rows = [['date', 'reference', 'description', 'debit', 'credit', 'balance', 'cashier', 'note']];
+      for (const it of s.items) {
+        rows.push([it.date, it.reference, it.description, it.debit || '', it.credit || '', it.balance, it.cashier, it.note]);
+      }
+      const blob = new Blob([rows.map((r) => r.map(csvEsc).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `orison-statement-${s.customer.id}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast('Statement CSV downloaded', 'ok');
     }
 
     function openCollectModal(l) {

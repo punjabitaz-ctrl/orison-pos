@@ -10,6 +10,11 @@
 - Sync: pull (`products`, `users`, `store`, `watermark`, `openConflicts`) and First-Committed-Wins push that rejects duplicate serials (loser → `VOIDED`), under `LockService`. Re-pushes of an already-recorded transaction are idempotent (`ALREADY_SYNCED`).
 - **Conflict registry**: when two devices disagree, a row is recorded in the `Conflicts` tab and surfaced via `/api/conflicts` (admin/manager) and in every sync pull as `openConflicts`. Types: `SERIAL_CLAIM` (same IMEI sold by two devices), `DUPLICATE_CLIENT` (same terminal+purchase pushed twice with different contents), `CLOCK_SKEW` (device clock far outside range — sale accepted but flagged). Admin/manager review them with `/api/conflicts/review` (`dismiss` | `resolve`).
 - **Customers & receivables**: accounts, net-30 terms, per-customer ledger, collections (`kind: payment`), and 30/60/90+ day aging buckets via `/api/customers/ledger` and `/api/customers/receivables`.
+- **Customer statements** (`/api/customers/statement`, admin/manager): the
+  customer's whole book as a chronological debit/credit statement — sales
+  charged on account debit, store-credit refunds and collections credit —
+  with a running balance that closes exactly on the ledger balance. Each line
+  names the cashier and reference for disputes.
 - **Till shifts**: `/api/shifts/open` (any role) and `/api/shifts/close` with denomination count → *declared / expected / over-or-short*, scoped per user with `kind`-aware cash math (sales + cash collections − cash refunds − payouts).
 - **Reports**: `/api/reports` (manager/admin) — gross sales, refunds, payouts, collections, net revenue, GP, by day / category / cashier / tender, top products and customers, over a date window.
 - **Suppliers & purchase orders**: `/api/suppliers`, `/api/purchase-orders` (draft → ordered → partial/received → cancelled), `/detail`, `/receive` (posts stock with weighted-average cost, per-unit serial intake, and a `purchase` ledger row that never touches drawer math), `/cancel`.

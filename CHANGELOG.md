@@ -5,6 +5,29 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-09-09
+
+A customer's book can now be handed over as a proper document.
+
+### Added
+
+- **Statement of account.** `/api/customers/statement` (admin/manager) turns
+  every completed transaction a customer has touched into a chronological
+  debit/credit statement with a **running balance** — sales charged net-30/on
+  account debit the account, store-credit refunds and collections credit it.
+- **Statement view from Customers** — open a ledger, tap *Statement*, and get
+  date / details / debit / credit / balance rows plus the closing balance.
+- **Print & CSV.** Print uses the register's 80 mm thermal recipe; CSV exports
+  the full statement with formula-injection guard (`= + - @` prefixed) and no
+  tax on the export.
+
+### Changed
+
+- Every statement line carries the original reference, the cashier's name, and
+  the note — so a disputed balance can be traced back to the till it came from.
+- Closing balance on the statement reconciles exactly with the ledger balance
+  (one shared walk of the same transaction set).
+
 ## [1.8.0] — 2026-09-09
 
 Every price now has a story. Cost and retail changes — whether made by hand in

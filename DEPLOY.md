@@ -153,6 +153,7 @@ web-accessible status page without app load.
 | Order stock | Purchases tab → *New PO* → lines with quantities + unit costs → Save draft / Place order. |
 | Receive a delivery | Purchases tab → order → *Receive* → enter what arrived (serials for serialized lines); stock and weighted cost update on post. |
 | See why a price changed | Products → 📈 on any item (admin/manager) — every cost/retail edit and each PO-receipt cost update with who, when, and the order. |
+| Send a customer their statement | Customers → ledger → *Statement* (admin/manager) — chronological debit/credit lines with running balance, printable and exportable as CSV. |
 | Refund a sale | History (admin/manager) → the sale → *Refund items*. Cashiers cannot refund. |
 | See conflicts | Home → amber banner → Review → Keep winner / Dismiss. |
 | Bulk recall/restock | Apps Script `setup` re-seed (writes a backup CSV of transactions to Drive first). |

@@ -171,6 +171,7 @@ demotion takes effect at the first request after the change (no 12-hour lag).
 | `/api/reports`, `/api/drive/export` (store scope) | admin, manager (cashiers export only their own rows) |
 | `/api/shifts` (all shifts) | admin, manager (cashiers see their own) |
 | `/api/customers/ledger`, `/api/customers/receivables` | admin, manager |
+| `/api/customers/statement` | admin, manager |
 | `/api/suppliers`, `/api/purchase-orders`, `/api/purchase-orders/detail`, `/receive`, `/cancel` | admin, manager |
 | `/api/price-history` | admin, manager |
 | `/api/admin/products`, `/serials`, `/inventory`, `/products/patch` | admin, manager |

@@ -1525,6 +1525,71 @@ section('discounts & tax');
 }
 
 {
+  section('customer statement of account');
+
+  const stAdmLogin = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] });
+  const stAdmTok = stAdmLogin.data.token;
+  const stAdmUid = stAdmLogin.data.user.id;
+  const stCasTok = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const stella = req('/api/admin/customers', { name: 'Stella One', phone: '070-444-0001' }, { session: stAdmTok });
+  const stId = stella.data.customer.id;
+  const stProd = req('/api/products', {}, { session: stAdmTok }).data.find((p) => p.sku === 'CB-USBC-1M');
+  const stAt = (msAgo) => new Date(Date.now() - msAgo).toISOString();
+
+  const pushSt = (batch, session = stAdmTok) => req('/api/sync/push', { deviceId: 'dev-st-1', batch }, { session });
+
+  check('statement sale 1 accepted', pushSt([{
+    clientTxId: 'tx-st-1', userId: stAdmUid, customerId: stId, grandTotal: 40,
+    tenders: [{ type: 'net30', amount: 40 }],
+    createdAt: stAt(2 * 86400000),
+    items: [{ productId: stProd.id, quantity: 4, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+  check('statement sale 2 accepted', pushSt([{
+    clientTxId: 'tx-st-2', userId: stAdmUid, customerId: stId, grandTotal: 60,
+    tenders: [{ type: 'net30', amount: 60 }],
+    createdAt: stAt(86400000),
+    items: [{ productId: stProd.id, quantity: 6, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+  check('statement collection accepted', pushSt([{
+    clientTxId: 'tx-st-pay', userId: stAdmUid, kind: 'payment', customerId: stId, grandTotal: 25,
+    tenders: [{ type: 'transfer', amount: 25 }],
+    createdAt: stAt(30 * 60000), items: [],
+  }]).data.results[0].accepted === true);
+  check('statement refund accepted', pushSt([{
+    clientTxId: 'tx-st-rf', userId: stAdmUid, kind: 'refund', originalClientTx: 'tx-st-1', customerId: stId, grandTotal: 15,
+    tenders: [{ type: 'store_credit', amount: 15 }],
+    createdAt: stAt(15 * 60000),
+    items: [{ productId: stProd.id }],
+  }]).data.results[0].accepted === true);
+
+  check('cashier cannot read a statement',
+    req('/api/customers/statement', {}, { session: stCasTok, params: { customerId: stId } }).status === 403);
+  check('statement requires a customerId',
+    req('/api/customers/statement', {}, { session: stAdmTok }).status === 400);
+  check('statement 404s unknown customers',
+    req('/api/customers/statement', {}, { session: stAdmTok, params: { customerId: 'no-such-customer' } }).status === 404);
+
+  const stmt = req('/api/customers/statement', {}, { session: stAdmTok, params: { customerId: stId } }).data;
+  check('statement opens at zero and closes at the ledger balance',
+    stmt.opening === 0 && Math.abs(stmt.closing - 60) < 0.001, JSON.stringify({ o: stmt.opening, c: stmt.closing }));
+  check('statement lists activity in chronological order',
+    stmt.items.length === 4
+      && stmt.items[0].reference === 'tx-st-1'
+      && stmt.items[3].reference === 'tx-st-rf',
+    JSON.stringify(stmt.items.map((i) => i.reference)));
+  check('statement running balance reconciles (50\u2192\u2026)',
+    stmt.items.map((i) => i.balance).join('/') === '40/100/75/60'
+      && stmt.items[0].debit === 40
+      && stmt.items[2].credit === 25
+      && stmt.items[2].kind === 'payment'
+      && stmt.items[3].credit === 15 && stmt.items[3].kind === 'refund');
+check('statement carries the changer/cashier',
+    stmt.items[0].cashier === 'Tariq Al-Sayed' && stmt.items[2].description.indexOf('Payment received') === 0);
+  check('statement balance matches the ledger balance',
+    Math.abs(stmt.closing - req('/api/customers/ledger', {}, { session: stAdmTok, params: { customerId: stId } }).data.balance) < 0.001);
+}
+
+{
   section('till shifts');
 
   const shAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;

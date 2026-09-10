@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.8.0** — price history & tracking (`2026-09-09`) |
-| Validation bar | `backend-sim` **PASS 318 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.9.0** — customer statements (`2026-09-09`) |
+| Validation bar | `backend-sim` **PASS 330 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~3,340 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell |
 | Node | ≥ 20 (dev/test only) |
@@ -71,6 +71,11 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   product — `create` baseline, `patch` on manual edit (no-op quiet), `po` on
   weighted-cost receipt (tagged with PO number) — written atomically beside the
   product update and browsable from Products 📈 via `/api/price-history`.
+- **v1.9.0** Customer statements: chronological debit/credit statement of
+  account with running balance (sales on account debit; store-credit refunds
+  and collections credit) via `/api/customers/statement`, closing exactly on
+  the ledger balance; printed on 80 mm thermal or exported to CSV (formula-
+  injection guard) from Customers → ledger → *Statement*.
 - **v1.7.1** Post-review hardening: **refunds now admin/manager-only**;
   role changes revoke sessions immediately; Drive export no longer counts
   purchase receipts as SALES and nets collections as money-in (`COLLECTIONS`
@@ -154,14 +159,14 @@ Status of every finding class:
 
 1. **Roadmap (user-directed order):**
    - ~~**Price history & tracking**~~ — shipped in **v1.8.0**.
-   - **Customer statements** — printable/exportable per-customer statement of
-     account (next revision), then **aging inventory** (stock aging) — user
-     flagged "especially aging inventory".
+   - ~~**Customer statements**~~ — shipped in **v1.9.0**.
+   - **Aging inventory** (stock aging) — next revision; user flagged
+     "especially aging inventory".
 2. **Deploy current version** — re-deploy `backend/Code.gs` as the Apps Script
    Web App (new `PriceHistory` tab auto-creates on first read; `setup`
    re-seed also works, it backs up to Drive first) and make sure Cloudflare
    Pages is serving `public/` (no build, output dir `public`). Hardware
-   terminals will pick up the v1.8.0 shell automatically on next load.
+   terminals will pick up the v1.9.0 shell automatically on next load.
 3. Optionally knock down the deferred hardening list above (lock-scope + VOIDED
    re-push idempotency are the two with real teeth).
 4. Consider a client test harness for `money.js`/`sync.js` (biggest test gap).

@@ -793,6 +793,23 @@ button:disabled { cursor: default; }
 .ledger-bal b, .ledger-bal strong { font-size: 16px; }
 .lg-txs { display: flex; flex-direction: column; }
 .lg-tx { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.ledger-actions { display: flex; gap: 8px; margin: 4px 0 10px; }
+.stmt-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.stmt-bal { text-align: right; }
+.stmt-bal span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; font-weight: 700; }
+.stmt-bal strong { font-size: 20px; }
+.stmt-actions { display: flex; gap: 8px; margin: 10px 0 4px; }
+.stmt-table { margin-top: 6px; border-top: 1px solid var(--line); }
+.stmt-row { display: flex; gap: 6px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 12px; align-items: baseline; }
+.stmt-row > span { flex: 0 0 62px; }
+.stmt-row > span:nth-child(2) { flex: 1 1 auto; min-width: 0; }
+.stmt-row > .r { text-align: right; flex: 0 0 56px; }
+.stmt-row > .r.b { font-weight: 800; }
+.stmt-th { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 800; }
+.stmt-desc i { display: block; color: var(--muted); font-style: normal; font-size: 10px; }
+.stmt-line { border-bottom: 1px dashed var(--line); padding: 4px 0; font-size: 12px; }
+.stmt-line span { display: block; }
+.receipt-total { font-weight: 800; margin-top: 8px; }
 .ph-body { max-height: 55vh; overflow-y: auto; margin: 12px 0; }
 .ph-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .ph-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
