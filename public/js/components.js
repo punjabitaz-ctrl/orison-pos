@@ -65,3 +65,63 @@ export function appHeaderHtml({ storeName, userName, role } = {}) {
       <button id="appUser" class="ab-user" type="button" aria-label="${esc(name || 'Account')}" title="${esc(name)}${role ? ' · ' + esc(role) : ''}">${esc(initial)}</button>
     </div>`;
 }
+
+/* Category identity is a colour, since the catalog carries no images. Hashed
+   from the name so the same category is the same colour on every screen and
+   every terminal, with no palette to maintain. */
+const CAT_COLORS = ['#d97706', '#0ea5e9', '#059669', '#7c3aed', '#e11d48', '#0891b2', '#65a30d', '#c2410c', '#4f46e5', '#0d9488'];
+
+export function catColor(category) {
+  const c = String(category == null ? '' : category);
+  let n = 0;
+  for (let i = 0; i < c.length; i++) n = (n * 31 + c.charCodeAt(i)) >>> 0;
+  return CAT_COLORS[n % CAT_COLORS.length];
+}
+
+export function categoryChip({ label, active } = {}) {
+  const name = String(label == null ? '' : label);
+  const dot = name === 'All' ? '' : `<span class="chip-dot" style="background:${catColor(name)}"></span>`;
+  return `<button class="chip${active ? ' on' : ''}" data-cat="${esc(name)}" type="button">${dot}${esc(name)}</button>`;
+}
+
+function lockedFlag(p) {
+  return p && (p.locked === true || p.locked === 1 || String(p.locked) === '1');
+}
+
+export function productTile(product, { fmt } = {}) {
+  const p = product || {};
+  const money = fmt || ((v) => String(v));
+  const isService = p.itemType === 'service';
+  const avail = p.isSerialized ? (p.serials || []).length : (Number(p.onHand) || 0);
+  const out = !isService && avail <= 0;
+  const stock = isService
+    ? '<span class="pt-stock pt-service">Service</span>'
+    : `<span class="pt-stock${out ? ' pt-out' : ''}">${out ? 'Out of stock' : (p.isSerialized ? avail + ' units' : avail + ' in stock')}</span>`;
+  return `
+    <button class="prod-card${out ? ' out' : ''}" data-add="${esc(p.id)}" type="button">
+      <span class="pt-cat" style="background:${catColor(p.category)}">${esc(p.category)}</span>
+      <span class="pt-name">${esc(p.name)}</span>
+      <span class="pt-foot">
+        <span class="pt-price">${esc(money(p.retailPrice))}</span>
+        ${stock}
+      </span>
+      ${p.isSerialized ? '<span class="pt-badge">IMEI</span>' : ''}
+      ${lockedFlag(p) ? '<span class="pt-badge pt-lock">Locked</span>' : ''}
+    </button>`;
+}
+
+/* The running total, pinned above the tab bar on phones and tablets. Its body
+   opens the full cart; its button charges. Nothing at all when the cart is
+   empty - a bar reading "0 items" is just a smaller way to be in the way. */
+export function cartBar({ count, total, fmt } = {}) {
+  const n = Number(count) || 0;
+  if (n <= 0) return '';
+  const money = fmt || ((v) => String(v));
+  return `
+    <button class="cb-open" data-open-cart type="button">
+      <span class="cb-count">${n}</span>
+      <span class="cb-label">${n} item${n === 1 ? '' : 's'}</span>
+      <strong class="cb-total">${esc(money(total))}</strong>
+    </button>
+    <button class="btn cb-charge" data-charge type="button">Charge</button>`;
+}

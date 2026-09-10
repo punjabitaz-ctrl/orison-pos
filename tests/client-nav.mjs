@@ -154,3 +154,85 @@ test('appHeaderHtml()', async (t) => {
     assert.equal(typeof appHeaderHtml(), 'string');
   });
 });
+
+import { catColor, categoryChip, productTile, cartBar } from '../public/js/components.js';
+
+const money = (v) => '$' + Number(v || 0).toFixed(2);
+
+test('catColor()', async (t) => {
+  await t.test('the same category always gets the same colour', () => {
+    assert.equal(catColor('Phones'), catColor('Phones'));
+  });
+  await t.test('different categories generally differ', () => {
+    const seen = new Set(['Phones', 'Cables', 'Audio', 'Laptops', 'Tablets'].map(catColor));
+    assert.ok(seen.size >= 4, 'too many collisions across five common categories');
+  });
+  await t.test('always returns a hex colour, even for empty or odd input', () => {
+    for (const c of ['', undefined, null, 'A', 'a very long category name indeed']) {
+      assert.match(catColor(c), /^#[0-9a-f]{6}$/i, `bad colour for ${JSON.stringify(c)}`);
+    }
+  });
+});
+
+test('categoryChip()', async (t) => {
+  await t.test('carries the category and marks the active one', () => {
+    assert.ok(categoryChip({ label: 'Audio', active: true }).includes('data-cat="Audio"'));
+    assert.ok(categoryChip({ label: 'Audio', active: true }).includes(' on'));
+    assert.ok(!categoryChip({ label: 'Audio', active: false }).includes(' on'));
+  });
+  await t.test('escapes the label', () => {
+    assert.ok(!categoryChip({ label: '<b>x' }).includes('<b>x'));
+  });
+});
+
+test('productTile()', async (t) => {
+  const base = { id: 'p1', name: 'USB-C Cable', category: 'Cables', retailPrice: 9.99, onHand: 4, itemType: 'product' };
+
+  await t.test('shows name, price and stock, and routes by id', () => {
+    const html = productTile(base, { fmt: money });
+    assert.ok(html.includes('data-add="p1"'));
+    assert.ok(html.includes('USB-C Cable'));
+    assert.ok(html.includes('$9.99'));
+    assert.ok(html.includes('4'));
+  });
+  await t.test('marks an out-of-stock product without removing the control', () => {
+    const html = productTile({ ...base, onHand: 0 }, { fmt: money });
+    assert.ok(html.includes('out'), 'needs the dimmed class');
+    assert.ok(!html.includes('disabled'), 'stays tappable so the toast can explain why');
+  });
+  await t.test('a serialized product counts its serials and carries the IMEI badge', () => {
+    const html = productTile({ ...base, isSerialized: true, serials: ['a', 'b'], onHand: 99 }, { fmt: money });
+    assert.ok(html.includes('IMEI'));
+    assert.ok(html.includes('2'), 'serial count, not the stale onHand');
+  });
+  await t.test('a service carries no stock figure', () => {
+    const html = productTile({ ...base, itemType: 'service', onHand: 0 }, { fmt: money });
+    assert.ok(html.includes('Service'));
+    assert.ok(!html.includes('in stock'));
+  });
+  await t.test('a locked product says so', () => {
+    assert.ok(productTile({ ...base, locked: 1 }, { fmt: money }).includes('Locked'));
+  });
+  await t.test('escapes the name and the category', () => {
+    const html = productTile({ ...base, name: '<script>x</script>', category: '"><b>' }, { fmt: money });
+    assert.ok(!html.includes('<script>x'));
+    assert.ok(html.includes('&lt;script&gt;'));
+  });
+});
+
+test('cartBar()', async (t) => {
+  await t.test('shows the count and the total', () => {
+    const html = cartBar({ count: 3, total: 124, fmt: money });
+    assert.ok(html.includes('3'));
+    assert.ok(html.includes('$124.00'));
+    assert.ok(html.includes('data-open-cart'));
+    assert.ok(html.includes('data-charge'));
+  });
+  await t.test('pluralises honestly', () => {
+    assert.ok(cartBar({ count: 1, total: 5, fmt: money }).includes('1 item'));
+    assert.ok(!cartBar({ count: 1, total: 5, fmt: money }).includes('1 items'));
+  });
+  await t.test('an empty cart renders nothing at all', () => {
+    assert.equal(cartBar({ count: 0, total: 0, fmt: money }), '');
+  });
+});
