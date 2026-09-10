@@ -5,6 +5,32 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-09-09
+
+Buy stock like an office and receive it like a warehouse. Suppliers, purchase
+orders, and receipts that post inventory in — with a cost that actually
+accounts for what you paid.
+
+### Added
+
+- **Suppliers.** `/api/suppliers` (manager / admin) lists and creates vendors
+  with phone, email, and payment terms.
+- **Purchase orders.** `/api/purchase-orders` builds an order against a
+  supplier with product lines, quantities, unit costs, a discount percent,
+  expected date, and a note. Orders live as **DRAFT** until placed as
+  **ORDERED**, then advance to **PARTIAL** / **RECEIVED** as stock arrives, or
+  can be **CANCELLED** from draft or ordered.
+- **Receiving.** `/api/purchase-orders/receive` posts what actually arrived:
+  `on_hand` climbs, cost updates by weighted average against the current stock,
+  serialized lines demand one serial number per unit, and each receipt writes a
+  `purchase` row to the ledger so deliveries have a paper trail that never
+  touches drawer math. Over-receipts and double-registered serials are refused.
+- **Purchases screen.** A manager tab with suppliers, the order list (PO
+  number, vendor, status chip, received/ordered counts), a New PO editor
+  (product picker prefilled with current cost, live subtotal/total), an order
+  detail view, and a receive dialog that validates quantities and serials
+  before posting.
+
 ## [1.6.0] — 2026-09-09
 
 Every number in the business, on one screen, recomputed from the ledger the

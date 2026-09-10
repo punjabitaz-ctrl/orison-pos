@@ -1700,6 +1700,89 @@ section('discounts & tax');
   check('topCustomers carry period spend + live balance', wdgCust && near(wdgCust.spent, gc) && wdgCust.count === 1, JSON.stringify(rep.topCustomers));
 }
 
+{
+  section('purchase orders & suppliers');
+
+  const poAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const poMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const poCash = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+
+  check('cashier cannot list suppliers', req('/api/suppliers', {}, { session: poCash }).status === 403);
+  check('cashier cannot create a PO', req('/api/purchase-orders', { supplierId: 'x', lines: [] }, { session: poCash }).status === 403);
+  check('cashier cannot receive stock', req('/api/purchase-orders/receive', { id: 'x', lines: [] }, { session: poCash }).status === 403);
+
+  const acme = req('/api/suppliers', { name: 'Acme Wholesale', phone: '(555) 777-8899', paymentTerms: 'Net 30' }, { session: poAdm });
+  check('admin can add a supplier', !!acme.data && !!acme.data.id);
+  const dupSup = req('/api/suppliers', { name: 'Acme Wholesale' }, { session: poMgr });
+  check('duplicate supplier name rejected', dupSup.status === 409);
+  check('empty supplier name rejected', req('/api/suppliers', { name: '  ' }, { session: poMgr }).status === 400);
+
+  const supList = req('/api/suppliers', {}, { session: poMgr }).data.suppliers;
+  const acmeRow = supList.find((s) => s.name === 'Acme Wholesale');
+  check('seeded + added suppliers list for managers', supList.some((s) => s.name === 'Swift Supplies') && !!acmeRow && acmeRow.paymentTerms === 'Net 30');
+
+  const mkProd = (name, sku, o) => req('/api/admin/products', {
+    name, sku, upc: o.upc || '', category: o.category || 'Accessories',
+    costPrice: o.cost || 0, retailPrice: o.retail || 0, isSerialized: !!o.serialized, onHand: 0,
+  }, { session: poAdm }).data.id;
+  const mouseId = mkProd('PO Mouse', 'PO-MOU-01', { cost: 12, retail: 29 });
+  const lapId = mkProd('PO Laptop', 'PO-LAP-01', { cost: 400, retail: 700, serialized: true });
+
+  check('unknown supplier rejected', req('/api/purchase-orders', { supplierId: 'nope', lines: [{ productId: mouseId, quantity: 1, unitCost: 11 }], status: 'ORDERED' }, { session: poMgr }).status === 404);
+  check('empty PO lines rejected', req('/api/purchase-orders', { supplierId: acmeRow.id, lines: [], status: 'ORDERED' }, { session: poMgr }).status === 400);
+  check('unknown product line rejected', req('/api/purchase-orders', { supplierId: acmeRow.id, lines: [{ productId: 'nope', quantity: 1, unitCost: 5 }], status: 'ORDERED' }, { session: poMgr }).status === 400);
+  check('duplicate product line rejected', req('/api/purchase-orders', { supplierId: acmeRow.id, lines: [{ productId: mouseId, quantity: 1, unitCost: 5 }, { productId: mouseId, quantity: 2, unitCost: 5 }], status: 'ORDERED' }, { session: poMgr }).status === 400);
+
+  const ordered = req('/api/purchase-orders', {
+    supplierId: acmeRow.id,
+    lines: [{ productId: mouseId, quantity: 10, unitCost: 11 }, { productId: lapId, quantity: 2, unitCost: 390 }],
+    discountPct: 5, status: 'ORDERED', expectedDate: '2026-10-01', note: 'restock run',
+  }, { session: poMgr });
+  check('ordered PO created with computed total', ordered.data.status === 'ORDERED' && Math.abs(ordered.data.total - 845.5) < 0.01, JSON.stringify(ordered.data));
+  const poId = ordered.data.id;
+
+  const orders = req('/api/purchase-orders', {}, { session: poAdm }).data.orders;
+  const poRow = orders.find((o) => o.id === poId);
+  check('PO list carries supplier + quantities', !!poRow && poRow.supplierName === 'Acme Wholesale' && poRow.itemCount === 2 && poRow.orderedQty === 12 && poRow.receivedQty === 0 && poRow.expectedDate === '2026-10-01');
+  check('cashier cannot read PO list', req('/api/purchase-orders', {}, { session: poCash }).status === 403);
+
+  const detail0 = req('/api/purchase-orders/detail', {}, { params: { id: poId }, session: poMgr }).data.order;
+  check('detail shows remaining > 0 with onHand snapshots', detail0.lines.every((l) => l.remaining === l.quantity) && detail0.lines[0].unitCost === 11 && detail0.supplierName === 'Acme Wholesale');
+  check('detail of unknown order 404s', req('/api/purchase-orders/detail', {}, { params: { id: 'nope' }, session: poMgr }).status === 404);
+
+  const recv1 = req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: mouseId, quantity: 4 }] }, { session: poAdm });
+  check('partial receipt posts stock', recv1.data.status === 'PARTIAL' && recv1.data.receivedValue === 44);
+  check('over-receipt rejected', req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: mouseId, quantity: 99 }] }, { session: poAdm }).status === 400);
+
+  const lapRecv = req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: lapId, quantity: 1, serialNumbers: ['PO-SN-0001'] }] }, { session: poAdm });
+  check('serialized stock intake registers a serial', lapRecv.data.status === 'PARTIAL' && lapRecv.data.receivedValue === 390);
+  check('duplicate serial rejected', req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: lapId, quantity: 1, serialNumbers: ['PO-SN-0001'] }] }, { session: poAdm }).status === 409);
+  check('serial count mismatch rejected', req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: lapId, quantity: 1, serialNumbers: [] }] }, { session: poAdm }).status === 400);
+
+  const fin = req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: mouseId, quantity: 6 }, { productId: lapId, quantity: 1, serialNumbers: ['PO-SN-0002'] }] }, { session: poAdm });
+  check('full receipt advances order to RECEIVED', fin.data.status === 'RECEIVED' && Math.abs(fin.data.receivedValue - 456) < 0.01);
+  check('receiving a received order rejected', req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: mouseId, quantity: 1 }] }, { session: poAdm }).status === 409);
+
+  const prods = req('/api/products', {}, { session: poMgr }).data;
+  const mouseAfter = prods.find((p) => p.id === mouseId);
+  const lapAfter = prods.find((p) => p.id === lapId);
+  check('received stock bumped on_hand + weighted cost', mouseAfter.onHand === 10 && Math.abs(mouseAfter.costPrice - 11) < 0.01, JSON.stringify(mouseAfter));
+  check('serialized product on_hand = received serials', lapAfter.onHand === 2 && lapAfter.serials.length === 2 && lapAfter.serials.includes('PO-SN-0002'));
+
+  const ledger = req('/api/transactions', {}, { params: { limit: '500' }, session: poMgr }).data.transactions;
+  const purTxs = ledger.filter((t) => t.kind === 'purchase' && t.counterparty === 'Acme Wholesale');
+  check('each receipt leaves a purchase trail in the ledger', purTxs.length === 3 && purTxs.every((t) => t.note.includes(poRow.poNumber)), purTxs.map((t) => t.grandTotal).join(','));
+  const purTotal = purTxs.reduce((s, t) => s + t.grandTotal, 0);
+  check('purchase trail sums to received value', Math.abs(purTotal - 890) < 0.01);
+
+  const draft = req('/api/purchase-orders', { supplierId: acmeRow.id, lines: [{ productId: mouseId, quantity: 1, unitCost: 13 }], status: 'DRAFT' }, { session: poMgr });
+  check('draft PO created', draft.data.status === 'DRAFT');
+  check('draft can be cancelled', req('/api/purchase-orders/cancel', { id: draft.data.id }, { session: poAdm }).data.status === 'CANCELLED');
+  check('cancelling twice rejected', req('/api/purchase-orders/cancel', { id: draft.data.id }, { session: poMgr }).status === 409);
+  check('cancelling a received order rejected', req('/api/purchase-orders/cancel', { id: poId }, { session: poAdm }).status === 409);
+  check('cancel of unknown order 404s', req('/api/purchase-orders/cancel', { id: 'nope' }, { session: poAdm }).status === 404);
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

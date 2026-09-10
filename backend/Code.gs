@@ -90,6 +90,11 @@ function dispatch_(action, session, payload, params) {
     case '/api/admin/inventory': return adminInventory_(session, payload);
     case '/api/admin/products/patch': return adminProductsPatch_(session, payload);
     case '/api/admin/store':   return adminStore_(session, payload);
+    case '/api/suppliers':      return suppliers_(session, payload);
+    case '/api/purchase-orders': return purchaseOrders_(session, payload);
+    case '/api/purchase-orders/detail': return purchaseOrderDetail_(session, params);
+    case '/api/purchase-orders/receive': return purchaseOrderReceive_(session, payload);
+    case '/api/purchase-orders/cancel': return purchaseOrderCancel_(session, payload);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     default:
       throw statusError_(404, 'Unknown action: ' + action);
@@ -310,6 +315,8 @@ var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id',
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
+var SUPPLIER_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'address', 'payment_terms', 'active', 'created_at'];
+var PO_HEADERS = ['id', 'store_id', 'supplier_id', 'po_number', 'order_date', 'expected_date', 'status', 'items_json', 'received_json', 'subtotal', 'discount_pct', 'tax_amount', 'total', 'note', 'created_by', 'created_at', 'updated_at'];
 
 function spreadSheet_() {
   var props = PropertiesService.getScriptProperties();
@@ -653,6 +660,19 @@ function seed_() {
   sheet_('Conflicts', CONFLICT_HEADERS);
   sheet_('Customers', CUSTOMERS_HEADERS);
   sheet_('Shifts', SHIFTS_HEADERS);
+  sheet_('Suppliers', SUPPLIER_HEADERS);
+  sheet_('PurchaseOrders', PO_HEADERS);
+  appendRows_('Suppliers', SUPPLIER_HEADERS, [{
+    id: Utilities.getUuid(),
+    store_id: storeId,
+    name: 'Swift Supplies',
+    phone: '(555) 020-0202',
+    email: 'sales@swiftsupplies.example.com',
+    address: '9 Industrial Avenue',
+    payment_terms: 'Net 30',
+    active: 1,
+    created_at: now,
+  }]);
 }
 
 /* ------------------------------------------------------------------ *
@@ -2107,6 +2127,347 @@ function reports_(session, params) {
     topProducts: byProductOut,
     topCustomers: topCust,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Purchase orders: supplier list, PO lifecycle, and stock-in posting.
+ *
+ *  suppliers   → POST creates/updates, GET (no payload) lists.
+ *  PO          → POST creates a DRAFT/ORDERED order, GET lists all.
+ *  detail      → full order incl. line snapshots + received quantities.
+ *  receive     → posts stock in (weighted-average cost, serial intake)
+ *                and advances the order DRAFT?→ORDERED→PARTIAL→RECEIVED.
+ *  cancel      → only from DRAFT or ORDERED.
+ *
+ *  Everything is manager/admin only. Receiving writes a kind='purchase'
+ *  transaction so stock that arrives has a ledger trail and the drawer
+ *  math never mistakes a delivery for a sale.
+ * ------------------------------------------------------------------ */
+
+function poSupplierMap_(supplierRows) {
+  var byId = {};
+  for (var i = 0; i < supplierRows.length; i++) byId[String(supplierRows[i].id)] = supplierRows[i];
+  return byId;
+}
+
+function suppliers_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  /* list mode */
+  if (!payload || !Object.keys(payload).length) {
+    var rows = readRows_('Suppliers', SUPPLIER_HEADERS);
+    rows.sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+    var store = getStore_();
+    return {
+      suppliers: rows.filter(function (r) { return String(r.store_id) === store.id; })
+        .map(function (r) {
+          return { id: String(r.id), name: String(r.name), phone: String(r.phone || ''), email: String(r.email || ''),
+            address: String(r.address || ''), paymentTerms: String(r.payment_terms || ''), active: String(r.active) === '1', createdAt: String(r.created_at || '') };
+        }),
+    };
+  }
+
+  var name = String(payload.name || '').trim();
+  if (!name) throw statusError_(400, 'Supplier name is required');
+  var existing = readRows_('Suppliers', SUPPLIER_HEADERS);
+  var store = getStore_();
+  for (var i = 0; i < existing.length; i++) {
+    if (String(existing[i].store_id) === store.id
+        && String(existing[i].name).toLowerCase() === name.toLowerCase()) {
+      throw statusError_(409, 'A supplier with that name already exists');
+    }
+  }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var now = new Date().toISOString();
+    var id = Utilities.getUuid();
+    appendRows_('Suppliers', SUPPLIER_HEADERS, [{
+      id: id, store_id: store.id, name: name,
+      phone: String(payload.phone || '').trim(), email: String(payload.email || '').trim(),
+      address: String(payload.address || '').trim(), payment_terms: String(payload.paymentTerms || '').trim(),
+      active: payload.active === false ? 0 : 1, created_at: now,
+    }]);
+    return { id: id };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function round2_(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+function poItemsFromPayload_(lines, createdBy) {
+  if (!Array.isArray(lines) || !lines.length) throw statusError_(400, 'At least one line is required');
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var prodById = {};
+  for (var i = 0; i < prodRows.length; i++) prodById[String(prodRows[i].id)] = prodRows[i];
+
+  var seen = {};
+  var items = [];
+  for (var j = 0; j < lines.length; j++) {
+    var ln = lines[j];
+    var pid = String(ln.productId || '');
+    var prod = prodById[pid];
+    if (!prod || String(prod.active) !== '1') throw statusError_(400, 'Unknown or inactive product');
+    if (String(prod.item_type) === 'service') throw statusError_(400, 'Cannot order services on a PO');
+    var qty = num_(ln.quantity);
+    if (!(qty > 0)) throw statusError_(400, 'Quantity must be greater than zero');
+    var unitCost = num_(ln.unitCost);
+    if (unitCost < 0) throw statusError_(400, 'Unit cost cannot be negative');
+    if (seen[pid]) throw statusError_(400, 'Duplicate line for the same product');
+    seen[pid] = true;
+    items.push({
+      productId: pid, name: String(prod.name || ''), sku: String(prod.sku || ''),
+      quantity: qty, unitCost: round2_(unitCost), taxable: String(prod.taxable) === '1',
+    });
+  }
+  return { items: items, prodById: prodById };
+}
+
+function purchaseOrders_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  if (!payload || !Object.keys(payload).length) {
+    var poRows = readRows_('PurchaseOrders', PO_HEADERS);
+    var suppliers = poSupplierMap_(readRows_('Suppliers', SUPPLIER_HEADERS));
+    poRows.sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); });
+    return {
+      orders: poRows.map(function (po) {
+        var items = itobjs_(po.items_json);
+        var received = itobjs_(po.received_json);
+        var ordered = 0, got = 0;
+        for (var i = 0; i < items.length; i++) { ordered += items[i].quantity || 1; got += (received[i] && received[i].quantity) || 0; }
+        return {
+          id: String(po.id), poNumber: String(po.po_number || ''), supplierName: (suppliers[String(po.supplier_id)] || {}).name || '',
+          supplierId: String(po.supplier_id || ''), status: String(po.status || 'DRAFT'),
+          expectedDate: String(po.expected_date || ''), orderDate: String(po.order_date || ''),
+          total: num_(po.total), itemCount: items.length, orderedQty: ordered, receivedQty: got,
+          createdAt: String(po.created_at || ''), note: String(po.note || ''),
+        };
+      }),
+    };
+  }
+
+  var supplierId = String(payload.supplierId || '');
+  var supplierRows = readRows_('Suppliers', SUPPLIER_HEADERS);
+  var supplier = null;
+  for (var s = 0; s < supplierRows.length; s++) {
+    if (String(supplierRows[s].id) === supplierId && String(supplierRows[s].active) === '1') { supplier = supplierRows[s]; break; }
+  }
+  if (!supplier) throw statusError_(404, 'Supplier not found');
+
+  var built = poItemsFromPayload_(payload.lines, session.uid);
+  var discount = Math.min(100, Math.max(0, num_(payload.discountPct)));
+  var taxAmount = Math.max(0, num_(payload.taxAmount));
+  var subtotal = 0;
+  for (var b = 0; b < built.items.length; b++) subtotal += built.items[b].quantity * built.items[b].unitCost;
+  subtotal = round2_(subtotal);
+  var total = round2_(subtotal * (1 - discount / 100) + taxAmount);
+  var status = String(payload.status || 'DRAFT') === 'ORDERED' ? 'ORDERED' : 'DRAFT';
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var now = new Date().toISOString();
+    var poRows2 = readRows_('PurchaseOrders', PO_HEADERS);
+    var seq = poRows2.length + 1;
+    var poNumber = 'PO-' + ('0000' + seq).slice(-4);
+    var id = Utilities.getUuid();
+    appendRows_('PurchaseOrders', PO_HEADERS, [{
+      id: id, store_id: getStore_().id, supplier_id: supplierId, po_number: poNumber,
+      order_date: now, expected_date: String(payload.expectedDate || '').slice(0, 10),
+      status: status, items_json: JSON.stringify(built.items), received_json: '[]',
+      subtotal: subtotal, discount_pct: discount, tax_amount: taxAmount, total: total,
+      note: String(payload.note || '').slice(0, 500), created_by: String(session.uid || ''),
+      created_at: now, updated_at: now,
+    }]);
+    return { id: id, poNumber: poNumber, status: status, total: total };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function purchaseOrderDetail_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var id = String((params && params.id) || '');
+  var poRows = readRows_('PurchaseOrders', PO_HEADERS);
+  var po = null;
+  for (var i = 0; i < poRows.length; i++) {
+    if (String(poRows[i].id) === id) { po = poRows[i]; break; }
+  }
+  if (!po) throw statusError_(404, 'Purchase order not found');
+
+  var suppliers = poSupplierMap_(readRows_('Suppliers', SUPPLIER_HEADERS));
+  var supplier = suppliers[String(po.supplier_id)] || {};
+  var items = itobjs_(po.items_json);
+  var received = itobjs_(po.received_json);
+  var prods = readRows_('Products', PRODUCT_HEADERS);
+  var onHandById = {};
+  for (var p = 0; p < prods.length; p++) onHandById[String(prods[p].id)] = num_(prods[p].on_hand);
+
+  var outItems = items.map(function (it, idx) {
+    var got = (received[idx] && received[idx].quantity) || 0;
+    return {
+      productId: String(it.productId || ''), name: String(it.name || ''), sku: String(it.sku || ''),
+      quantity: num_(it.quantity || 1), unitCost: num_(it.unitCost),
+      receivedQty: got, remaining: num_(it.quantity || 1) - got,
+      onHand: onHandById[String(it.productId || '')] == null ? null : onHandById[String(it.productId || '')],
+      serialized: String((prods.find(function (pr) { return String(pr.id) === String(it.productId); }) || {}).is_serialized) === '1',
+    };
+  });
+
+  return {
+    order: {
+      id: String(po.id), poNumber: String(po.po_number || ''), status: String(po.status || 'DRAFT'),
+      supplierId: String(po.supplier_id || ''), supplierName: String(supplier.name || ''),
+      orderDate: String(po.order_date || ''), expectedDate: String(po.expected_date || ''),
+      subtotal: num_(po.subtotal), discountPct: num_(po.discount_pct), taxAmount: num_(po.tax_amount), total: num_(po.total),
+      note: String(po.note || ''), createdAt: String(po.created_at || ''), updatedAt: String(po.updated_at || ''),
+      lines: outItems,
+    },
+  };
+}
+
+function purchaseOrderReceive_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  var id = String((payload && payload.id) || '');
+  var lines = Array.isArray(payload && payload.lines) ? payload.lines : [];
+  if (!id || !lines.length) throw statusError_(400, 'Order id and lines are required');
+
+  var poRows = readRows_('PurchaseOrders', PO_HEADERS);
+  var po = null;
+  for (var i = 0; i < poRows.length; i++) {
+    if (String(poRows[i].id) === id) { po = poRows[i]; break; }
+  }
+  if (!po) throw statusError_(404, 'Purchase order not found');
+  var status = String(po.status || 'DRAFT');
+  if (status !== 'ORDERED' && status !== 'PARTIAL') {
+    throw statusError_(409, 'Only an ordered purchase can be received');
+  }
+
+  var items = itobjs_(po.items_json);
+  var received = itobjs_(po.received_json);
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var prodById = {};
+  for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
+  var suppliers = poSupplierMap_(readRows_('Suppliers', SUPPLIER_HEADERS));
+  var supplierName = String((suppliers[String(po.supplier_id)] || {}).name || '');
+
+  /* index ordered lines by product */
+  var orderedById = {};
+  for (var oi = 0; oi < items.length; oi++) orderedById[String(items[oi].productId)] = items[oi];
+  var receivedById = {};
+  for (var ri = 0; ri < received.length; ri++) receivedById[String(received[ri].productId)] = received[ri];
+
+  var newReceived = [];
+  var patches = {};
+  var serialNew = [];
+  var serialSet = {};
+  var serialRows = readRows_('Serials', SERIAL_HEADERS);
+  for (var sr = 0; sr < serialRows.length; sr++) serialSet[String(serialRows[sr].serial_number)] = true;
+
+  var stamp = new Date().toISOString();
+  var receivedValue = 0;
+  var txItems = [];
+
+  var project = {};
+  for (var li = 0; li < lines.length; li++) {
+    var ln = lines[li];
+    var pid = String(ln.productId || '');
+    var ordered = orderedById[pid];
+    if (!ordered) throw statusError_(400, 'Line not on this order');
+    var prod = prodById[pid];
+    if (!prod || String(prod.active) !== '1') throw statusError_(400, 'Product is unknown or inactive');
+    var qty = num_(ln.quantity);
+    if (!(qty > 0)) throw statusError_(400, 'Quantity must be greater than zero');
+    var prevQty = num_(receivedById[pid] ? receivedById[pid].quantity : 0);
+    var remaining = num_(ordered.quantity) - prevQty;
+    if (qty > remaining) throw statusError_(400, 'Cannot receive more than the outstanding quantity');
+    var unitCost = num_(ordered.unitCost);
+    var sn = Array.isArray(ln.serialNumbers) ? ln.serialNumbers.map(function (s) { return String(s).trim(); }).filter(Boolean) : [];
+    if (String(prod.is_serialized) === '1') {
+      if (sn.length !== qty) throw statusError_(400, 'Serials required for serialized stock');
+      for (var s2 = 0; s2 < sn.length; s2++) {
+        if (serialSet[sn[s2]]) throw statusError_(409, 'Serial already registered: ' + sn[s2]);
+        serialSet[sn[s2]] = true;
+        serialNew.push({ id: Utilities.getUuid(), product_id: pid, serial_number: sn[s2], status: 'IN_STOCK', tx_id: '', updated_at: stamp });
+      }
+    }
+    newReceived.push({ productId: pid, quantity: prevQty + qty, serials: sn });
+    receivedValue += qty * unitCost;
+    for (var tx = 0; tx < qty; tx++) {
+      txItems.push({ productId: pid, name: String(ordered.name || ''), quantity: 1, unitPrice: unitCost, unitCost: unitCost, taxable: !(String(prod.taxable) === '0') });
+    }
+    if (String(prod.is_serialized) !== '1') {
+      var onHand = num_(prod.on_hand);
+      var newOnHand = onHand + qty;
+      var newCost = (onHand * num_(prod.cost_price) + qty * unitCost) / newOnHand;
+      if (!(newCost > 0)) newCost = unitCost;
+      patches[pid] = { on_hand: newOnHand, cost_price: round2_(newCost), updated_at: stamp };
+      project[pid] = { onHand: newOnHand, unitCost: round2_(newCost) };
+    } else {
+      project[pid] = { onHand: num_(prod.on_hand) + qty, unitCost: num_(prod.cost_price) };
+    }
+  }
+
+  /* all outstanding received? */
+  var allDone = items.every(function (it) {
+    var post = newReceived.find(function (r) { return String(r.productId) === String(it.productId); });
+    return post ? num_(post.quantity) >= num_(it.quantity) : num_(receivedById[String(it.productId)] || 0) >= num_(it.quantity);
+  });
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var merged = received.slice();
+    for (var m = 0; m < newReceived.length; m++) {
+      var hit = merged.find(function (r) { return String(r.productId) === String(newReceived[m].productId); });
+      if (hit) hit.quantity = newReceived[m].quantity;
+      else merged.push(newReceived[m]);
+    }
+    var newStatus = allDone ? 'RECEIVED' : 'PARTIAL';
+    applyPatches_('PurchaseOrders', PO_HEADERS, 'id', {
+      [id]: { received_json: JSON.stringify(merged), status: newStatus, updated_at: stamp },
+    });
+    applyPatches_('Products', PRODUCT_HEADERS, 'id', patches);
+    appendRows_('Serials', SERIAL_HEADERS, serialNew);
+    if (receivedValue > 0) {
+      appendRows_('Transactions', TX_HEADERS, [{
+        id: Utilities.getUuid(), store_id: getStore_().id, user_id: String(session.uid || ''), device_id: 'server',
+        client_tx_id: 'po-' + id.slice(0, 8) + '-' + stamp.slice(0, 10), kind: 'purchase',
+        original_client_tx: '', counterparty: supplierName, grand_total: round2_(receivedValue),
+        status: 'COMPLETED', tenders_json: '[]', items_json: JSON.stringify(txItems),
+        note: 'Received against ' + String(po.po_number || ''), created_at: new Date().toISOString(), subtotal: '', tax_amount: '', discount_pct: '', customer_id: '',
+      }]);
+    }
+    return {
+      id: id, status: newStatus, receivedValue: round2_(receivedValue), lines: newReceived.map(function (r) {
+        return { productId: String(r.productId), quantity: num_(r.quantity), onHand: project[String(r.productId)] ? project[String(r.productId)].onHand : null, unitCost: project[String(r.productId)] ? project[String(r.productId)].unitCost : null };
+      }),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function purchaseOrderCancel_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  var id = String((payload && payload.id) || '');
+  var poRows = readRows_('PurchaseOrders', PO_HEADERS);
+  var po = null;
+  for (var i = 0; i < poRows.length; i++) {
+    if (String(poRows[i].id) === id) { po = poRows[i]; break; }
+  }
+  if (!po) throw statusError_(404, 'Purchase order not found');
+  var status = String(po.status || 'DRAFT');
+  if (status !== 'DRAFT' && status !== 'ORDERED') throw statusError_(409, 'Only draft or ordered purchases can be cancelled');
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    applyPatches_('PurchaseOrders', PO_HEADERS, 'id', { [id]: { status: 'CANCELLED', updated_at: new Date().toISOString() } });
+    return { id: id, status: 'CANCELLED' };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /* ------------------------------------------------------------------ *
