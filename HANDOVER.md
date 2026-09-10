@@ -13,7 +13,7 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.12.0** — client test harness (`2026-09-09`) |
+| Current version | **v1.13.0** — theme polish + responsive shell (`2026-09-09`) |
 | Validation bar | `backend-sim` **PASS 359 / FAIL 0** · client units **PASS 154 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~3,340 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell |
@@ -109,6 +109,23 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `test:all`; the only new dependency is `fake-indexeddb`. Documents two
   float-drift facts of the client `round2` (`±1.005 → ±1`) that the
   sign-safe backend `round2_` does not share — a future money alignment target.
+- **v1.13.0** Theme polish + responsive shell: layered softer shadows
+  (`--shadow`/`--shadow-sm`/`--shadow-lg`), `--ease` motion curve, `--dur`
+  transitions, stronger header blur/saturation, 14px search radius + focus
+  ring, 40px chip targets, card hover lift, `:focus-visible` outlines,
+  tabular-numeral money alignment. **Desktop (≥1024px):** toggleable sidebar
+  replaces the bottom tabbar (240px expanded ↔ 64px icon rail, hamburger,
+  persisted in `localStorage` `orison:nav`, role-gated tabs + alerts badge
+  shared with the tabbar); boot now binds nav clicks on **all** `[data-tab]`
+  elements (both navs); `html[data-viewport]` = mobile/tablet/desktop via
+  `matchMedia` + `orison:viewport` event (bug: first paint on mobile skipped
+  the attribute because the default coincidentally matched — the attribute is
+  now set unconditionally); **dual-panel register** (sticky 440px embedded
+  cart right, shared `bindCart` renderer, sheet path untouched below 1024);
+  checkout renders as a right-anchored 440px sheet column (`root` gains
+  `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
+  from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
+  class so it never rendered — now toggles `.hidden`.
 - **v1.7.1** Post-review hardening: **refunds now admin/manager-only**;
   role changes revoke sessions immediately; Drive export no longer counts
   purchase receipts as SALES and nets collections as money-in (`COLLECTIONS`
@@ -221,18 +238,20 @@ Status of every finding class:
      cost-at-sale, discounts in breakdowns, store-TZ day windows).
    - ~~**Client test harness for `money.js`/`sync.js`**~~ — shipped in
      **v1.12.0** (154 unit checks across money/sync/db/alerts/ui).
-2. **Deploy current version** — v1.12.0 changes **no runtime files** (tests +
-   scripts + docs only), so no backend redeploy and Cloudflare Pages serves the
-   same shell. If you want the new `test:client` locally: `npm install` then
-   `npm run test:client`.
+2. **Deploy current version** — v1.13.0 changes **the public shell only**
+   (`public/` HTML/CSS/JS + `sw.js` VERSION bump). No backend redeploy; push
+   `public/` to Cloudflare Pages as usual and hardware terminals pick up the
+   v1.13.0 shell automatically on next load (SW drops the old cache). Nothing
+   to run locally unless you want a quick shell smoke:
+   `npm run serve` + a browser at ≥1024px.
 3. **Visual roadmap (user-approved order):**
    - ~~v1.12.0~~ **done** — client test harness.
-   - **v1.13.0** — theme polish + responsive infrastructure: typography/
-     spacing scales, softer shadows, refined transitions (same navy/gold);
-     **toggleable desktop sidebar** (collapsed icon rail ↔ expanded) replacing
-     the bottom tabbar at ≥1024px; **dual-panel register** (product grid left,
-     cart right on desktop); side-sheet checkout on wide screens; `app.js`
-     responsive state (`mobile`/`tablet`/`desktop`) via `matchMedia`.
+   - ~~v1.13.0~~ **done** — theme polish + responsive shell: typography/
+     spacing polish (same navy/gold), **toggleable desktop sidebar** (icon
+     rail ↔ expanded) replacing the bottom tabbar at ≥1024px, **dual-panel
+     register** (product grid left, cart right on desktop), right-side
+     checkout + sheets on wide screens, `app.js` responsive state
+     (`mobile`/`tablet`/`desktop`) via `matchMedia`.
    - **v1.14.0** — screen refresh + enhanced dashboard + staff tools: trend
      KPIs, hourly chart, top-seller table, shift summary; new staff screen
      (time clock, shift history, per-cashier performance); consistent spacing,

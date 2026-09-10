@@ -61,6 +61,8 @@ export const screen = {
     const syncState = await getSyncState();
 
     root.innerHTML = `
+      <div class="reg-wrap">
+        <div class="reg-catalog">
       <header class="scr-head">
         <div class="scr-title">
           <h2>Register</h2>
@@ -79,7 +81,10 @@ export const screen = {
         ${hasBarcodeDetector() ? '<button id="camBtn" class="icon-btn" title="Scan with camera">◉</button>' : ''}
       </div>
       <div class="chips" id="chips"></div>
-      <main class="grid" id="grid" tabindex="-1"></main>`;
+      <main class="grid" id="grid" tabindex="-1"></main>
+        </div>
+        <aside class="reg-cart" id="regCartPanel" aria-label="Cart"></aside>
+      </div>`;
 
     const searchInput = root.querySelector('#searchInput');
     const grid = root.querySelector('#grid');
@@ -249,10 +254,12 @@ export const screen = {
 
     function renderCart() {
       const totals = cartTotals();
-      const sheet = openSheet(`
+      const onDesktop = document.getElementById('regCartPanel')
+        && document.documentElement.dataset.viewport === 'desktop';
+      const markup = `
         <div class="cart-head">
           <h3>Cart <span class="pill">${totals.count}</span></h3>
-          <button class="icon-btn" data-close aria-label="Close">✕</button>
+          ${onDesktop ? '' : '<button class="icon-btn" data-close aria-label="Close">✕</button>'}
         </div>
         <div class="cart-lines">
           ${[...state.cart.values()].map((line) => {
@@ -284,9 +291,18 @@ export const screen = {
         <div class="cart-foot">
           <div class="cart-total"><span>Total</span><strong>${fmt(totals.total)}</strong></div>
           <button id="chargeBtn" class="btn btn-block" ${totals.count ? '' : 'disabled'}>Charge · ${fmt(totals.total)}</button>
-        </div>`);
+        </div>`;
 
-      sheet.querySelectorAll('[data-min], [data-plus], [data-remove], [data-disc]').forEach((b) => {
+      if (onDesktop) {
+        document.getElementById('regCartPanel').innerHTML = markup;
+        bindCart(document.getElementById('regCartPanel'));
+      } else {
+        bindCart(openSheet(markup));
+      }
+    }
+
+    function bindCart(rootEl) {
+      rootEl.querySelectorAll('[data-min], [data-plus], [data-remove], [data-disc]').forEach((b) => {
         b.addEventListener('click', () => {
           const line = [...state.cart.values()].find((l) => lineKeyOf(l) === b.dataset.key);
           if (!line) return;
@@ -299,11 +315,13 @@ export const screen = {
           renderCart();
         });
       });
-      sheet.querySelector('#chargeBtn').addEventListener('click', () => {
+      rootEl.querySelector('#chargeBtn').addEventListener('click', () => {
         document.getElementById('sheet').innerHTML = '';
+        const panel = document.getElementById('regCartPanel');
+        if (panel) panel.innerHTML = '';
         router.show('checkout');
       });
-      sheet.querySelector('[data-close]').addEventListener('click', () => {
+      rootEl.querySelector('[data-close]')?.addEventListener('click', () => {
         document.getElementById('sheet').innerHTML = '';
       });
     }
@@ -336,11 +354,17 @@ export const screen = {
 
     renderChips();
     renderGrid();
+    if (document.documentElement.dataset.viewport === 'desktop') renderCart();
     if (!('ontouchstart' in window)) searchInput.focus();
 
     const handleSync = () => { if (document.getElementById('searchInput')) { this.refreshProducts().then(renderGrid); } };
     window.addEventListener(SYNC_EVENT, handleSync);
+    const handleViewport = () => renderCart();
+    window.addEventListener('orison:viewport', handleViewport);
 
-    return () => window.removeEventListener(SYNC_EVENT, handleSync);
+    return () => {
+      window.removeEventListener(SYNC_EVENT, handleSync);
+      window.removeEventListener('orison:viewport', handleViewport);
+    };
   },
 };

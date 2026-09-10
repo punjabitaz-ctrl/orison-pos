@@ -5,6 +5,38 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] — 2026-09-09
+
+Theme polish + responsive infrastructure. The desktop terminal finally gets a
+real working layout: a persistent sidebar replaces the bottom tab bar, the
+register becomes a two-column sales floor (catalog left, live cart right), and
+checkout and detail sheets slide in as right-hand panels — while phones and
+tablets keep the familiar bottom bar and bottom-sheet flows untouched.
+
+### Changed
+
+- **Theme polish** — layered softer shadows (`--shadow`/`--shadow-sm`/`--shadow-lg`),
+  an eased motion curve (`--ease`), consistent `--dur` transitions, stronger
+  header blur + saturation, larger rounded search field with a focus ring,
+  40px chip touch targets, card hover lift on mouse devices, `:focus-visible`
+  outlines, and tabular-numeral alignment on every money figure.
+- **Sidebar shell (desktop ≥1024px)** — toggleable app nav replaces the bottom
+  tab bar: expanded 240px labels ↔ collapsed 64px icon rail, hamburger in the
+  rail header, choice persisted in `localStorage` (`orison:nav`). Role-gated
+  tabs, the active pill, and the alerts badge work identically in both navs.
+- **Responsive state** — `app.js` now tracks `html[data-viewport]` =
+  `mobile`/`tablet`/`desktop` via `matchMedia` and emits `orison:viewport` on
+  breakpoint crossings; the register listens and re-mounts its cart slot.
+- **Dual-panel register** — on desktop the catalog keeps the left column while
+  a sticky 440px cart panel sits right; on phones/tablets the cart still opens
+  as a bottom sheet (one shared `bindCart` renderer drives both).
+- **Checkout & sheets on wide screens** — checkout renders as a right-anchored
+  440px sheet column inside the page; detail/edit sheets slide in from the
+  right instead of the bottom.
+- **Fixed** — the alerts `tab-badge` was toggling a non-existent `.show` class
+  so the counter never appeared; it now toggles `.hidden` correctly in both
+  the tab bar and the sidebar.
+
 ## [1.12.0] — 2026-09-09
 
 Client unit test harness. The register-side money engine, sync queue, IndexedDB

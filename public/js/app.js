@@ -73,6 +73,9 @@ const router = {
       t.classList.toggle('on', t.dataset.tab === def.tab);
     });
     applyRoleTabs();
+    const tb = document.getElementById('tabbar');
+    const sb = document.getElementById('sidebar');
+    if (tb && sb) sb.classList.toggle('hidden', tb.classList.contains('hidden'));
     window.scrollTo(0, 0);
   },
 };
@@ -90,8 +93,10 @@ function refreshAlertBadge() {
   idb.getAll('products')
     .then((prods) => {
       const n = inventoryAlerts(prods).length;
-      const el = document.getElementById('alertsBadge');
-      if (el) { el.textContent = n > 99 ? '99+' : String(n); el.classList.toggle('show', n > 0); }
+      document.querySelectorAll('[data-tab="alerts"] .tab-badge').forEach((el) => {
+        el.textContent = n > 99 ? '99+' : String(n);
+        el.classList.toggle('hidden', n === 0);
+      });
     })
     .catch(() => {});
 }
@@ -126,8 +131,8 @@ async function boot() {
   }
   if (m && m.store) state.store = m.store;
 
-  // Tab bar.
-  document.getElementById('tabbar').querySelectorAll('.tab').forEach((tab) => {
+  // Tab bar + sidebar nav.
+  document.querySelectorAll('[data-tab]').forEach((tab) => {
     tab.addEventListener('click', () => router.show(tab.dataset.tab));
   });
 
@@ -154,6 +159,46 @@ boot().catch((err) => {
   const root = document.getElementById('screen');
   if (root) root.innerHTML = `<div class="empty"><p>Failed to boot: ${esc(err.message)}</p></div>`;
 });
+
+/* ---- Responsive state: html[data-viewport] = mobile | tablet | desktop ---- */
+let viewport = 'mobile';
+const viewportQueries = [
+  ['desktop', '(min-width: 1024px)'],
+  ['tablet', '(min-width: 720px) and (max-width: 1023px)'],
+  ['mobile', '(max-width: 719px)'],
+];
+function trackViewport() {
+  if (!('matchMedia' in window)) return;
+  const apply = () => {
+    const hit = viewportQueries.find(([, q]) => matchMedia(q).matches);
+    const v = hit ? hit[0] : 'mobile';
+    document.documentElement.dataset.viewport = v;
+    if (v !== viewport) {
+      viewport = v;
+      window.dispatchEvent(new CustomEvent('orison:viewport', { detail: viewport }));
+    }
+  };
+  viewportQueries.forEach(([, q]) => matchMedia(q).addEventListener('change', apply));
+  apply();
+}
+
+/* ---- Desktop sidebar: icon rail vs expanded, persisted per device ---- */
+function initSidebar() {
+  const root = document.documentElement;
+  const btn = document.getElementById('sbToggle');
+  if (!btn) return;
+  let nav = 'expanded';
+  try { nav = localStorage.getItem('orison:nav') === 'rail' ? 'rail' : 'expanded'; } catch (_) {}
+  root.dataset.nav = nav;
+  btn.addEventListener('click', () => {
+    nav = nav === 'expanded' ? 'rail' : 'expanded';
+    root.dataset.nav = nav;
+    try { localStorage.setItem('orison:nav', nav); } catch (_) {}
+  });
+}
+
+trackViewport();
+initSidebar();
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({

@@ -22,6 +22,7 @@ export const screen = {
   async render(ctx, root) {
     const { state, router } = ctx;
     document.getElementById('tabbar').classList.add('hidden');
+    root.classList.add('screen-checkout');
 
     // Best-effort store config (tax rate) — refresh asynchronously once we know
     // the checkout's tax may need a saved rate the state snapshot lacks.
@@ -415,5 +416,7 @@ export const screen = {
     });
 
     render();
+
+    return () => root.classList.remove('screen-checkout');
   },
 };

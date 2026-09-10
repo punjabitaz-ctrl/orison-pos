@@ -7,49 +7,50 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.12.0 — client test harness
+## Latest: v1.13.0 — theme polish + responsive shell
 
-**2026-09-09.** The register-side money engine, sync queue, IndexedDB layer,
-alert classifier, and UI formatters now have an automated suite. The backend
-had 359 checks; the client had **zero**. That gap is closed.
+**2026-09-09.** The desktop terminal finally gets a real working layout. A
+persistent sidebar replaces the bottom tab bar, the register becomes a
+two-column sales floor (catalog left, live cart right), and checkout and
+detail sheets slide in from the right — while phones and tablets keep the
+familiar bottom bar and bottom-sheet flows untouched.
 
 **What shipped**
 
-- `node:test` unit suites (154 checks, pure-Node, no new framework):
-  - **`money.js`** — rounding/drift edge cases, discount + tax math, and the
-    refund/payout builders against a mocked sync + fake IndexedDB.
-  - **`sync.js`** — outbox enqueue→push→SYNCED round-trip, offline
-    short-circuit, rejected→VOIDED with local stock restore.
-  - **`db.js`** — CRUD, `bulkPut`, and the `by_upc`/`by_sku`/`by_category`
-    indexes against a real in-memory IndexedDB (`fake-indexeddb`).
-  - **`alerts.js`** — severity classification, sort order, aging buckets.
-  - **`ui.js`** — currency formatting, HTML escaping, debounce.
-- `tests/helpers/setup-globals.mjs` — the browser-globals shim that makes
-  client ESM importable in Node, with an event-recording `dispatchEvent` and a
-  fetch-mock harness shaped like `api.js`'s envelope.
-- `npm run test:client` wired into `test:all`.
+- **Theme polish** — layered softer shadows, eased motion, stronger header
+  blur, focus rings, larger rounded search field, 40px chip targets, card
+  hover lift, and tabular-numeral alignment on every money figure (navy/gold
+  identity unchanged).
+- **Toggleable sidebar (desktop ≥1024px)** — expanded 240px labels ↔ collapsed
+  64px icon rail via the hamburger; choice persists in `localStorage`.
+  Role-gated tabs, active pill, and alerts badge work in both navs.
+- **Responsive state** — `html[data-viewport]` = `mobile`/`tablet`/`desktop`
+  via `matchMedia`, with an `orison:viewport` event cross-breakpoint.
+- **Dual-panel register** — desktop: catalog left + sticky 440px live cart
+  right; phones/tablets keep the bottom-sheet cart (one shared renderer).
+- **Checkout & sheets on wide screens** — checkout is a right-anchored 440px
+  sheet column; detail/edit sheets slide in from the right.
+- **Fixed** — the alerts badge was toggling a non-existent `.show` class so
+  the on-shelf counter never appeared; it now toggles `.hidden` correctly.
 
 **Validation:** backend-sim **PASS 359 / FAIL 0** · client units **PASS 154 / FAIL 0** ·
-pdf-smoke **PASS 19 / FAIL 0**.
+pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean on all touched JS.
+Shell smoke-tested headless at 1366/834/390px (21 assertions, 0 console errors).
 
 ### Deploying
 
 1. No backend change — `backend/Code.gs` is untouched this release.
-2. Cloudflare Pages keeps serving `public/` unchanged (`sw.js` version bump is
-   cosmetic; the shell is otherwise identical).
-3. No redeploy needed unless you want the new `test:client` script locally:
-
-```bash
-npm install      # pulls fake-indexeddb
-npm run test:client
-```
+2. Cloudflare Pages keeps serving `public/` as-is (no build). On next load,
+   the service worker serves the **v1.13.0** shell and drops the old cache.
+3. Nothing to run; terminals pick the new shell up automatically.
 
 ---
 
-## The road here (1.11.0 → 1.12.0)
+## The road here (1.12.0 → 1.13.0)
 
 | Version | What shipped |
 | --- | --- |
+| **v1.13.0** | **Theme polish + responsive shell** — layered shadows/easing/focus rings/tabular numerals; toggleable 240px↔64px sidebar at ≥1024px (persisted); `matchMedia` viewport state (`mobile`/`tablet`/`desktop`); dual-panel register (catalog + sticky 440px cart) and right-anchored checkout/sheets on desktop; alerts badge fixed (`.hidden` not `.show`). |
 | **v1.12.0** | **Client test harness** — 154 unit checks for money math, sync outbox/IPC, IndexedDB CRUD + indexes, alert classification, and UI formatters via `node:test` + `fake-indexeddb` (browser-globals shim in `tests/helpers`); `test:client` wired into `test:all`. |
 | **v1.11.0** | Offline sync hardening — VOIDED re-pushes re-evaluated and rewritten in place, same-batch dup `clientTxId`s resolve without double-applying, refunds see the same batch, GP uses captured cost-at-sale, category/product breakdowns apply discounts, store-TZ day windows, lock-scope fixes across PO/suppliers/products/serials/shifts, sign-safe `round2_`. |
 | **v1.10.0** | Inventory aging — how long on-hand stock has been sitting, in 0–30 / 31–60 / 61–90 / 90+ day buckets with units and value at cost (clock starts at creation, re-sets on PO receipts); read-only view from Products → Aging. |
