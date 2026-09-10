@@ -5,6 +5,53 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] — 2026-09-10
+
+Second of the three interface-v2 releases: the Sell screen and the charge
+screen. The running total stops disappearing.
+
+### Added
+
+- **Pinned cart bar** on phones and tablets — count, running total and Charge,
+  above the tab bar, updating as items go in. Its body opens the full cart
+  sheet; its button charges. It renders nothing at all when the cart is empty.
+- **`catColor()`, `categoryChip()`, `productTile()` and `cartBar()`** in
+  `components.js`, with 18 unit checks: colour stability per category, chip
+  active state, out-of-stock and IMEI badges, serialized items counting serials
+  rather than a stale `onHand`, services carrying no stock figure, and every
+  rendered field escaped.
+
+### Changed
+
+- **Adding an item no longer throws a sheet over the catalog.** The cart sheet
+  is now opened deliberately, and is only re-rendered while it is already open.
+  Desktop keeps its side panel, unchanged.
+- **Product tiles** — category colour as the identifying chip, a two-line name
+  clamp so long names stop breaking the grid, a larger price, and clearer stock,
+  IMEI and Locked badges.
+- **Category chips** carry the category's colour as a dot, matching the
+  launcher's language.
+- **Checkout** — the line list collapses behind a `N items · total` summary that
+  expands on tap, **Amount due** becomes the largest figure on the screen, and
+  Complete Sale is the only action styled as primary (Add tender is secondary).
+- `catColor()` had a second copy in `inventory.js`; both now import one.
+
+### Fixed
+
+- **The remove button in the cart has never worked.** Its handler read
+  `b.dataset.key`, but the ✕ carries its key in `data-remove`, so the line
+  lookup never matched and the click did nothing. `lineRemove()` also restored
+  stock without deleting the line from the cart. Both fixed: removing a line now
+  removes it, restores the stock, updates the bar, and closes the sheet when the
+  cart empties.
+
+### Note
+
+The spec called for out-of-stock tiles to be "dimmed and non-tappable". They
+ship dimmed but still tappable, because tapping raises a toast naming the item
+and why it cannot be sold. A dead control teaches nothing, and the premise of
+this redesign is that nothing should have to be learned.
+
 ## [1.17.0] — 2026-09-10
 
 First release of the interface-v2 rebuild

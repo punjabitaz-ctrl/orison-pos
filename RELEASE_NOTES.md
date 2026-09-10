@@ -7,7 +7,44 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.17.0 — shell & navigation
+## Latest: v1.18.0 — Sell & checkout
+
+**2026-09-10.** Second of the three interface-v2 releases. The running total
+stops disappearing, and the charge screen leads with the number that matters.
+
+**What shipped**
+
+- **A pinned cart bar** on phones and tablets — count, running total and Charge,
+  above the tab bar. Adding an item **no longer throws a sheet over the
+  catalog**: the bar updates, the catalog stays put, and the cart sheet opens
+  only when someone asks for it. Desktop keeps its side panel, unchanged.
+- **Product tiles** — category colour as the identifying chip, a two-line name
+  clamp so long names stop breaking the grid, a bigger price, clearer stock,
+  IMEI and Locked badges. Category chips carry the same colour as a dot.
+- **Checkout** — the line list collapses behind a `N items · total` summary,
+  **Amount due** is now the largest figure on the screen, and Complete Sale is
+  the only action styled as primary.
+
+**Bug found and fixed:** the ✕ on a cart line has never worked. Its handler read
+`b.dataset.key` while the button carries its key in `data-remove`, so the lookup
+never matched; `lineRemove()` also restored stock without deleting the line.
+Removing a line now actually removes it.
+
+**Validation:** backend-sim **PASS 446 / FAIL 0** (untouched) · client units
+**PASS 287 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean.
+Verified in-browser at 375px and 1280px: bar appears on add and hides when the
+cart empties, sheet opens on demand, quantity/discount/remove all work, scanner
+path unchanged (known SKU adds, unknown code toasts), desktop renders no bar.
+
+### Deploying
+
+1. **Front-end only.** `backend/Code.gs` is untouched — no Apps Script redeploy.
+2. Push `public/` to Cloudflare Pages as usual (no build step).
+3. Terminals pick up the **v1.18.0** shell on next load.
+
+---
+
+## v1.17.0 — shell & navigation
 
 **2026-09-10.** The first of three releases rebuilding the interface around the
 job staff actually do. The app opens on **Sell**, and one large button opens a

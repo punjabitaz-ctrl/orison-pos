@@ -1312,3 +1312,92 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; le
 @media (min-width: 560px) { .menu-grid { grid-template-columns: repeat(4, 1fr); } }
 @media (min-width: 900px) { .menu-grid { grid-template-columns: repeat(6, 1fr); } }
 @media (min-width: 1024px) { .appbar { padding-left: 20px; padding-right: 20px; } }
+
+/* =========================================================
+   v1.18.0 — Sell: chips, product tiles, pinned cart bar
+   ========================================================= */
+
+.chip { gap: 8px; font-weight: 700; }
+.chip-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.chip.on .chip-dot { box-shadow: 0 0 0 2px rgba(255, 255, 255, .55); }
+
+/* Product tile: colour is the identity, since the catalog has no images. */
+.prod-card { gap: 8px; padding: 12px; min-height: 132px; }
+.pt-cat {
+  align-self: flex-start;
+  font-size: 10px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase;
+  color: #fff; padding: 4px 8px; border-radius: 7px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pt-name {
+  font-size: 14px; font-weight: 650; line-height: 1.25;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pt-foot { margin-top: auto; display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.pt-price { font-weight: 800; font-size: 17px; font-variant-numeric: tabular-nums; }
+.pt-stock { font-size: 11px; color: var(--ok); font-weight: 700; white-space: nowrap; }
+.pt-stock.pt-out { color: var(--danger); }
+.pt-stock.pt-service { color: var(--navy-3); }
+.prod-card.out { opacity: .58; }
+.pt-badge {
+  position: absolute; top: 10px; right: 10px;
+  font-size: 9px; font-weight: 800; letter-spacing: .4px;
+  background: var(--navy); color: #fff;
+  padding: 3px 6px; border-radius: 6px;
+}
+.pt-badge.pt-lock { background: var(--danger); top: auto; bottom: 10px; }
+
+/* The running total, pinned above the tab bar. */
+.cartbar {
+  position: fixed; left: 0; right: 0;
+  bottom: calc(var(--tab-h) + env(safe-area-inset-bottom));
+  z-index: 35;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -8px 22px -10px rgba(15, 42, 66, .22);
+}
+.cb-open {
+  flex: 1; min-width: 0; min-height: 48px;
+  display: flex; align-items: center; gap: 10px;
+  text-align: left;
+}
+.cb-count {
+  width: 30px; height: 30px; border-radius: 9px; flex: none;
+  background: var(--navy); color: #fff;
+  font-size: 14px; font-weight: 800;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cb-label { font-size: 13px; font-weight: 700; color: var(--muted); }
+.cb-total { margin-left: auto; font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.cb-charge { flex: none; min-height: 48px; padding-left: 22px; padding-right: 22px; }
+@media (min-width: 1024px) { .cartbar { display: none !important; } }
+
+/* Checkout: the line list collapses so the amount due is the largest thing
+   on the screen, and only one action reads as primary. */
+.co-lines { margin-bottom: 4px; }
+.co-lines > summary {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; cursor: pointer;
+  min-height: 44px; padding: 10px 2px;
+  font-size: 14px; font-weight: 700;
+  list-style: none;
+}
+.co-lines > summary::-webkit-details-marker { display: none; }
+.co-lines > summary::after {
+  content: '▾'; color: var(--muted); font-size: 12px;
+  transition: transform var(--dur) var(--ease);
+}
+.co-lines[open] > summary::after { transform: rotate(180deg); }
+.co-lines > summary b { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+.co-remain {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; padding: 12px 0 4px;
+  border-top: 1px solid var(--line);
+}
+.co-remain span { font-size: 14px; font-weight: 700; color: var(--muted); }
+.co-remain strong { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.co-remain.co-clear strong { color: var(--ok); }

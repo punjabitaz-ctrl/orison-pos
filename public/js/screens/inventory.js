@@ -9,13 +9,8 @@ import { fmt, esc, toast, beep, debounce, openModal, closeModal, openSheet, clos
 import { bulkPriceModal, stockTakeModal, labelsModal, reorderModal } from './inventory-tools.js';
 import { pull, mergeProductLocal, SYNC_EVENT, getSyncState } from '../sync.js';
 import { reorderThreshold } from '../alerts.js';
+import { catColor } from '../components.js';
 
-function catColor(c) {
-  const colors = ['#d97706', '#0ea5e9', '#059669', '#7c3aed', '#e11d48', '#0891b2', '#65a30d', '#c2410c', '#4f46e5', '#0d9488'];
-  let n = 0;
-  for (let i = 0; i < c.length; i++) n = (n * 31 + c.charCodeAt(i)) >>> 0;
-  return colors[n % colors.length];
-}
 
 function isLocked(p) {
   return p && (p.locked === true || p.locked === 1 || String(p.locked) === '1');

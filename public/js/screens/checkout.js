@@ -149,6 +149,11 @@ export const screen = {
           </section>
 
           <section class="co-items">
+            <details class="co-lines">
+              <summary>
+                <span>${sale.items.length} item${sale.items.length === 1 ? '' : 's'}</span>
+                <b>${fmt(t.subtotal)}</b>
+              </summary>
             ${sale.items.map((i) => `
               <div class="co-item">
                 <div class="co-name">${esc(i.name)} <span class="co-qty">×${i.quantity}</span>
@@ -156,6 +161,7 @@ export const screen = {
                 ${i.serialNumber ? `<div class="cl-serial">${esc(i.serialNumber)}</div>` : ''}
                 <div class="co-price">${fmt(lineTotal(i))}${i.discountPct ? ` <s>${fmt(i.unitPrice * i.quantity)}</s>` : ''}</div>
               </div>`).join('')}
+            </details>
             <div class="co-notes">
               <div class="field co-field">
                 <span>Order discount %</span>
@@ -180,9 +186,9 @@ export const screen = {
                   <button class="cl-remove" data-del="${t.idx}">✕</button>
                 </div>`).join('') : '<p class="muted">No tenders yet — add cash, store credit, or terms below.</p>'}
             </div>
-            <div class="co-remain">${rem <= 0
-              ? `<span class="ok">Fully covered</span><strong>Change due: ${fmt(round2(tenders.reduce((s,t)=>s+t.amount,0)-sale.total))}</strong>`
-              : `<span>Remaining</span><strong>${fmt(rem)}</strong>`}</div>
+            <div class="co-remain ${rem <= 0 ? 'co-clear' : ''}">${rem <= 0
+              ? `<span>Change due</span><strong>${fmt(round2(tenders.reduce((s,t)=>s+t.amount,0)-sale.total))}</strong>`
+              : `<span>Amount due</span><strong>${fmt(rem)}</strong>`}</div>
           </section>
 
           <section class="co-input">
@@ -204,7 +210,7 @@ export const screen = {
               ${[1,2,3,4,5,6,7,8,9,'⌫',0,'C'].map((k) => `<button class="kp" data-k="${k}">${k}</button>`).join('')}
             </div>
 
-            <button id="addTender" class="btn btn-block" ${amount > 0 || type !== 'cash' ? '' : 'disabled'}>
+            <button id="addTender" class="btn btn-block btn-ghost" ${amount > 0 || type !== 'cash' ? '' : 'disabled'}>
               + Add ${esc(typeLabel())}
             </button>
             <button id="completeBtn" class="btn btn-block btn-primary btn-xl" ${rem <= 0 && tenders.length ? '' : 'disabled'}>

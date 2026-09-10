@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.17.0** — shell & navigation (`2026-09-10`) |
-| Validation bar | `backend-sim` **PASS 446 / FAIL 0** · client units **PASS 269 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.18.0** — Sell & checkout (`2026-09-10`) |
+| Validation bar | `backend-sim` **PASS 446 / FAIL 0** · client units **PASS 287 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,19 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.18.0** Sell & checkout — second of the three interface-v2 releases.
+  **Pinned cart bar** on phones/tablets (count, running total, Charge) so the
+  total is never out of sight; adding an item no longer opens a sheet over the
+  catalog, and the cart sheet is only re-rendered while already open. Desktop's
+  side panel is unchanged. `catColor`, `categoryChip`, `productTile` and
+  `cartBar` moved into `components.js` (18 checks); `inventory.js` lost its
+  duplicate `catColor`. Product tiles gained a two-line name clamp and clearer
+  badges; chips carry the category colour. Checkout collapses its line list,
+  promotes **Amount due** to the largest figure, and leaves one primary action.
+  **Fixed a live bug: the ✕ on a cart line had never worked** — the handler read
+  `data-key` while the button carries `data-remove`, and `lineRemove()` restored
+  stock without deleting the line. **Departure from the spec:** out-of-stock
+  tiles are dimmed but still tappable, so the toast can say why.
 - **v1.17.0** Shell & navigation — first of three releases from
   `docs/superpowers/specs/2026-09-10-pos-interface-v2-design.md`. New
   **`nav.js`** holds the navigation model (`primaryTabs`, `menuTiles(role)`,

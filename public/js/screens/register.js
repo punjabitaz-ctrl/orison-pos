@@ -10,37 +10,14 @@ import {
 } from '../ui.js';
 import { SYNC_EVENT, getSyncState } from '../sync.js';
 import { saleTotals } from '../money.js';
+import { productTile, categoryChip, cartBar } from '../components.js';
 import { publishCart } from '../customer-display.js';
 
-function catColor(c) {
-  const colors = ['#d97706', '#0ea5e9', '#059669', '#7c3aed', '#e11d48', '#0891b2', '#65a30d', '#c2410c', '#4f46e5', '#0d9488'];
-  let n = 0;
-  for (let i = 0; i < c.length; i++) n = (n * 31 + c.charCodeAt(i)) >>> 0;
-  return colors[n % colors.length];
-}
 
 function isLocked(p) {
   return p && (p.locked === true || p.locked === 1 || String(p.locked) === '1');
 }
 
-function card(product) {
-  const isService = product.itemType === 'service';
-  const avail = product.isSerialized ? (product.serials || []).length : (product.onHand || 0);
-  const out = !isService && avail <= 0;
-  return `
-    <button class="prod-card ${out ? 'out' : ''}" data-add="${esc(product.id)}" type="button">
-      <div class="prod-cat" style="background:${catColor(product.category)}">${esc(product.category)}</div>
-      <h3 class="prod-name">${esc(product.name)}</h3>
-      <div class="prod-meta">
-        <span class="prod-price">${fmt(product.retailPrice)}</span>
-        ${isService
-          ? '<span class="prod-stock service-tag">Service</span>'
-          : `<span class="prod-stock ${out ? 'stock-out' : ''}">${out ? 'Out' : (product.isSerialized ? avail + ' units' : avail + ' in stock')}</span>`}
-      </div>
-      ${product.isSerialized ? '<span class="prod-ser-badge">IMEI</span>' : ''}
-      ${isLocked(product) ? '<span class="prod-ser-badge lock-badge">Locked</span>' : ''}
-    </button>`;
-}
 
 export const screen = {
   id: 'register',
@@ -97,7 +74,7 @@ export const screen = {
     function renderChips() {
       const cats = ['All', ...new Set(screen._products.map((p) => p.category))];
       cats.sort((a, b) => a === 'All' ? -1 : (b === 'All' ? 1 : a.localeCompare(b)));
-      chips.innerHTML = cats.map((c) => `<button class="chip ${c === category ? 'on' : ''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('');
+      chips.innerHTML = cats.map((c) => categoryChip({ label: c, active: c === category })).join('');
       chips.querySelectorAll('[data-cat]').forEach((b) => b.addEventListener('click', () => {
         category = b.getAttribute('data-cat');
         renderChips();
@@ -117,7 +94,7 @@ export const screen = {
           || (p.upc || '').toLowerCase().includes(q)
           || (p.serials || []).join(',').includes(q);
       });
-      grid.innerHTML = list.map((p) => card(p)).join('')
+      grid.innerHTML = list.map((p) => productTile(p, { fmt })).join('')
         + (list.length ? '' : `<div class="empty"><p>No products match “${esc(term)}”.</p><button class="btn btn-ghost" id="resetSearch">Clear search</button></div>`);
       const reset = grid.querySelector('#resetSearch');
       if (reset) reset.addEventListener('click', () => { term = ''; searchInput.value = ''; renderGrid(); });
@@ -303,34 +280,59 @@ export const screen = {
           <button id="chargeBtn" class="btn btn-block" ${totals.count ? '' : 'disabled'}>Charge · ${fmt(totals.total)}</button>
         </div>`;
 
+      const bar = document.getElementById('cartbar');
       if (onDesktop) {
         document.getElementById('regCartPanel').innerHTML = markup;
         bindCart(document.getElementById('regCartPanel'));
-      } else {
-        bindCart(openSheet(markup));
+        if (bar) { bar.innerHTML = ''; bar.classList.add('hidden'); }
+        return;
       }
+
+      /* Phones and tablets: adding an item updates the pinned bar rather than
+         throwing a full sheet over the catalog. The sheet is only re-rendered
+         when it is already open. */
+      if (bar) {
+        bar.innerHTML = cartBar({ count: totals.count, total: totals.total, fmt });
+        bar.classList.toggle('hidden', totals.count === 0);
+        const open = bar.querySelector('[data-open-cart]');
+        if (open) open.addEventListener('click', () => bindCart(openSheet(markup)));
+        const charge = bar.querySelector('[data-charge]');
+        if (charge) charge.addEventListener('click', goToCheckout);
+      }
+      const sheetHost = document.getElementById('sheet');
+      if (sheetHost && sheetHost.querySelector('.sheet')) {
+        if (totals.count === 0) sheetHost.innerHTML = '';
+        else bindCart(openSheet(markup));
+      }
+    }
+
+    function goToCheckout() {
+      document.getElementById('sheet').innerHTML = '';
+      const panel = document.getElementById('regCartPanel');
+      if (panel) panel.innerHTML = '';
+      const bar = document.getElementById('cartbar');
+      if (bar) { bar.innerHTML = ''; bar.classList.add('hidden'); }
+      router.show('checkout');
     }
 
     function bindCart(rootEl) {
       rootEl.querySelectorAll('[data-min], [data-plus], [data-remove], [data-disc]').forEach((b) => {
         b.addEventListener('click', () => {
-          const line = [...state.cart.values()].find((l) => lineKeyOf(l) === b.dataset.key);
+          /* the remove button carries its key in data-remove, the rest in
+             data-key - reading only data-key left the X dead. */
+          const key = b.dataset.key || b.dataset.remove;
+          const line = [...state.cart.values()].find((l) => lineKeyOf(l) === key);
           if (!line) return;
           const isService = line.product.itemType === 'service';
           if (b.hasAttribute('data-min') && line.qty > 1) { line.qty--; if (!isService) line.product.onHand++; }
           if (b.hasAttribute('data-plus') && (isService || (line.product.onHand || 0) > 0)) { line.qty++; if (!isService) line.product.onHand--; }
-          if (b.hasAttribute('data-remove')) lineRemove(line);
+          if (b.hasAttribute('data-remove')) { lineRemove(line); state.cart.delete(key); }
           if (b.hasAttribute('data-disc')) line.discountPct = Number(b.dataset.p) || 0;
           state.cartVersion++;
           renderCart();
         });
       });
-      rootEl.querySelector('#chargeBtn').addEventListener('click', () => {
-        document.getElementById('sheet').innerHTML = '';
-        const panel = document.getElementById('regCartPanel');
-        if (panel) panel.innerHTML = '';
-        router.show('checkout');
-      });
+      rootEl.querySelector('#chargeBtn').addEventListener('click', goToCheckout);
       rootEl.querySelector('[data-close]')?.addEventListener('click', () => {
         document.getElementById('sheet').innerHTML = '';
       });
@@ -364,7 +366,7 @@ export const screen = {
 
     renderChips();
     renderGrid();
-    if (document.documentElement.dataset.viewport === 'desktop') renderCart();
+    renderCart();
     if (!('ontouchstart' in window)) searchInput.focus();
 
     const handleSync = () => { if (document.getElementById('searchInput')) { this.refreshProducts().then(renderGrid); } };
@@ -375,6 +377,8 @@ export const screen = {
     return () => {
       window.removeEventListener(SYNC_EVENT, handleSync);
       window.removeEventListener('orison:viewport', handleViewport);
+      const bar = document.getElementById('cartbar');
+      if (bar) { bar.innerHTML = ''; bar.classList.add('hidden'); }
     };
   },
 };
