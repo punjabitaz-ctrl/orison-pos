@@ -77,3 +77,80 @@ test('DESTINATIONS is internally consistent', () => {
     assert.ok(d.roles === null || Array.isArray(d.roles), `${d.id} has a bad roles field`);
   }
 });
+
+import { ICONS, icon, tile, tileGrid, navButton, appHeaderHtml } from '../public/js/components.js';
+
+test('icon()', async (t) => {
+  await t.test('every destination and bar slot has an icon', () => {
+    for (const id of ['menu', 'register', 'history', ...menuTiles('admin').map((x) => x.id)]) {
+      assert.match(icon(id), /^<svg /, `${id} has no icon`);
+    }
+  });
+  await t.test('an unknown id still renders something rather than breaking the grid', () => {
+    assert.match(icon('nope'), /^<svg /);
+  });
+  await t.test('the icon table has no empty entries', () => {
+    for (const [id, svg] of Object.entries(ICONS)) {
+      assert.ok(svg && svg.length > 40, `${id} icon looks empty`);
+    }
+  });
+});
+
+test('tile()', async (t) => {
+  await t.test('carries the id as a data attribute the screen can route on', () => {
+    assert.ok(tile({ id: 'reports', label: 'Reports' }).includes('data-go="reports"'));
+  });
+  await t.test('escapes the label', () => {
+    const html = tile({ id: 'x', label: '<script>bad</script>' });
+    assert.ok(html.includes('&lt;script&gt;'));
+    assert.ok(!html.includes('<script>bad'));
+  });
+  await t.test('escapes the id, which lands inside an attribute', () => {
+    assert.ok(!tile({ id: 'a"onclick="x', label: 'A' }).includes('onclick="x'));
+  });
+});
+
+test('tileGrid()', async (t) => {
+  await t.test('renders one tile per destination', () => {
+    const tiles = menuTiles('admin');
+    assert.equal((tileGrid(tiles).match(/class="mtile"/g) || []).length, tiles.length);
+  });
+  await t.test('an empty set renders an empty grid, not undefined', () => {
+    assert.equal(typeof tileGrid([]), 'string');
+    assert.ok(!tileGrid([]).includes('undefined'));
+    assert.ok(!tileGrid(null).includes('undefined'));
+  });
+});
+
+test('navButton()', async (t) => {
+  await t.test('marks the primary slot so it can be styled heavier', () => {
+    assert.ok(navButton({ id: 'menu', label: 'Menu', primary: true }).includes('tab-primary'));
+    assert.ok(!navButton({ id: 'register', label: 'Sell', primary: false }).includes('tab-primary'));
+  });
+  await t.test('every button carries data-tab and an accessible name', () => {
+    const html = navButton({ id: 'register', label: 'Sell', primary: false });
+    assert.ok(html.includes('data-tab="register"'));
+    assert.ok(html.includes('aria-label="Sell"'));
+  });
+});
+
+test('appHeaderHtml()', async (t) => {
+  await t.test('shows the store, a clock slot, a status slot and the user', () => {
+    const html = appHeaderHtml({ storeName: 'Orison Electronics', userName: 'Amara Njoku', role: 'cashier' });
+    assert.ok(html.includes('Orison Electronics'));
+    assert.ok(html.includes('id="appClock"'));
+    assert.ok(html.includes('id="appStatus"'));
+    assert.ok(html.includes('>A<'), 'user initial');
+  });
+  await t.test('escapes every field it is given', () => {
+    const html = appHeaderHtml({ storeName: '<b>x</b>', userName: '"><b>y', role: 'admin' });
+    assert.ok(!html.includes('<b>x</b>'));
+    assert.ok(html.includes('&lt;b&gt;'));
+  });
+  await t.test('survives a missing user, which is the signed-out state', () => {
+    const html = appHeaderHtml({ storeName: 'Shop' });
+    assert.equal(typeof html, 'string');
+    assert.ok(!html.includes('undefined'));
+    assert.equal(typeof appHeaderHtml(), 'string');
+  });
+});
