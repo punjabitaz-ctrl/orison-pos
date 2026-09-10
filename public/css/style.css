@@ -96,18 +96,6 @@ padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
 .scr-title h2 { font-size: 20px; font-weight: 700; letter-spacing: -.2px; }
 .scr-title p { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-.scr-status {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; font-weight: 600;
-  padding: 6px 10px; border-radius: 999px; background: var(--card);
-  border: 1px solid var(--line);
-  color: var(--muted);
-}
-.scr-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
-.scr-status.online { color: var(--ok); }
-.scr-status.online .dot { background: var(--ok); }
-.scr-status.offline { color: var(--warn); }
-.scr-status.offline .dot { background: var(--warn); }
 
 /* ---------------- Tab bar ---------------- */
 .tabbar {

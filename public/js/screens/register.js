@@ -69,9 +69,6 @@ export const screen = {
           <h2>Register</h2>
           <p>${esc(syncState.deviceId ? 'Terminal ' + syncState.deviceId.slice(0, 8).toUpperCase() : '')} · ${esc((state.user && state.user.firstName) || '')}</p>
         </div>
-        <div class="scr-status ${navigator.onLine ? 'online' : 'offline'}">
-          <span class="dot"></span><span>${navigator.onLine ? 'Online' : 'Offline'}</span>
-        </div>
       </header>
       <div class="search-row">
         <div class="search-box">
