@@ -14,6 +14,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Till shifts** (v1.5.0): open a shift with a float, close it with a denomination count, and get *declared / expected / over-or-short* in one view.
 - **Reports & analytics** (v1.6.0): period KPIs (gross sales, refunds, payouts, collections, net revenue, gross profit, average ticket) broken down by day, category, cashier, tender, plus top products/customers and one-click CSV export.
 - **Suppliers & purchase orders** (v1.7.0): vendor records, PO lifecycle (draft → ordered → partial/received, or cancelled) and receiving that posts stock in with weighted-average cost, per-unit serial intake, and a ledger trail that never touches drawer math.
+- **Price history & tracking** (v1.8.0): every cost/retail change — manual edit or weighted cost from a PO receipt — is recorded per product (who, when, why) and browsable from the Products screen 📈.
 - **Role-gated dashboard**: admin/manager see store KPIs, a 14-day revenue chart, top sellers, low-stock alerts, open conflicts, recent shift closes, and one-tap Drive export; cashiers get their own daily numbers.
 - **Admin tools** (in-app): create products and users, adjust non-serialized stock, add serials, manage suppliers and purchase orders, release login lockouts, review conflicts, and revoke a stolen terminal's sessions.
 - **POS lock**: staff sign in with a PIN pad; five wrong PINs lock that account for 15 minutes.
@@ -161,11 +162,11 @@ tests/pdf-send-smoke.mjs Receipt PDF/share headless-browser smoke test
 
 ## Releases stay in lockstep
 
-One feature = one validated revision = one git tag (v1.0.0 → v1.7.x, all
+One feature = one validated revision = one git tag (v1.0.0 → v1.8.x, all
 tagged). Every release must bump `public/sw.js` `VERSION` and `package.json`,
-append `CHANGELOG.md`, and keep README / DEPLOY / SECURITY / the backend guide
-current — **do not ship a version whose docs still describe the previous
-one**. `AGENTS.md` encodes this protocol for AI agents; `HANDOVER.md` is the
+append `CHANGELOG.md`, and keep README / DEPLOY / SECURITY / RELEASE_NOTES /
+the backend guide current — **do not ship a version whose docs still describe
+the previous one**. `AGENTS.md` encodes this protocol for AI agents; `HANDOVER.md` is the
 living state snapshot that survives between sessions.
 
 ## Notes / known constraints

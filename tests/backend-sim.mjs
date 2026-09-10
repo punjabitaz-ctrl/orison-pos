@@ -1815,6 +1815,56 @@ section('discounts & tax');
   check('cancel of unknown order 404s', req('/api/purchase-orders/cancel', { id: 'nope' }, { session: poAdm }).status === 404);
 }
 
+{
+  section('price history');
+
+  const phAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const phCash = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const phUsers = req('/api/admin/users/list', {}, { session: phAdm }).data.users;
+  const phU = phUsers.find((u) => u.email === 'tariq@example.com');
+  const phAdmName = (phU.firstName || '') + ' ' + (phU.lastName || '');
+
+  check('cashier cannot read price history', req('/api/price-history', {}, { session: phCash }).status === 403);
+  check('unknown product filter returns empty history', req('/api/price-history', {}, { session: phAdm, params: { productId: 'nope' } }).data.history.length === 0);
+
+  const mouseRow = req('/api/products', {}, { session: phAdm }).data.find((p) => p.sku === 'PO-MOU-01');
+  const mouseHist = req('/api/price-history', {}, { session: phAdm, params: { productId: mouseRow.id } }).data.history;
+  check('create records a cost baseline', mouseHist.some((r) => r.field === 'cost_price' && r.source === 'create' && Math.abs(r.newValue - 12) < 0.001));
+  check('create records a retail baseline', mouseHist.some((r) => r.field === 'retail_price' && r.source === 'create' && Math.abs(r.newValue - 29) < 0.001));
+  const poCostChg = mouseHist.find((r) => r.source === 'po' && r.field === 'cost_price');
+  check('receiving records the weighted-cost change (12 → 11)',
+    !!poCostChg && Math.abs(poCostChg.oldValue - 12) < 0.001 && Math.abs(poCostChg.newValue - 11) < 0.001, JSON.stringify(poCostChg));
+  check('receiving history names the purchase order', !!poCostChg && !!poCostChg.poNumber);
+  check('history carries the changer’s full name', mouseHist.filter((r) => r.source === 'create').every((r) => r.changedBy === phAdmName));
+
+  const phProd = req('/api/admin/products', {
+    name: 'Price Watcher', sku: 'PW-001', category: 'Accessories', costPrice: 20, retailPrice: 40,
+  }, { session: phAdm }).data.id;
+  const phBefore = req('/api/price-history', {}, { session: phAdm, params: { productId: phProd } }).data.history;
+  check('new product has create baselines only', phBefore.length === 2 && phBefore.every((r) => r.source === 'create'));
+
+  const patch = req('/api/admin/products/patch', { productId: phProd, costPrice: 25, retailPrice: 35 }, { session: phAdm });
+  check('price patch applied', patch.ok === true, JSON.stringify(patch));
+
+  const phAfter = req('/api/price-history', {}, { session: phAdm, params: { productId: phProd } }).data.history.filter((r) => r.source === 'patch');
+  check('patch records the cost change 20 → 25',
+    phAfter.some((r) => r.field === 'cost_price' && Math.abs(r.oldValue - 20) < 0.001 && Math.abs(r.newValue - 25) < 0.001), JSON.stringify(phAfter));
+  check('patch records the retail change 40 → 35',
+    phAfter.some((r) => r.field === 'retail_price' && Math.abs(r.oldValue - 40) < 0.001 && Math.abs(r.newValue - 35) < 0.001), JSON.stringify(phAfter));
+  check('manual changes are attributed to the user', phAfter.every((r) => r.changedBy === phAdmName));
+
+  const stayCount = req('/api/price-history', {}, { session: phAdm, params: { productId: phProd } }).data.history.length;
+  req('/api/admin/products/patch', { productId: phProd, locked: true }, { session: phAdm });
+  check('non-price edits record no history',
+    req('/api/price-history', {}, { session: phAdm, params: { productId: phProd } }).data.history.length === stayCount);
+
+  const allHist = req('/api/price-history', {}, { session: phAdm }).data.history;
+  check('history sorts newest first',
+    allHist.every((r, i) => i === 0 || allHist[i - 1].createdAt >= r.createdAt));
+  const lim = req('/api/price-history', {}, { session: phAdm, params: { limit: '3' } }).data.history;
+  check('limit caps the result set', lim.length <= 3);
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

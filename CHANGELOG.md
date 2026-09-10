@@ -5,6 +5,33 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-09-09
+
+Every price now has a story. Cost and retail changes — whether made by hand in
+Product settings or spun into stock by a purchase-order receipt — are recorded
+per product, with who, when, and why, and browsed from the Products screen.
+
+### Added
+
+- **Price history.** `/api/price-history` (admin/manager, optional
+  `productId` filter, newest first) and a 📈 modal on every product row that
+  shows each recorded change as *Retail price / Cost price: old → new* with
+  the changer's name and time.
+- **Recording happens at every money-touching event:**
+  - `create` — baseline cost + retail when a product or service is first added.
+  - `patch` — a manual edit from Item settings only records when the value
+    actually changed (a no-op save leaves no trace).
+  - `po` — receiving a delivery records the **weighted-average cost** update
+    (old unit cost → new blended cost), tagged with the purchase order number.
+- New `PriceHistory` workbook tab (id, product, field, old_value, new_value,
+  source, po_id, changed_by, created_at) — auto-created and header-migrated
+  like every other tab.
+
+### Changed
+
+- Item settings / receiving now write the history rows inside the same script
+  lock as the product update, so a price change and its audit trail are atomic.
+
 ## [1.7.1] — 2026-09-09
 
 Post-review hardening. A full code / process / scope / UX / security review

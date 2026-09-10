@@ -83,11 +83,14 @@ export const screen = {
           ${isAdmin ? `
           <div class="inv-actions">
             ${isService
-              ? `<button class="icon-btn" data-settings="${esc(p.id)}" title="Settings">⚙</button>`
+              ? `<button class="icon-btn" data-history="${esc(p.id)}" title="Price history">📈</button>
+                 <button class="icon-btn" data-settings="${esc(p.id)}" title="Settings">⚙</button>`
               : p.isSerialized
                 ? `<button class="icon-btn" data-serials="${esc(p.id)}" title="Add serials">＋</button>
+                   <button class="icon-btn" data-history="${esc(p.id)}" title="Price history">📈</button>
                    <button class="icon-btn" data-settings="${esc(p.id)}" title="Settings">⚙</button>`
                 : `<button class="icon-btn" data-stock="${esc(p.id)}" title="Adjust stock">✎</button>
+                   <button class="icon-btn" data-history="${esc(p.id)}" title="Price history">📈</button>
                    <button class="icon-btn" data-settings="${esc(p.id)}" title="Settings">⚙</button>`}
           </div>` : ''}
         </div>`;
@@ -96,6 +99,7 @@ export const screen = {
       if (isAdmin) {
         listEl.querySelectorAll('[data-stock]').forEach((b) => b.addEventListener('click', () => stockModal(listEl, b.dataset.stock)));
         listEl.querySelectorAll('[data-serials]').forEach((b) => b.addEventListener('click', () => serialsModal(b.dataset.serials)));
+        listEl.querySelectorAll('[data-history]').forEach((b) => b.addEventListener('click', () => priceHistoryModal(b.dataset.history)));
         listEl.querySelectorAll('[data-settings]').forEach((b) => b.addEventListener('click', () => settingsModal(b.dataset.settings)));
       }
     }
@@ -224,6 +228,58 @@ export const screen = {
           toast(`Added ${res.added.length} serials${res.duplicates.length ? `, ${res.duplicates.length} duplicates skipped` : ''}`, 'ok');
         } catch (err) { modal.querySelector('#sErr').textContent = (err && err.data && err.data.error) || err.message; }
       });
+    }
+
+    function priceHistoryModal(productId) {
+      const p = screen._products.find((x) => x.id === productId);
+      if (!p) return;
+      let history = [];
+      const modal = openModal(`
+        <div class="form-modal inv-history">
+          <h3>Price history</h3>
+          <p class="muted">${esc(p.name)}</p>
+          <div id="phBody" class="ph-body"><p class="empty">Loading…</p></div>
+          <div class="row"><button class="btn btn-ghost" data-close>Close</button></div>
+        </div>`);
+      modal.querySelector('[data-close]').addEventListener('click', closeModal);
+      (async () => {
+        const body = modal.querySelector('#phBody');
+        try {
+          const res = await api.get('/api/price-history?productId=' + encodeURIComponent(productId));
+          history = res.history || [];
+          body.innerHTML = history.length
+            ? history.map((h) => `
+                <div class="ph-row">
+                  <div class="ph-top">
+                    <span class="k-chip ${h.source === 'po' ? 'k-payout' : h.source === 'create' ? 'k-sale' : 'k-refund'}">${esc(sourceLabel(h.source))}</span>
+                    <span class="muted">${esc(dt(h.createdAt))}</span>
+                    <span class="muted">${esc(h.changedBy || '—')}${h.poNumber ? ` · ${esc(h.poNumber)}` : ''}</span>
+                  </div>
+                  <div class="ph-chg">
+                    <span>${esc(fieldLabel(h.field))}</span>
+                    <span class="ph-old">${fmt(h.oldValue)}</span> →
+                    <strong>${fmt(h.newValue)}</strong>
+                  </div>
+                </div>`).join('')
+            : '<p class="empty">No price changes recorded.</p>';
+        } catch (_) {
+          body.innerHTML = '<p class="empty">Failed to load — check connection.</p>';
+        }
+      })();
+
+      function sourceLabel(s) {
+        if (s === 'po') return 'Purchase order';
+        if (s === 'create') return 'Created';
+        return 'Manual edit';
+      }
+      function fieldLabel(f) {
+        return f === 'retail_price' ? 'Retail price' : 'Cost price';
+      }
+      function dt(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        return isNaN(d) ? iso : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      }
     }
 
     function settingsModal(productId) {

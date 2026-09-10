@@ -13,6 +13,7 @@
 - **Till shifts**: `/api/shifts/open` (any role) and `/api/shifts/close` with denomination count → *declared / expected / over-or-short*, scoped per user with `kind`-aware cash math (sales + cash collections − cash refunds − payouts).
 - **Reports**: `/api/reports` (manager/admin) — gross sales, refunds, payouts, collections, net revenue, GP, by day / category / cashier / tender, top products and customers, over a date window.
 - **Suppliers & purchase orders**: `/api/suppliers`, `/api/purchase-orders` (draft → ordered → partial/received → cancelled), `/detail`, `/receive` (posts stock with weighted-average cost, per-unit serial intake, and a `purchase` ledger row that never touches drawer math), `/cancel`.
+- **Price history** (`/api/price-history`, admin/manager): per-product audit of every cost/retail change — a `create` baseline when a product is added, a `patch` row when Item settings edit a value (no-op saves stay quiet), and a `po` row when receiving blends cost by weighted average (tagged with the PO number). Written atomically beside the product update, inside the same script lock.
 - Admin: create products/users/customers, add serials, inventory adjust, PIN reset/unlock, revoke devices, store config.
 - **Drive export** (`/api/drive/export`): admin/manager export the whole store's day to Drive with a SALES / REFUNDS / PAID OUT / COLLECTIONS / NET CASH summary (purchase receipts appear as detail rows but never inflate SALES); cashiers export their own day (rows scoped server-side to their user id, distinct filename).
 
@@ -31,6 +32,7 @@
 | `Shifts` | id, userId, openedAt/closedAt, openingFloat, cashExpected, cashDeclared, overShort, tendersJson (denomination count), status |
 | `Suppliers` | id, storeId, name, phone, email, address, paymentTerms, active, createdAt |
 | `PurchaseOrders` | id, storeId, supplierId, poNumber, orderDate, expectedDate, status, itemsJson, receivedJson, subtotal, discountPct, taxAmount, total, note, createdBy |
+| `PriceHistory` | id, storeId, productId, productName, field (cost_price/retail_price), oldValue, newValue, source (create/patch/po), poId, changedBy, createdAt |
 
 Only `APP_TOKEN` knows which sheet is the "backend" — keep it secret.
 

@@ -793,6 +793,11 @@ button:disabled { cursor: default; }
 .ledger-bal b, .ledger-bal strong { font-size: 16px; }
 .lg-txs { display: flex; flex-direction: column; }
 .lg-tx { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.ph-body { max-height: 55vh; overflow-y: auto; margin: 12px 0; }
+.ph-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.ph-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.ph-chg { margin-top: 4px; font-size: 14px; display: flex; gap: 6px; align-items: baseline; }
+.ph-old { color: var(--muted, #8aa0b5); text-decoration: line-through; }
 .lg-tx .k-chip { margin-left: 0; margin-right: 6px; text-transform: capitalize; }
 .age { display: inline-block; margin: 2px 4px 0 0; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 700; }
 .age0 { background: #e3eefb; color: #1c5d99; }

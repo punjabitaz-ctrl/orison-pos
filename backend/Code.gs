@@ -12,9 +12,10 @@
  * Response envelope:  { ok:true, data:{...} }  or  { ok:false, status, error }
  *
  * Storage: a Google Sheets workbook with tabs Meta, Users, Products, Serials,
- * Transactions. Set SPREADSHEET_ID in Script Properties to reuse a workbook;
- * otherwise one is created on first request. A "Orison POS Export" Drive
- * folder holds CSV exports.
+ * Transactions, Conflicts, Devices, Customers, Shifts, Suppliers,
+ * PurchaseOrders, PriceHistory. Set SPREADSHEET_ID in Script Properties to
+ * reuse a workbook; otherwise one is created on first request. A "Orison POS
+ * Export" Drive folder holds CSV exports.
  */
 
 /* ------------------------------------------------------------------ *
@@ -96,6 +97,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/purchase-orders/receive': return purchaseOrderReceive_(session, payload);
     case '/api/purchase-orders/cancel': return purchaseOrderCancel_(session, payload);
     case '/api/drive/export':    return driveExport_(session, payload, params);
+    case '/api/price-history':   return priceHistory_(session, params);
     default:
       throw statusError_(404, 'Unknown action: ' + action);
   }
@@ -317,6 +319,26 @@ var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 var SUPPLIER_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'address', 'payment_terms', 'active', 'created_at'];
 var PO_HEADERS = ['id', 'store_id', 'supplier_id', 'po_number', 'order_date', 'expected_date', 'status', 'items_json', 'received_json', 'subtotal', 'discount_pct', 'tax_amount', 'total', 'note', 'created_by', 'created_at', 'updated_at'];
+var PRICE_HISTORY_HEADERS = ['id', 'store_id', 'product_id', 'product_name', 'field', 'old_value', 'new_value', 'source', 'po_id', 'changed_by', 'created_at'];
+
+/* Append a price-change event (cost or retail) to the PriceHistory tab. Called
+ * from product create (baseline), product patch, and PO receiving (weighted
+ * cost updates). Values are stored as numbers so the sheet stays queryable. */
+function recordPriceChange_(product, field, oldValue, newValue, source, po, changedBy) {
+  appendRows_('PriceHistory', PRICE_HISTORY_HEADERS, [{
+    id: Utilities.getUuid(),
+    store_id: getStore_().id,
+    product_id: String(product.id),
+    product_name: String(product.name || ''),
+    field: field,
+    old_value: oldValue,
+    new_value: newValue,
+    source: source,
+    po_id: po && po.id ? String(po.id) : '',
+    changed_by: String(changedBy || ''),
+    created_at: new Date().toISOString(),
+  }]);
+}
 
 function spreadSheet_() {
   var props = PropertiesService.getScriptProperties();
@@ -662,6 +684,7 @@ function seed_() {
   sheet_('Shifts', SHIFTS_HEADERS);
   sheet_('Suppliers', SUPPLIER_HEADERS);
   sheet_('PurchaseOrders', PO_HEADERS);
+  sheet_('PriceHistory', PRICE_HISTORY_HEADERS);
   appendRows_('Suppliers', SUPPLIER_HEADERS, [{
     id: Utilities.getUuid(),
     store_id: storeId,
@@ -2136,6 +2159,46 @@ function reports_(session, params) {
   };
 }
 
+/* Price history: who changed a product's cost or retail, when, and why
+ * (manual patch vs purchase-order receiving vs create). Manager/admin only. */
+function priceHistory_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var productId = String((params && params.productId) || '');
+  var limit = parseInt(params && params.limit, 10);
+  if (isNaN(limit) || limit < 1) limit = 200;
+  limit = Math.min(limit, 1000);
+
+  var rows = readRows_('PriceHistory', PRICE_HISTORY_HEADERS);
+  if (productId) rows = rows.filter(function (r) { return String(r.product_id) === productId; });
+  rows.sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); });
+  rows = rows.slice(0, limit);
+
+  var userRows = readRows_('Users', USER_HEADERS);
+  var nameById = {};
+  for (var i = 0; i < userRows.length; i++) {
+    nameById[String(userRows[i].id)] = (String(userRows[i].first_name || '') + ' ' + String(userRows[i].last_name || '')).trim();
+  }
+  var poRows = readRows_('PurchaseOrders', PO_HEADERS);
+  var poNumberById = {};
+  for (var j = 0; j < poRows.length; j++) poNumberById[String(poRows[j].id)] = String(poRows[j].po_number || '');
+
+  var history = rows.map(function (r) {
+    return {
+      id: String(r.id || ''),
+      productId: String(r.product_id || ''),
+      productName: String(r.product_name || ''),
+      field: String(r.field || ''),
+      oldValue: num_(r.old_value),
+      newValue: num_(r.new_value),
+      source: String(r.source || ''),
+      poNumber: poNumberById[String(r.po_id || '')] || '',
+      changedBy: nameById[String(r.changed_by || '')] || '',
+      createdAt: String(r.created_at || ''),
+    };
+  });
+  return { history: history, productId: productId || null };
+}
+
 /* ------------------------------------------------------------------ *
  *  Purchase orders: supplier list, PO lifecycle, and stock-in posting.
  *
@@ -2436,6 +2499,13 @@ function purchaseOrderReceive_(session, payload) {
       [id]: { received_json: JSON.stringify(merged), status: newStatus, updated_at: stamp },
     });
     applyPatches_('Products', PRODUCT_HEADERS, 'id', patches);
+    for (var ph in patches) {
+      if (!Object.prototype.hasOwnProperty.call(patches, ph)) continue;
+      if (patches[ph].cost_price === undefined) continue;
+      var preCost = num_(prodById[ph].cost_price);
+      var postCost = num_(patches[ph].cost_price);
+      if (preCost !== postCost) recordPriceChange_(prodById[ph], 'cost_price', preCost, postCost, 'po', po, String(session.uid || ''));
+    }
     appendRows_('Serials', SERIAL_HEADERS, serialNew);
     if (receivedValue > 0) {
       appendRows_('Transactions', TX_HEADERS, [{
@@ -3005,6 +3075,8 @@ function adminProducts_(session, payload) {
       updated_at: now,
       taxable: taxable,
     }]);
+    recordPriceChange_({ id: id, name: name }, 'cost_price', '', cost, 'create', null, String(session.uid || ''));
+    recordPriceChange_({ id: id, name: name }, 'retail_price', '', retail, 'create', null, String(session.uid || ''));
     return { id: id };
   } finally {
     lock.releaseLock();
@@ -3150,6 +3222,12 @@ function adminProductsPatch_(session, payload) {
   try {
     patch.updated_at = new Date().toISOString();
     applyPatches_('Products', PRODUCT_HEADERS, 'id', { [productId]: patch });
+    if (patch.retail_price !== undefined && num_(product.retail_price) !== num_(patch.retail_price)) {
+      recordPriceChange_(product, 'retail_price', num_(product.retail_price), num_(patch.retail_price), 'patch', null, String(session.uid || ''));
+    }
+    if (patch.cost_price !== undefined && num_(product.cost_price) !== num_(patch.cost_price)) {
+      recordPriceChange_(product, 'cost_price', num_(product.cost_price), num_(patch.cost_price), 'patch', null, String(session.uid || ''));
+    }
     return { ok: true, id: productId };
   } finally {
     lock.releaseLock();

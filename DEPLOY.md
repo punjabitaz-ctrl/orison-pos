@@ -152,6 +152,7 @@ web-accessible status page without app load.
 | Add a supplier | Purchases tab → *New supplier* (name + optional phone/email/terms). |
 | Order stock | Purchases tab → *New PO* → lines with quantities + unit costs → Save draft / Place order. |
 | Receive a delivery | Purchases tab → order → *Receive* → enter what arrived (serials for serialized lines); stock and weighted cost update on post. |
+| See why a price changed | Products → 📈 on any item (admin/manager) — every cost/retail edit and each PO-receipt cost update with who, when, and the order. |
 | Refund a sale | History (admin/manager) → the sale → *Refund items*. Cashiers cannot refund. |
 | See conflicts | Home → amber banner → Review → Keep winner / Dismiss. |
 | Bulk recall/restock | Apps Script `setup` re-seed (writes a backup CSV of transactions to Drive first). |

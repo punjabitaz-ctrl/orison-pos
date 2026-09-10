@@ -7,63 +7,51 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.7.1 — post-review hardening
+## Latest: v1.8.0 — price history & tracking
 
-**2026-09-09.** A full code / process / scope / UX / security review at v1.7.0
-surfaced a handful of real defects; this revision closes the ones with teeth
-and syncs every doc and asset to the latest number.
+**2026-09-09.** Every price now has a story. Cost and retail changes — made by
+hand in Item settings or made silently by a purchase-order receipt blending
+the weighted-average cost — are recorded per product, with **who**, **when**,
+and **why**, and browsable from the Products screen.
 
-**Security**
+**What shipped**
 
-- Refunds are now **admin/manager only** — a cashier refund previously reached
-  the server with no role check and could reverse any sale; it now voids with
-  `unauthorized_role` and the client hides the Refund button for cashiers.
-- **Role changes revoke sessions immediately** — demotion no longer waits up to
-  12 h for the old token to expire.
-- `config_()` stops leaking deactivated staff into the device roster.
+- **📈 Price history on every product.** `/api/price-history` (admin/manager,
+  optional `productId` filter) and a modal view on each product row showing
+  `Retail price / Cost price: old → new`, the changer's full name, and a
+  timestamp.
+- **Recorded at every money-touching event:**
+  - `create` — baseline cost + retail when an item is added.
+  - `patch` — a manual edit in Item settings; no-op saves leave no trace.
+  - `po` — receiving a delivery records the weighted-average cost update,
+    tagged with the purchase order number.
+- New `PriceHistory` workbook tab, auto-created with header migration like the
+  rest.
+- Each price change and its audit trail are written in the **same script
+  lock**, so the record is atomic with the product update.
 
-**Money & ledger**
+**Validation:** backend-sim **PASS 318 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** ·
+`node --check` clean.
 
-- The Drive export no longer counts purchase receipts as SALES — deliveries
-  stay in the CSV detail rows (`kind: purchase`) but never inflate SALES or NET
-  CASH. "A delivery is never drawer math" now holds for reports, shifts, and
-  the export.
-- Collections (`kind: payment`) net as **money-in**: a new `COLLECTIONS` line
-  feeds NET CASH (`sales − refunds − payouts + collections`), and the dashboard
-  14-day chart nets them the same way instead of subtracting them.
+### Deploying
 
-**Assets & delivery**
-
-- Service worker versioned to **v1.7.1** and precaching `customers.js`,
-  `reports.js`, `purchases.js` — installed terminals pinned to the stale v1.2.0
-  cache finally upgrade instead of serving an ever-older shell.
-- `package.json` / `package-lock.json` versioned to the release line (was
-  0.2.1), `test:pdf` wired into `test:all`.
-- Docs in lockstep: README, DEPLOY, SECURITY, backend guide, changelog, plus
-  new `AGENTS.md` (release protocol) and `HANDOVER.md` (project handover).
-
-**Validation:** backend-sim **PASS 303 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** ·
-`node --check` clean on every touched client file.
-
-### Deploying v1.7.1
-
-1. Redeploy `backend/Code.gs` as the Apps Script Web App (past the new code in
-   the editor, then Deploy → Manage deployments → Update; the new
-   `Suppliers` / `PurchaseOrders` tabs auto-create on first use or the next
-   `setup`).
-2. Confirm Cloudflare Pages is serving `public/` (no build; output directory
-   `public`). The PWA is committed from the repo root, so Pages picks up the
-   new shell automatically.
-3. Terminals update on their next load; if anything looks stale, one hard
-   reload clears the old v1.2.0-era cache.
+1. Paste the new `backend/Code.gs` into the Apps Script editor and Deploy →
+   Manage deployments → Update. The new `PriceHistory` tab auto-creates on the
+   next read (or the next `setup`).
+2. Cloudflare Pages keeps serving `public/` from the repo root — the new shell
+   (v1.8.0 service worker) rolls out to terminals on their next load.
+3. One hard reload if anything looks stale on an installed terminal.
 
 ---
 
-## The road here (1.2.3 → 1.7.1)
+## The road here (1.7.1 → 1.8.0)
 
 | Version | What shipped |
 | --- | --- |
+| **v1.8.0** | Price history & tracking — per-product audit of every cost/retail change (create baseline, manual patch, PO weighted-cost receipt with the order number) browsable from the Products screen. |
+| **v1.7.1** | Post-review hardening — refunds admin/manager-only, role changes revoke sessions immediately, export stops counting purchase receipts as SALES and nets collections as money-in, service-worker cache un-stuck (v1.7.1 versioned + precaches new screens), docs locked in step. |
 | **v1.7.0** | Suppliers & **purchase orders** — vendor records, PO lifecycle (draft → ordered → partial/received → cancelled), receiving that posts stock at weighted-average cost with per-unit serial intake and a ledger trail that never touches drawer math. |
+| **v1.6.0** | Reports & analytics — KPIs (gross sales, refunds, payouts, collections, net revenue, GP) plus by-day/category/cashier/tender views, top products & customers, CSV export. |
 | **v1.6.0** | Reports & analytics — KPIs (gross sales, refunds, payouts, collections, net revenue, GP) plus by-day/category/cashier/tender views, top products & customers, CSV export. |
 | **v1.5.0** | Till shifts — open with a float, close with a denomination count, *declared / expected / over-short* per cashier, `kind`-aware cash math. |
 | **v1.4.1** | Receivables grow teeth — record payments against customer accounts, receivables view, 30/60/90+ aging buckets, net-30 tenders. |
