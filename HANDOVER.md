@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.15.0** — customer display + inventory tools (`2026-09-10`) |
-| Validation bar | `backend-sim` **PASS 413 / FAIL 0** · client units **PASS 228 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.15.1** — post-review hardening (`2026-09-10`) |
+| Validation bar | `backend-sim` **PASS 427 / FAIL 0** · client units **PASS 228 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,23 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.15.1** Post-review hardening (see §10 for what is still open):
+  **CSP `connect-src` now allows `script.googleusercontent.com`** — an Apps
+  Script `/exec` answers with a redirect there and CSP applies to every hop, so
+  the old policy blocked every API call on any host that honours `_headers`
+  (Cloudflare Pages does; GitHub Pages ignores it, which is why nobody hit it);
+  **prototype-shaped keys no longer corrupt data** — a category or tender named
+  `__proto__` used to drop its line from the report, `constructor` wrote onto a
+  shared built-in, and an IMEI reading `constructor`/`toString` was **silently
+  discarded as a duplicate** by `adminSerials_` (all such maps are now
+  `Object.create(null)`; the new assertions fail against the old code);
+  **`adminInventory_` + `adminProductsPatch_` read under the lock** (completing
+  the v1.11.0 sweep — their guards and the price-history "old value" could
+  describe a row another terminal had replaced); **`constantEquals_`** now
+  backs both the session MAC and the PIN hash check (the latter was `!==`); and
+  **dialogs are keyboard-usable** — Escape closes the top-most one, focus moves
+  in on open (never on touch, where it would throw up the keyboard), and panels
+  are marked `aria-modal`.
 - **v1.15.0** Customer display + inventory tools: **`display.html`** mirrors
   the cart / checkout / thank-you on a shopper-facing second screen over a
   same-origin `BroadcastChannel` (`customer-display.js` publishes; the display
@@ -190,12 +207,14 @@ admin/manager.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. 413 checks: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. 427 checks: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
   inventory tools (reorder velocity/cover/suggestion, bulk-price preview vs
-  apply + validation + price-history trail, stock-take variance/value/rollback).
+  apply + validation + price-history trail, stock-take variance/value/rollback),
+  and the v1.15.1 review fixes (prototype-shaped categories/tenders/serials,
+  the guards that now read under the lock).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
   228 checks: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
@@ -313,9 +332,88 @@ Status of every finding class:
      BroadcastChannel mirror with a second-screen option; bulk price update,
      stock-take mode, barcode label printing, low-stock reorder worksheet.
    - **The roadmap the user approved is now complete.** Next work is
-     unscheduled: see §11 for the open review findings and what they cost.
+     unscheduled: see §10 for the open review findings and what they cost.
 
-## 10. Session context / reconstructability
+## 10. Review findings — open (2026-09-10)
+
+A full security + usability pass was run after v1.15.0. Everything cheap and
+safe to fix shipped in **v1.15.1** (CSP redirect, prototype-key corruption,
+two remaining pre-lock reads, dialog keyboard access). What is left is here,
+with what each would cost. Nothing below is silently ignored.
+
+### Open — needs a decision from the owner
+
+1. **The app cannot decide what currency it is in.** `fmt()` in `ui.js`
+   formats every figure as `en-US` **USD** (`$`), while the till counts a
+   **₦** denomination ladder (1000/500/200/100/50/20) and the payout and
+   shift dialogs are labelled "Amount (₦)" / "Opening float (₦)". A drawer
+   count and the revenue it reconciles against are therefore printed in two
+   different currencies. This is not cosmetic: the denomination values feed
+   `shiftDenomsValue_` and land in `cash_declared`, so *expected vs declared*
+   is only meaningful if the ladder matches the notes actually in the drawer.
+   **Fix:** one `store_currency` kv (code + symbol + locale + denomination
+   ladder), read by `fmt()` and by the shift dialogs, defaulting to whatever
+   the shop actually uses. Half a day including sim coverage — but it needs
+   the answer to "which currency is this store in?" first, and guessing it
+   would put wrong money on receipts.
+
+### Open — worth doing, no decision needed
+
+2. **A cart lives only in memory.** `state.cart` is a `Map` on the app object.
+   A refresh, an OS tab eviction, or a phone killing a backgrounded PWA loses
+   a part-rung sale — on the device class this app is designed for, that is a
+   routine event, not an edge case. Serialized lines are worse: `addCartLine`
+   removes the serial from the local product mirror, so the units come back
+   only through `lineRemove`, which a crash never reaches. **Fix:** persist
+   the cart to IndexedDB on every mutation (the `meta` store already exists)
+   and rehydrate on boot; restore the mirrored stock from the persisted cart
+   rather than from the sync pull. ~Half a day, plus client unit tests.
+3. **A sync mid-cart can drift the on-hand mirror.** The register decrements
+   `product.onHand` on the in-memory catalog object as lines are added, but a
+   `pull()` (periodic, or on reconnect) replaces those objects wholesale from
+   the server. The open cart still holds the old references, so the displayed
+   stock and the quantities the cart will restore on removal can disagree.
+   **Fix:** derive available stock as `serverOnHand − quantityInCart` at
+   render time instead of mutating the mirror. Related to #2 and best done
+   with it.
+4. **The time clock needs a connection.** `/api/timeclock/punch` is a live
+   call; the Staff screen disables the button offline and says so, which is
+   honest, but a shop that can *sell* offline cannot *clock in* offline.
+   **Fix:** queue punches through the existing outbox with the same
+   first-committed-wins treatment sales get. ~A day; the sync layer is the
+   part that needs care, not the endpoint.
+5. **Any signed-in account can enumerate the staff roster.** `/api/config`
+   returns every active user's name and email to any role. Combined with the
+   account-based login lockout (documented weakness #6), one cashier can lock
+   every colleague out of the till for 15 minutes at a time. **Fix:** return
+   the roster only to admin/manager, or drop `email` from the cashier view.
+   An hour. (The lockout itself is the harder half and stays documented.)
+6. **The display never goes stale.** If the register tab closes mid-sale, the
+   customer display keeps showing the last cart indefinitely. **Fix:** treat a
+   frame older than a few minutes as idle. An hour.
+7. **`api.js` uses one 15s timeout for every call.** Reports and Drive export
+   over a large sheet can legitimately exceed it, and the client maps a
+   timeout to "offline", which hides the real cause. **Fix:** per-call
+   timeouts (the callers already pass `{ timeout }` in a couple of places —
+   make it consistent). An hour.
+
+### Confirmed still-correct (checked this pass, no action)
+
+- Every privileged route calls `requireRole_`; refunds, payouts and
+  collections remain admin/manager-only.
+- `esc()` covers user text on every screen; `toast()` writes `textContent`;
+  the receipt builder escapes line names built from product + serial.
+- The customer display is publish-only and same-origin, and the frame carries
+  no cost, margin, customer or till field.
+- CSRF is not applicable: credentials live in IndexedDB and travel in the
+  request body, so a cross-site page cannot make an authenticated call.
+- The v1.11.0 lock-scope sweep is now genuinely complete (v1.15.1 closed the
+  last two).
+- Secret comparison is constant-time on both paths: v1.15.1 extracted the
+  XOR-accumulate loop `verifyToken_` already used into `constantEquals_` and
+  put the PIN hash check behind it too (it had been a plain `!==`).
+
+## 11. Session context / reconstructability
 
 - Every feature is its own tagged commit, so "what was I doing" is always:
   the newest tag + this doc.

@@ -7,7 +7,52 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.15.0 — customer display & inventory tools
+## Latest: v1.15.1 — post-review hardening
+
+**2026-09-10.** A full security and usability pass over the codebase after
+v1.15.0. This release lands the findings that were cheap and safe to fix now;
+the rest are written up in `HANDOVER.md` §10 with what each would cost.
+
+**What shipped**
+
+- **The CSP would have blocked the backend.** `connect-src` allowed only
+  `script.google.com`, but Apps Script answers `/exec` with a redirect to
+  `script.googleusercontent.com` and CSP is enforced against every redirect
+  hop — so on any host that honours `_headers` (Cloudflare Pages, the
+  documented target) every API call would fail with nothing useful in the
+  console. Fixed. **Anyone deploying to Cloudflare Pages needs this release.**
+- **Prototype-shaped data corrupted reports and dropped stock.** A product
+  category or tender type named `__proto__` silently vanished from
+  `/api/reports`, one named `constructor` wrote onto a shared built-in, and —
+  the real damage — an IMEI reading `constructor` or `toString` was **silently
+  discarded as a duplicate** on serial intake. Every map keyed by
+  operator- or client-supplied text is now null-prototype.
+- **Two writes still validated against a pre-lock snapshot.**
+  `adminInventory_` and `adminProductsPatch_` now read and write inside one
+  lock, so their guards — and the "old value" recorded in price history —
+  describe the row actually being overwritten.
+- **Constant-time secret comparison** for the PIN hash as well as the session
+  MAC (the PIN check had been a plain `!==`).
+- **Dialogs are keyboard-usable.** Escape closes the top-most modal or sheet,
+  focus moves into it on open (never on a touch device), and panels carry
+  `aria-modal`.
+
+**Validation:** backend-sim **PASS 427 / FAIL 0** · client units **PASS 228 / FAIL 0** ·
+pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean. The prototype-key
+assertions were run against the pre-fix code and fail there, so they bite.
+
+### Deploying
+
+1. **Backend redeploy required** — paste `backend/Code.gs` into Apps Script
+   and deploy a new Web App version.
+2. Push `public/` to Cloudflare Pages. **`public/_headers` changed**; confirm
+   the new `Content-Security-Policy` is being served (browser devtools →
+   Network → the document → Response Headers) before calling the deploy done.
+3. Terminals pick up the **v1.15.1** shell on next load.
+
+---
+
+## v1.15.0 — customer display & inventory tools
 
 **2026-09-10.** The shopper gets a screen of their own, and the stockroom gets
 the four tools it was missing.

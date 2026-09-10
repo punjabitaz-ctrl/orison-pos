@@ -235,7 +235,7 @@ Two consequences worth planning around:
 restrictive `Permissions-Policy` and a strict Content-Security-Policy:
 
 ```
-Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self' https://script.google.com; font-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'
+Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self' https://script.google.com https://script.googleusercontent.com; font-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'
 ```
 
 The app has no inline scripts and no third-party origins: the only external
@@ -243,6 +243,14 @@ destination is the Apps Script backend (`connect-src`), and `'unsafe-inline'`
 is granted to styles only, because the tab bar and screens set a handful of
 inline `style` attributes. Everything else — scripts, images, fonts, workers,
 the manifest — must come from the app's own origin.
+
+**`connect-src` lists two Google hosts, and both are required.** An Apps Script
+Web App answers `/exec` with a redirect to `script.googleusercontent.com`, and
+CSP is enforced against every hop of a redirect, not just the URL the app
+asked for. Allowing only `script.google.com` blocks each API call outright,
+with no console error that names the cause. (Before v1.15.1 the policy did
+exactly that; it went unnoticed because GitHub Pages ignores `_headers`
+entirely — Cloudflare Pages, the documented target, applies them.)
 
 ## Offline behaviour
 
@@ -295,10 +303,12 @@ is tracked; none is silent.
    always quotes (the statement export previously did the opposite — guarded
    formulas but never quoted, so a comma in a name shifted its columns).
    Reports, customer statements and the reorder worksheet all use it.
-5. **Client-supplied report keys** (tender type, category) are used as object
-   keys in `reports_`; a hostile payload could collide with prototype keys.
-   Harmless today (data is single-store, post-auth) but should switch to
-   `Object.create(null)` maps.
+5. ~~**Client-supplied report keys** collide with prototype keys.~~ **Fixed in
+   v1.15.1**, and it was not harmless: a category or tender named `__proto__`
+   dropped its line from the report entirely, one named `constructor` wrote
+   onto a shared built-in, and `adminSerials_` silently discarded an IMEI
+   reading `constructor`/`toString` as a duplicate. Every map keyed by
+   operator- or client-supplied text is now `Object.create(null)`.
 6. **Account-based lockout is a cheap DoS** against a known email (see
    [Login throttling](#login-throttling)); an admin can clear it any time.
    Per-device/IP throttling would need call metadata the Web App does not

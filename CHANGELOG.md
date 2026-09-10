@@ -5,6 +5,45 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.1] — 2026-09-10
+
+Post-review hardening. A full security and usability pass over the codebase
+after v1.15.0; this release lands the findings that were cheap and safe to fix
+now. The rest are written up in `HANDOVER.md` §11 with what each would cost.
+
+### Fixed
+
+- **Deployment blocker — the CSP forbade the backend.** `connect-src` allowed
+  only `https://script.google.com`, but an Apps Script `/exec` call answers with
+  a redirect to `https://script.googleusercontent.com`, and CSP is enforced
+  against each redirect hop. On any host that actually applies `_headers`
+  (Cloudflare Pages does; GitHub Pages ignores the file, which is why this has
+  gone unnoticed) every API call would have been blocked with no visible error.
+  The redirect target is now allowed.
+- **Prototype-shaped data silently corrupted reports and serial intake.**
+  `reports_` accumulated into plain object literals keyed by client-supplied
+  strings, so a tender type or product category named `__proto__` landed on the
+  prototype chain instead of the map — the line vanished from the report — and
+  one named `constructor` wrote onto a shared built-in. Worse, `adminSerials_`
+  tested duplicates against a plain object, so an IMEI reading `constructor` or
+  `toString` was **silently discarded as a duplicate**. All maps keyed by
+  operator- or client-supplied text are now `Object.create(null)`. Closes
+  acknowledged weakness #5. Regression-tested both ways: the new assertions
+  fail against the old code.
+- **Two writes still validated against a pre-lock snapshot.** `adminInventory_`
+  and `adminProductsPatch_` read the product *before* taking the script lock,
+  then wrote inside it — so the serialized/service guards, and the "old value"
+  recorded in price history, could describe a row another terminal had already
+  replaced. Both now read and write inside one lock, completing the v1.11.0
+  lock-scope sweep.
+- **Dialogs were a keyboard trap.** Modals and sheets had no `aria-modal`, did
+  not take focus, and could not be dismissed with Escape — on the desktop shell
+  added in v1.13.0 a keyboard user could tab straight out of an open dialog
+  into the register behind it. Escape now closes the top-most dialog, focus
+  moves into it on open (never on a touch device, where pulling focus to an
+  input throws the keyboard up over the dialog), and the panel is marked
+  `aria-modal`.
+
 ## [1.15.0] — 2026-09-10
 
 Customer display and the inventory tools that keep a shelf honest: a

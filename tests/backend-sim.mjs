@@ -2437,6 +2437,85 @@ check('statement carries the changer/cashier',
     takeSheet && takeSheet._grid.length === 3, takeSheet ? String(takeSheet._grid.length) : 'no sheet');
 }
 
+{
+  section('review hardening (v1.15.1)');
+
+  const hdAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const hdCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const hdUsers = req('/api/admin/users/list', {}, { session: hdAdm }).data.users;
+  const hdCashId = hdUsers.find((u) => u.email === 'amara@example.com').id;
+
+  /* --- prototype-shaped keys must not fall off the report or onto a built-in --- */
+  const protoProd = req('/api/admin/products', {
+    name: 'Proto Key Item', sku: 'PROTO-01', category: '__proto__',
+    costPrice: 4, retailPrice: 10, onHand: 50,
+  }, { session: hdAdm }).data.id;
+
+  req('/api/sync/push', {
+    deviceId: 'dev-proto-1',
+    batch: [{
+      clientTxId: 'tx-proto-1', userId: hdCashId, grandTotal: 30,
+      createdAt: new Date().toISOString(), subtotal: 30,
+      tenders: [{ type: 'constructor', amount: 30 }],
+      items: [{ productId: protoProd, quantity: 3, unitPrice: 10 }],
+    }],
+  }, { session: hdCash });
+
+  const protoRep = req('/api/reports', {}, { session: hdAdm }).data;
+  check('a category named __proto__ still reports as a category',
+    protoRep.byCategory.some((c) => c.category === '__proto__' && c.sales === 30),
+    JSON.stringify(protoRep.byCategory.map((c) => c.category)));
+  check('a tender type named constructor still reports as a tender',
+    protoRep.byTender.some((t) => t.type === 'constructor' && t.amount === 30),
+    JSON.stringify(protoRep.byTender.map((t) => t.type)));
+  check('no prototype-shaped key leaked onto a shared built-in',
+    Object.prototype.amount === undefined && Object.amount === undefined);
+  check('the sale still counts once in the summary', protoRep.summary.grossSales >= 30);
+
+  /* --- a serial named like a prototype key is a new serial, not a duplicate --- */
+  const protoSer = req('/api/admin/products', {
+    name: 'Proto Serial Phone', sku: 'PROTO-SER-01', category: 'Proto',
+    costPrice: 100, retailPrice: 200, isSerialized: true,
+  }, { session: hdAdm }).data.id;
+  const addProto = req('/api/admin/serials', {
+    productId: protoSer, serialNumbers: ['constructor', 'toString', 'REAL-SN-1'],
+  }, { session: hdAdm }).data;
+  check('serials named like prototype keys are accepted, not swallowed as duplicates',
+    addProto.added.length === 3 && addProto.duplicates.length === 0,
+    JSON.stringify(addProto));
+  const addProtoAgain = req('/api/admin/serials', {
+    productId: protoSer, serialNumbers: ['constructor'],
+  }, { session: hdAdm }).data;
+  check('a genuinely repeated serial is still caught',
+    addProtoAgain.added.length === 0 && addProtoAgain.duplicates.length === 1);
+
+  /* --- the guards that decide whether a write is legal read under the lock --- */
+  check('stock adjust still refuses a serialized product',
+    req('/api/admin/inventory', { productId: protoSer, onHand: 5 }, { session: hdAdm }).status === 400);
+  const svcProto = req('/api/admin/products', {
+    name: 'Proto Service', sku: 'PROTO-SVC-01', category: 'Proto', itemType: 'service',
+    costPrice: 0, retailPrice: 40,
+  }, { session: hdAdm }).data.id;
+  check('stock adjust still refuses a service',
+    req('/api/admin/inventory', { productId: svcProto, onHand: 3 }, { session: hdAdm }).status === 400);
+  check('stock adjust still refuses an unknown product',
+    req('/api/admin/inventory', { productId: 'nope', onHand: 3 }, { session: hdAdm }).status === 404);
+  check('stock adjust still works on an ordinary product',
+    req('/api/admin/inventory', { productId: protoProd, onHand: 12 }, { session: hdAdm }).data.onHand === 12);
+
+  check('product patch still refuses a reorder point on a service',
+    req('/api/admin/products/patch', { productId: svcProto, reorderPoint: 3 }, { session: hdAdm }).status === 400);
+  check('product patch still refuses an unknown product',
+    req('/api/admin/products/patch', { productId: 'nope', retailPrice: 5 }, { session: hdAdm }).status === 404);
+  check('product patch still refuses an empty change',
+    req('/api/admin/products/patch', { productId: protoProd }, { session: hdAdm }).status === 400);
+
+  const patched = req('/api/admin/products/patch', { productId: protoProd, retailPrice: 14 }, { session: hdAdm });
+  check('product patch still applies and stays audited', patched.ok === true
+    && req('/api/price-history', {}, { session: hdAdm, params: { productId: protoProd } }).data.history
+      .some((h) => h.source === 'patch' && h.field === 'retail_price' && h.oldValue === 10 && h.newValue === 14));
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

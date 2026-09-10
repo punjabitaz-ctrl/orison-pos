@@ -66,13 +66,41 @@ export function toast(msg, type = 'info', ms = 3200) {
   }, ms);
 }
 
+/* Escape closes the top-most dialog, and opening one moves focus into it.
+   Without this a keyboard or screen-reader user on the desktop shell can tab
+   straight out of an open dialog into the register behind it. */
+let escHandler = null;
+
+function armDialog(rootEl, panel, close) {
+  if (!escHandler) {
+    escHandler = (e) => {
+      if (e.key !== 'Escape') return;
+      const sheet = document.getElementById('sheet');
+      const modal = document.getElementById('modal');
+      if (sheet && sheet.firstChild) closeSheet();
+      else if (modal && modal.firstChild) closeModal();
+    };
+    document.addEventListener('keydown', escHandler);
+  }
+  rootEl.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', (e) => {
+    if (e.target === el) close();
+  }));
+  if (panel) {
+    panel.setAttribute('aria-modal', 'true');
+    panel.tabIndex = -1;
+    const first = panel.querySelector('input:not([type="hidden"]), select, textarea, button');
+    /* focus the first field on a pointer-less device only: pulling focus to an
+       input on a phone throws the keyboard up over the dialog. */
+    if (first && !('ontouchstart' in window) && first.tagName !== 'BUTTON') first.focus();
+    else panel.focus();
+  }
+  return panel;
+}
+
 export function openModal(html) {
   const root = document.getElementById('modal');
   root.innerHTML = `<div class="modal-backdrop" data-close><div class="modal" role="dialog">${html}</div></div>`;
-  root.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', (e) => {
-    if (e.target === el) closeModal();
-  }));
-  return root.querySelector('.modal');
+  return armDialog(root, root.querySelector('.modal'), closeModal);
 }
 
 export function closeModal() {
@@ -82,10 +110,7 @@ export function closeModal() {
 export function openSheet(html) {
   const root = document.getElementById('sheet');
   root.innerHTML = `<div class="sheet-backdrop" data-close><div class="sheet" role="dialog">${html}</div></div>`;
-  root.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', (e) => {
-    if (e.target === el) closeSheet();
-  }));
-  return root.querySelector('.sheet');
+  return armDialog(root, root.querySelector('.sheet'), closeSheet);
 }
 
 export function closeSheet() {

@@ -159,15 +159,23 @@ function signToken_(payload) {
   return body + '.' + hmacHex_(sessionSecret_(), body);
 }
 
+/* Length-independent, early-exit-free comparison for secrets. Used for the
+ * session MAC and for the PIN hash: `===` on a hash leaks how many leading
+ * characters matched, and there is no reason to hand that out. */
+function constantEquals_(a, b) {
+  var x = String(a == null ? '' : a);
+  var y = String(b == null ? '' : b);
+  if (x.length !== y.length) return false;
+  var diff = 0;
+  for (var i = 0; i < x.length; i++) diff |= x.charCodeAt(i) ^ y.charCodeAt(i);
+  return diff === 0;
+}
+
 function verifyToken_(token) {
   try {
     var parts = String(token || '').split('.');
     if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
-    var expect = hmacHex_(sessionSecret_(), parts[0]);
-    if (parts[1].length !== expect.length) return null;
-    var diff = 0;
-    for (var i = 0; i < parts[1].length; i++) diff |= parts[1].charCodeAt(i) ^ expect.charCodeAt(i);
-    if (diff) return null;
+    if (!constantEquals_(parts[1], hmacHex_(sessionSecret_(), parts[0]))) return null;
     var payload = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[0])).getDataAsString());
     if (!payload.exp || Date.now() > payload.exp) return null;
     if (isTokenRevoked_(payload.uid, payload.iat)) return null;
@@ -905,7 +913,7 @@ function login_(payload) {
       break;
     }
   }
-  if (!found || sha256Hex_(String(found.pin_salt) + ':' + pin) !== String(found.pin_hash)) {
+  if (!found || !constantEquals_(sha256Hex_(String(found.pin_salt) + ':' + pin), found.pin_hash)) {
     // Counted, but deliberately NOT delayed. Utilities.sleep bills against the
     // script's daily runtime quota and holds a simultaneous-execution slot, so
     // a delay long enough to matter is itself a way to take the till offline;
@@ -2203,12 +2211,17 @@ function reports_(session, params) {
     userName[String(u.id)] = String(u.first_name || '') + ' ' + String(u.last_name || '');
   }
 
-  var byDay = {};
-  var byCat = {};
-  var byCash = {};
-  var byTender = {};
-  var byProduct = {};
-  var byCustomerTx = {};
+  /* Keys here come from data a terminal can choose — a tender type, a product
+   * category. A plain object literal inherits Object.prototype, so a row typed
+   * "__proto__" or "constructor" would land on the prototype chain instead of
+   * the map: the line vanishes from the report, or worse, writes onto a shared
+   * built-in. Null-prototype maps have no such keys to collide with. */
+  var byDay = Object.create(null);
+  var byCat = Object.create(null);
+  var byCash = Object.create(null);
+  var byTender = Object.create(null);
+  var byProduct = Object.create(null);
+  var byCustomerTx = Object.create(null);
   var summary = { grossSales: 0, refunds: 0, payouts: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0 };
 
   function costOf_(t) {
@@ -3920,7 +3933,9 @@ function adminSerials_(session, payload) {
     }
 
     var serialRows = readRows_('Serials', SERIAL_HEADERS);
-    var snSet = {};
+    /* serial numbers are operator-supplied text: a null-prototype set so a
+       serial reading "constructor" is not mistaken for an existing one. */
+    var snSet = Object.create(null);
     for (var j = 0; j < serialRows.length; j++) snSet[String(serialRows[j].serial_number)] = true;
 
     var now = new Date().toISOString();
@@ -3957,22 +3972,24 @@ function adminInventory_(session, payload) {
   var onHand = num_(payload.onHand);
   if (!productId || onHand < 0) throw statusError_(400, 'Product id and onHand are required');
 
-  var prodRows = readRows_('Products', PRODUCT_HEADERS);
-  var product = null;
-  for (var i = 0; i < prodRows.length; i++) {
-    if (String(prodRows[i].id) === productId) { product = prodRows[i]; break; }
-  }
-  if (!product) throw statusError_(404, 'Product not found');
-  if (String(product.is_serialized) === '1') {
-    throw statusError_(400, 'Use serials to manage stock for serialized products');
-  }
-  if (String(product.item_type) === 'service') {
-    throw statusError_(400, 'Services carry no stock to manage');
-  }
-
+  /* The serialized/service checks decide whether this write is legal at all,
+     so they must read the row this call is about to overwrite — not a snapshot
+     taken before the lock, which another terminal may already have replaced. */
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
+    var prodRows = readRows_('Products', PRODUCT_HEADERS);
+    var product = null;
+    for (var i = 0; i < prodRows.length; i++) {
+      if (String(prodRows[i].id) === productId) { product = prodRows[i]; break; }
+    }
+    if (!product) throw statusError_(404, 'Product not found');
+    if (String(product.is_serialized) === '1') {
+      throw statusError_(400, 'Use serials to manage stock for serialized products');
+    }
+    if (String(product.item_type) === 'service') {
+      throw statusError_(400, 'Services carry no stock to manage');
+    }
     applyPatches_('Products', PRODUCT_HEADERS, 'id', {
       [productId]: { on_hand: onHand, updated_at: new Date().toISOString() },
     });
@@ -4012,31 +4029,35 @@ function adminProductsPatch_(session, payload) {
   var productId = String(payload.productId || '').trim();
   if (!productId) throw statusError_(400, 'productId is required');
 
-  var prodRows = readRows_('Products', PRODUCT_HEADERS);
-  var product = null;
-  for (var i = 0; i < prodRows.length; i++) {
-    if (String(prodRows[i].id) === productId) { product = prodRows[i]; break; }
-  }
-  if (!product) throw statusError_(404, 'Product/service not found');
-
-  var patch = {};
-  if (payload.retailPrice != null) patch.retail_price = num_(payload.retailPrice);
-  if (payload.costPrice != null) patch.cost_price = num_(payload.costPrice);
-  if (payload.locked != null) patch.locked = payload.locked ? 1 : 0;
-  if (payload.taxable === true) patch.taxable = 1;
-  else if (payload.taxable === false) patch.taxable = 0;
-  var itemType = String(product.item_type || 'product');
-  if (payload.reorderPoint !== undefined && payload.reorderPoint !== null) {
-    if (itemType === 'service' || String(product.is_serialized) === '1') {
-      throw statusError_(400, 'Reorder point only applies to non-serialized products');
-    }
-    patch.reorder_point = num_(payload.reorderPoint);
-  }
-  if (!Object.keys(patch).length) throw statusError_(400, 'Nothing to update');
-
+  /* The whole body reads the product to decide what is legal AND to record the
+     "old value" in price history, so it runs inside the lock: a pre-lock read
+     would let two concurrent edits each report the same stale old price, and
+     the audit trail would then disagree with what actually happened. */
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
+    var prodRows = readRows_('Products', PRODUCT_HEADERS);
+    var product = null;
+    for (var i = 0; i < prodRows.length; i++) {
+      if (String(prodRows[i].id) === productId) { product = prodRows[i]; break; }
+    }
+    if (!product) throw statusError_(404, 'Product/service not found');
+
+    var patch = {};
+    if (payload.retailPrice != null) patch.retail_price = num_(payload.retailPrice);
+    if (payload.costPrice != null) patch.cost_price = num_(payload.costPrice);
+    if (payload.locked != null) patch.locked = payload.locked ? 1 : 0;
+    if (payload.taxable === true) patch.taxable = 1;
+    else if (payload.taxable === false) patch.taxable = 0;
+    var itemType = String(product.item_type || 'product');
+    if (payload.reorderPoint !== undefined && payload.reorderPoint !== null) {
+      if (itemType === 'service' || String(product.is_serialized) === '1') {
+        throw statusError_(400, 'Reorder point only applies to non-serialized products');
+      }
+      patch.reorder_point = num_(payload.reorderPoint);
+    }
+    if (!Object.keys(patch).length) throw statusError_(400, 'Nothing to update');
+
     patch.updated_at = new Date().toISOString();
     applyPatches_('Products', PRODUCT_HEADERS, 'id', { [productId]: patch });
     if (patch.retail_price !== undefined && num_(product.retail_price) !== num_(patch.retail_price)) {
