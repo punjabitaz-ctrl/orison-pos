@@ -2203,6 +2203,57 @@ check('statement carries the changer/cashier',
     JSON.stringify({ aging: hdAgingLed.aging, balance: hdAgingLed.balance }));
 }
 
+{
+  section('time clock (v1.14.0)');
+
+  const tcAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const tcCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const tcOther = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+
+  const punchIn = req('/api/timeclock/punch', { deviceId: 'dev-tc-1', note: 'floor open' }, { session: tcCash });
+  check('cashier punches in', punchIn.ok === true && punchIn.data.punched === 'in'
+    && punchIn.data.entry.status === 'OPEN' && punchIn.data.entry.clockIn && punchIn.data.entry.minutes === null);
+  check('punch carries the account name, not just an id', punchIn.data.entry.userName === 'Amara Njoku');
+
+  check('a second punch-in while open is refused',
+    req('/api/timeclock/punch', { direction: 'in' }, { session: tcCash }).status === 409);
+  check('punching out with no open entry is refused',
+    req('/api/timeclock/punch', { direction: 'out' }, { session: tcOther }).status === 409);
+  check('an unknown punch direction is rejected',
+    req('/api/timeclock/punch', { direction: 'sideways' }, { session: tcCash }).status === 400);
+
+  const mine = req('/api/timeclock', {}, { session: tcCash }).data;
+  check('open entry surfaces on me.open with its start time',
+    mine.me.open === true && mine.me.since === punchIn.data.entry.clockIn && mine.onFloor === 1);
+
+  const punchOut = req('/api/timeclock/punch', { note: 'lunch' }, { session: tcCash });
+  check('the same account punches out and the entry closes',
+    punchOut.data.punched === 'out' && punchOut.data.entry.status === 'CLOSED'
+    && punchOut.data.entry.clockOut && typeof punchOut.data.entry.minutes === 'number');
+  check('closing keeps both notes on the row', punchOut.data.entry.note === 'floor open | lunch');
+  check('the closed entry updates in place - one row, not two',
+    req('/api/timeclock', {}, { session: tcCash }).data.entries.length === 1);
+
+  req('/api/timeclock/punch', { deviceId: 'dev-tc-2' }, { session: tcOther });
+  const cashierView = req('/api/timeclock', {}, { session: tcCash, params: { userId: 'anything' } }).data;
+  check('a cashier only ever sees their own punches, even asking for another user',
+    cashierView.entries.length === 1 && cashierView.entries.every((e) => e.userName === 'Amara Njoku'));
+  check('a cashier onFloor count covers only themselves', cashierView.onFloor === 0);
+
+  const storeView = req('/api/timeclock', {}, { session: tcAdm }).data;
+  check('a manager sees the whole floor', storeView.entries.length === 2 && storeView.onFloor === 1);
+  check('a manager can filter the roster to one account',
+    req('/api/timeclock', {}, { session: tcAdm, params: { userId: storeView.entries[0].userId } }).data.entries
+      .every((e) => e.userId === storeView.entries[0].userId));
+
+  /* v1.14.0 fix: ?status=all used to hand a cashier every till reconciliation. */
+  const leak = req('/api/shifts', {}, { session: tcCash, params: { status: 'all' } }).data;
+  check('a cashier cannot opt into the store-wide shift roster',
+    leak.shifts.length > 0 && leak.shifts.every((sh) => sh.userName === 'Amara Njoku'));
+  check('a cashier open-shift count is their own, not the store',
+    leak.open === leak.shifts.filter((sh) => sh.status === 'OPEN').length);
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

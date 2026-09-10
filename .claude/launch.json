@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "orison-pos",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "local-web-server", "--port", "8080", "--directory", "public", "--spa", "index.html"],
+      "port": 8080
+    }
+  ]
+}

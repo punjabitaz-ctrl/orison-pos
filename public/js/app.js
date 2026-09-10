@@ -18,8 +18,9 @@ import { screen as inventory } from './screens/inventory.js';
 import { screen as settings } from './screens/settings.js';
 import { screen as dashboard } from './screens/dashboard.js';
 import { screen as alerts } from './screens/alerts.js';
+import { screen as staff } from './screens/staff.js';
 
-const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts };
+const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff };
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -73,6 +74,12 @@ const router = {
       t.classList.toggle('on', t.dataset.tab === def.tab);
     });
     applyRoleTabs();
+    /* the bar scrolls once a manager has every destination on it, so keep the
+       active tab visible instead of stranding it off-screen. */
+    const activeTab = document.querySelector('#tabbar [data-tab].on');
+    if (activeTab && activeTab.scrollIntoView) {
+      activeTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
     const tb = document.getElementById('tabbar');
     const sb = document.getElementById('sidebar');
     if (tb && sb) sb.classList.toggle('hidden', tb.classList.contains('hidden'));

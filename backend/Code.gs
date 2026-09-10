@@ -74,6 +74,8 @@ function dispatch_(action, session, payload, params) {
     case '/api/shifts':          return shifts_(session, params);
     case '/api/shifts/open':     return shiftOpen_(session, payload);
     case '/api/shifts/close':    return shiftClose_(session, payload);
+    case '/api/timeclock':       return timeClock_(session, params);
+    case '/api/timeclock/punch': return timeClockPunch_(session, payload);
     case '/api/conflicts':       return conflicts_(session, params);
     case '/api/conflicts/review': return reviewConflict_(session, payload);
     case '/api/admin/unlock':    return adminUnlock_(session, payload);
@@ -321,6 +323,7 @@ var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 var SUPPLIER_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'address', 'payment_terms', 'active', 'created_at'];
 var PO_HEADERS = ['id', 'store_id', 'supplier_id', 'po_number', 'order_date', 'expected_date', 'status', 'items_json', 'received_json', 'subtotal', 'discount_pct', 'tax_amount', 'total', 'note', 'created_by', 'created_at', 'updated_at'];
+var TIMECLOCK_HEADERS = ['id', 'store_id', 'user_id', 'device_id', 'clock_in', 'clock_out', 'minutes', 'note', 'status'];
 var PRICE_HISTORY_HEADERS = ['id', 'store_id', 'product_id', 'product_name', 'field', 'old_value', 'new_value', 'source', 'po_id', 'changed_by', 'created_at'];
 
 /* Append a price-change event (cost or retail) to the PriceHistory tab. Called
@@ -2979,13 +2982,19 @@ function shiftClose_(session, payload) {
   }
 }
 
+/* A shift row carries another cashier's float, expected drawer and over/short,
+ * so the store-wide view is manager/admin only. A cashier sees their own rows
+ * and their own open count — `params.status=all` used to let anyone opt into
+ * the full roster, which leaked every till reconciliation to every till. */
 function shifts_(session, params) {
-  var role = String(session.role || '');
-  var all = String((params && params.status) || '') === 'all' || role === 'admin' || role === 'manager';
+  var isStore = isStoreRole_(session && session.role);
   var rows = readRows_('Shifts', SHIFTS_HEADERS)
-    .filter(function (s) { return all || String(s.user_id) === String(session.uid); })
+    .filter(function (s) { return isStore || String(s.user_id) === String(session.uid); })
     .sort(function (a, b) { return String(b.opened_at).localeCompare(String(a.opened_at)); });
-  return { shifts: shift_views_(session, rows), open: shiftOpenCount_() };
+  var open = 0;
+  if (isStore) open = shiftOpenCount_();
+  else for (var i = 0; i < rows.length; i++) if (String(rows[i].status) === 'OPEN') open++;
+  return { shifts: shift_views_(session, rows), open: open };
 }
 
 function shiftOpenCount_() {
@@ -3021,6 +3030,132 @@ function shift_views_(session, rows) {
     });
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Time clock — who is on the floor, and for how long
+ * ------------------------------------------------------------------ */
+
+/* A punch is a self-service act: staff clock themselves in and out, and only
+ * managers/admins can read the whole roster. Nobody can punch for somebody
+ * else, so an entry is always evidence about the account that created it. */
+function timeClockView_(rows, nameById) {
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    out.push({
+      id: String(r.id || ''),
+      userId: String(r.user_id || ''),
+      userName: nameById[String(r.user_id || '')] || '—',
+      deviceId: String(r.device_id || ''),
+      clockIn: String(r.clock_in || ''),
+      clockOut: String(r.clock_out || ''),
+      minutes: r.minutes === '' || r.minutes == null ? null : num_(r.minutes),
+      note: String(r.note || ''),
+      status: String(r.status || 'OPEN'),
+    });
+  }
+  return out;
+}
+
+function timeClockNames_() {
+  var userRows = readRows_('Users', USER_HEADERS);
+  var nameById = {};
+  for (var i = 0; i < userRows.length; i++) {
+    nameById[String(userRows[i].id)] = (String(userRows[i].first_name || '') + ' ' + String(userRows[i].last_name || '')).trim();
+  }
+  return nameById;
+}
+
+function timeClock_(session, params) {
+  var isStore = isStoreRole_(session && session.role);
+  var wantUser = String((params && params.userId) || '');
+  var limit = parseInt(params && params.limit, 10);
+  if (isNaN(limit) || limit < 1) limit = 200;
+  limit = Math.min(limit, 500);
+
+  var rows = readRows_('TimeClock', TIMECLOCK_HEADERS).filter(function (r) {
+    if (!isStore) return String(r.user_id) === String(session.uid);
+    return !wantUser || String(r.user_id) === wantUser;
+  });
+  rows.sort(function (a, b) { return String(b.clock_in).localeCompare(String(a.clock_in)); });
+
+  var mine = null;
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].status) === 'OPEN' && String(rows[i].user_id) === String(session.uid)) { mine = rows[i]; break; }
+  }
+  var onFloor = 0;
+  if (isStore) {
+    var all = readRows_('TimeClock', TIMECLOCK_HEADERS);
+    for (var j = 0; j < all.length; j++) if (String(all[j].status) === 'OPEN') onFloor++;
+  } else {
+    onFloor = mine ? 1 : 0;
+  }
+
+  var nameById = timeClockNames_();
+  return {
+    entries: timeClockView_(rows.slice(0, limit), nameById),
+    onFloor: onFloor,
+    me: mine ? { open: true, entryId: String(mine.id), since: String(mine.clock_in || '') } : { open: false },
+  };
+}
+
+/* Punch in or out — the caller's own clock, toggled. Read + write happen under
+ * the script lock so a double-tap can't open two entries or close one twice. */
+function timeClockPunch_(session, payload) {
+  var note = String((payload && payload.note) || '').slice(0, 200);
+  var deviceId = String((payload && payload.deviceId) || '');
+  var want = String((payload && payload.direction) || '').toLowerCase();
+  if (want && want !== 'in' && want !== 'out') throw statusError_(400, 'direction must be in or out');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var rows = readRows_('TimeClock', TIMECLOCK_HEADERS);
+    var open = null;
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i].status) === 'OPEN' && String(rows[i].user_id) === String(session.uid)) { open = rows[i]; break; }
+    }
+    var nameById = timeClockNames_();
+    var now = new Date();
+    var nowIso = now.toISOString();
+
+    if (open) {
+      if (want === 'in') throw statusError_(409, 'already_clocked_in');
+      var inMs = new Date(String(open.clock_in)).getTime();
+      var minutes = isNaN(inMs) ? 0 : Math.max(0, Math.round((now.getTime() - inMs) / 60000));
+      applyPatches_('TimeClock', TIMECLOCK_HEADERS, 'id', {
+        [String(open.id)]: {
+          clock_out: nowIso,
+          minutes: minutes,
+          note: open.note ? String(open.note) + (note ? ' | ' + note : '') : note,
+          status: 'CLOSED',
+        },
+      });
+      var closed = Object.assign({}, open, {
+        clock_out: nowIso, minutes: minutes, status: 'CLOSED',
+        note: open.note ? String(open.note) + (note ? ' | ' + note : '') : note,
+      });
+      return { punched: 'out', entry: timeClockView_([closed], nameById)[0] };
+    }
+
+    if (want === 'out') throw statusError_(409, 'not_clocked_in');
+    var row = {
+      id: Utilities.getUuid(),
+      store_id: getStore_().id,
+      user_id: String(session.uid),
+      device_id: deviceId,
+      clock_in: nowIso,
+      clock_out: '',
+      minutes: '',
+      note: note,
+      status: 'OPEN',
+    };
+    appendRows_('TimeClock', TIMECLOCK_HEADERS, [row]);
+    return { punched: 'in', entry: timeClockView_([row], nameById)[0] };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /* ------------------------------------------------------------------ *

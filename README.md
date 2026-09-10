@@ -20,6 +20,8 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Hardened offline sync** (v1.11.0): a failed (VOIDED) push is re-evaluated — never answered with a false "already synced" — and its retry rewrites the failure in place with the same transaction id; gross profit uses the cost captured at sale time; reports and Drive export bucket by the store's local time zone day.
 - **Client unit tests** (v1.12.0): 154 `node:test` checks for the register-side money engine, sync outbox, IndexedDB layer, and alert classifier — money math, refund/payout builders, offline/VOIDED paths, CRUD + indexes all automated (`npm run test:client`).
 - **Desktop layout + polish** (v1.13.0): toggleable sidebar (240px labels ↔ 64px icon rail, persisted), dual-panel register (catalog left, sticky live cart right), right-anchored checkout & sheets on wide screens, `matchMedia` viewport state, softer shadows/easing/focus rings/tabular numerals — phones and tablets unchanged.
+- **Staff & time clock** (v1.14.0): a Staff screen everyone can reach — punch in/out on your own clock, see your hours and shift history; managers add who is on the floor right now, per-cashier performance (sales, tickets, avg ticket, margin, hours, sales per hour) over today / 7 / 30 days, and the till reconciliation trail.
+- **Dashboard with context** (v1.14.0): KPIs carry trend chips (vs yesterday, vs the 7-day average), today is charted hour by hour with the busiest hour called out, top sellers became a table with units / revenue / margin %, and the shift picture summarises open, closed and over-short for the day.
 - **Role-gated dashboard**: admin/manager see store KPIs, a 14-day revenue chart, top sellers, low-stock alerts, open conflicts, recent shift closes, and one-tap Drive export; cashiers get their own daily numbers.
 - **Admin tools** (in-app): create products and users, adjust non-serialized stock, add serials, manage suppliers and purchase orders, release login lockouts, review conflicts, and revoke a stolen terminal's sessions.
 - **POS lock**: staff sign in with a PIN pad; five wrong PINs lock that account for 15 minutes.
@@ -157,7 +159,7 @@ public/js/db.js          IndexedDB layer (products, catalog, outbox, offline cre
 public/js/sync.js        Outbox push/pull, First-Committed-Wins + VOIDED handling
 public/js/money.js       Money math (integer-cents engine, refund builder)
 public/js/receipt-send.js  Receipt PDF / share transport (thermal, clipboard, Web Share)
-public/js/screens/*.js   login, register, checkout, history, customers, reports, purchases, inventory, settings, dashboard, alerts
+public/js/screens/*.js   login, register, checkout, history, customers, reports, purchases, inventory, settings, dashboard, alerts, staff
 public/css/style.css     Full UI + @media print receipt mode
 public/sw.js             Service worker — VERSION bumped every release; precaches the shell
 tests/backend-sim.mjs    Backend logic tests vs an in-memory Apps Script mock (359 cases)

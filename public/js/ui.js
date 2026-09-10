@@ -166,3 +166,26 @@ export function el(html) {
   t.innerHTML = html.trim();
   return t.content.firstElementChild;
 }
+/* Loading placeholder that matches the shape of the content it stands in for,
+   so a slow screen keeps its layout instead of collapsing to a spinner. */
+export function skeleton(kind = 'rows', count = 3) {
+  const one = {
+    rows: '<div class="sk-row"><div class="sk sk-avatar"></div><div class="sk-lines"><div class="sk sk-line"></div><div class="sk sk-line short"></div></div></div>',
+    kpis: '<div class="sk sk-kpi"></div>',
+    chart: '<div class="sk sk-chart"></div>',
+    table: '<div class="sk sk-trow"></div>',
+  }[kind] || '<div class="sk sk-line"></div>';
+  return `<div class="skeleton ${kind === 'kpis' ? 'sk-kpis' : ''}" aria-hidden="true">${one.repeat(Math.max(1, count))}</div>`;
+}
+
+/* One empty-state component for every screen: a glyph, what is missing, why,
+   and (when there is one) the action that fills it. */
+export function emptyState({ icon = '·', title = 'Nothing here yet', body = '', action = '', actionId = '' } = {}) {
+  return `
+    <div class="empty-state">
+      <div class="es-icon" aria-hidden="true">${esc(icon)}</div>
+      <h4>${esc(title)}</h4>
+      ${body ? `<p>${esc(body)}</p>` : ''}
+      ${action && actionId ? `<button class="btn btn-sm" id="${esc(actionId)}">${esc(action)}</button>` : ''}
+    </div>`;
+}

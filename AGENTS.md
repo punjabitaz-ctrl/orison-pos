@@ -21,7 +21,8 @@ public/js/api.js         /exec transport (envelope, APP_TOKEN, session, offline 
 public/js/db.js          IndexedDB layer
 public/js/sync.js        Outbox push/pull + VOIDED handling
 public/js/money.js       Money math
-public/js/screens/*.js   login register checkout history customers reports purchases inventory settings dashboard alerts
+public/js/stats.js       Shared aggregation (day totals, trends, hourly buckets, top sellers, hours)
+public/js/screens/*.js   login register checkout history customers reports purchases inventory settings dashboard alerts staff
 public/js/receipt-send.js  Receipt PDF/share
 public/css/style.css     UI + @media print receipt mode
 public/sw.js             Service worker (VERSION must be bumped every release)

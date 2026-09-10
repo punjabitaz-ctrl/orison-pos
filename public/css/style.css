@@ -1038,3 +1038,150 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; le
 .cart-total strong, .tender-amount-display strong,
 .dash-kpi strong, .hx-right strong, .rank-row strong,
 .co-tender-amount, .r-line b, .inv-price { font-variant-numeric: tabular-nums; }
+
+/* =========================================================
+   v1.14.0 — screen refresh: touch targets, skeletons,
+   empty states, data tables, trend chips, time clock
+   ========================================================= */
+
+/* The bar carries ten destinations for a manager. Rather than shave every
+   target below the thumb-friendly minimum, it scrolls. */
+.tabbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
+.tabbar::-webkit-scrollbar { display: none; }
+.tabbar .tab { flex: 1 0 auto; min-width: 64px; min-height: 44px; }
+
+.btn, .btn-sm, .seg-btn, .chip, .quick, .disc-btn { min-height: 44px; }
+.icon-btn { width: 44px; height: 44px; }
+.btn-sm { min-height: 40px; }
+.qty-btn, .cl-remove { min-width: 40px; min-height: 40px; }
+
+.sect-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin: 8px 0;
+}
+.sect-head h3 { margin: 0; }
+.sect-head .muted { font-size: 12px; }
+.scr-note { padding: 4px 16px; }
+
+/* ---- KPI trend chips ---- */
+.kpi-trend {
+  font-style: normal; font-size: 11px; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-trend span { font-weight: 600; color: var(--muted); }
+.kpi-trend.up { color: var(--ok); }
+.kpi-trend.down { color: var(--danger); }
+.kpi-trend.flat { color: var(--muted); }
+
+/* ---- Stat strip ---- */
+.stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+.stat {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.stat span { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.stat strong { font-size: 17px; font-variant-numeric: tabular-nums; }
+
+/* ---- Data tables ---- */
+.table-wrap {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; overflow-x: auto;
+}
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th, .data-table td { padding: 10px 12px; text-align: left; white-space: nowrap; }
+.data-table thead th {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--muted); border-bottom: 1px solid var(--line);
+}
+.data-table tbody tr + tr td { border-top: 1px solid var(--line); }
+.data-table td.num, .data-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table tbody td:nth-child(2) { white-space: normal; }
+.data-table tfoot td { border-top: 1.5px solid var(--line-2); font-weight: 700; }
+.data-table .rank-cell { color: var(--muted); font-weight: 800; }
+.data-table .gp { color: var(--ok); }
+.data-table .neg { color: var(--danger); }
+.data-table em.muted { font-style: normal; font-size: 11px; }
+
+/* ---- Skeletons: hold the layout while data lands ---- */
+.skeleton { display: flex; flex-direction: column; gap: 8px; padding: 4px 16px; }
+.skeleton.sk-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.sk {
+  border-radius: 10px;
+  background: linear-gradient(100deg, #e7ecf3 30%, #f4f7fb 50%, #e7ecf3 70%);
+  background-size: 220% 100%;
+  animation: sk-shimmer 1.4s var(--ease) infinite;
+}
+.sk-row { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.sk-avatar { width: 34px; height: 34px; border-radius: 10px; flex: none; }
+.sk-lines { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.sk-line { height: 11px; }
+.sk-line.short { width: 45%; }
+.sk-kpi { height: 66px; }
+.sk-chart { height: 116px; }
+.sk-trow { height: 38px; }
+@keyframes sk-shimmer { from { background-position: 180% 0; } to { background-position: -20% 0; } }
+@media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
+
+/* ---- One empty state for every screen ---- */
+.empty-state {
+  background: var(--card); border: 1px dashed var(--line-2);
+  border-radius: 14px; padding: 28px 18px;
+  text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.empty-state .es-icon { font-size: 26px; line-height: 1; opacity: .75; }
+.empty-state h4 { font-size: 15px; font-weight: 700; }
+.empty-state p { font-size: 13px; color: var(--muted); max-width: 36ch; }
+.empty-state .btn { margin-top: 4px; }
+
+/* ---- Time clock ---- */
+.clock-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 14px; padding: 14px 16px;
+  box-shadow: var(--shadow-sm);
+}
+.clock-card.on { border-color: var(--ok); }
+.clock-state { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.clock-state strong { font-size: 15px; }
+.clock-state p { font-size: 12px; }
+.clock-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex: none;
+  background: var(--line-2);
+}
+.clock-card.on .clock-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px rgba(5, 150, 105, .16);
+}
+.tag {
+  font-size: 11px; font-weight: 800; letter-spacing: .4px;
+  color: var(--muted); background: var(--bg);
+  padding: 4px 8px; border-radius: 999px;
+}
+.tag-live { color: #fff; background: var(--ok); }
+.shift-stats { padding: 0; }
+.seg-sm .seg-btn { padding: 8px 12px; font-size: 12px; min-height: 40px; white-space: nowrap; }
+
+@media (min-width: 720px) {
+  .stat-row { grid-template-columns: repeat(3, 1fr); }
+  .dash-kpis { grid-template-columns: repeat(4, 1fr); }
+}
+@media (min-width: 1024px) {
+  .skeleton.sk-kpis { grid-template-columns: repeat(4, 1fr); }
+}
+
+/* A KPI now carries a trend line under the figure, so two columns on a phone
+   beat three cramped ones; the chip's own label must escape the card's
+   uppercase treatment and stay on one line. */
+.dash-kpis { grid-template-columns: repeat(2, 1fr); }
+.dash-kpi .kpi-trend {
+  text-transform: none; letter-spacing: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dash-kpi .kpi-trend span {
+  text-transform: none; letter-spacing: 0;
+  font-size: 10px; font-weight: 600;
+}
+@media (min-width: 560px) { .dash-kpis { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 900px) { .dash-kpis { grid-template-columns: repeat(4, 1fr); } }

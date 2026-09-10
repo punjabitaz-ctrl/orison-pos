@@ -1,36 +1,26 @@
 'use strict';
 
-/* Dashboard: role-aware home screen. Cashiers see their own daily numbers;
-   managers and admins see store-wide KPIs, a 14-day revenue chart, top
-   sellers, low-stock alerts and one-click CSV export to Google Drive. */
+/* Dashboard: role-aware home screen. Cashiers see their own day with the same
+   trend context managers get; managers and admins add store-wide KPIs, an
+   hour-by-hour read on today, a 14-day revenue chart, a top-seller table, the
+   shift picture, low-stock alerts, and one-click CSV export to Drive. All
+   aggregation lives in stats.js so every surface agrees on the numbers. */
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
-import { fmt, esc, toast, beep, openModal, closeModal } from '../ui.js';
+import { fmt, esc, toast, beep, openModal, closeModal, skeleton, emptyState } from '../ui.js';
 import { SYNC_EVENT, getDeviceId } from '../sync.js';
 import { inventoryAlerts } from '../alerts.js';
 import { createPayout } from '../money.js';
+import {
+  dayKey, shiftDayKey, dayTotals, trend, baselineAverage, hourlyBuckets,
+  tradingWindow, busiestHour, topSellers, withinDays, signedNet, kindOf,
+} from '../stats.js';
 
 const MANAGER_ROLES = ['admin', 'manager'];
 
-function todayKey(offsetDays = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() - offsetDays);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}
-
-function dayKeyOf(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d)) return '';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}
+const todayKey = (offsetDays = 0) => shiftDayKey(offsetDays);
+const dayKeyOf = (iso) => dayKey(iso);
 
 function money(v) {
   return fmt(v || 0);
@@ -85,18 +75,17 @@ export const screen = {
     function draw() {
       const relevant = scope();
       const now = new Date();
-      const todayTx = relevant.filter((t) => dayKeyOf(t.createdAt) === today);
-      const kindOf = (t) => t.kind || 'sale';
-      const salesTx = todayTx.filter((t) => kindOf(t) === 'sale');
-      const refundsTx = todayTx.filter((t) => kindOf(t) === 'refund');
-      const payoutsTx = todayTx.filter((t) => kindOf(t) === 'payout');
-      const sumTx = (arr) => arr.reduce((s, t) => s + (t.grandTotal || 0), 0);
-      const todaySales = sumTx(salesTx);
-      const todayRefunds = sumTx(refundsTx);
-      const todayPayouts = sumTx(payoutsTx);
-      const todayRevenue = todaySales - todayRefunds - todayPayouts;
-      const todayUnits = salesTx.reduce((s, t) => s + (t.items || []).reduce((a, i) => a + (i.quantity || 1), 0), 0);
-      const todayGP = todayTx.reduce((s, t) => s + (Number(t.grossProfit) || 0), 0);
+      const d0 = dayTotals(relevant, today);
+      const d1 = dayTotals(relevant, todayKey(1));
+      const netTrend = trend(d0.net, d1.net);
+      const ticketTrend = trend(d0.tickets, d1.tickets);
+      const gpTrend = trend(d0.gp, baselineAverage(relevant, today, 7, 'gp'));
+      const avgTrend = trend(d0.avgTicket, d1.avgTicket);
+      const hours = hourlyBuckets(relevant, today);
+      const peak = busiestHour(hours);
+      const recent30 = withinDays(relevant, 30);
+      const sellers = topSellers(recent30, 5);
+      const sellerWindow = recent30.filter((t) => kindOf(t) === 'sale').length;
 
       const recent = [...relevant].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 4);
       const alerts = inventoryAlerts(products);
@@ -115,13 +104,27 @@ export const screen = {
         </header>
 
         <div class="dash-kpis">
-          <div class="dash-kpi"><span>Revenue today</span><strong>${money(todayRevenue)}</strong></div>
-          <div class="dash-kpi"><span>Sales today</span><strong>${todayTx.length}</strong></div>
-          <div class="dash-kpi"><span>Units today</span><strong>${todayUnits}</strong></div>
+          <div class="dash-kpi">
+            <span>Net revenue today</span><strong>${money(d0.net)}</strong>
+            ${trendBadge(netTrend, 'money', 'vs yesterday')}
+          </div>
+          <div class="dash-kpi">
+            <span>Sales today</span><strong>${d0.tickets}</strong>
+            ${trendBadge(ticketTrend, 'count', 'vs yesterday')}
+          </div>
+          <div class="dash-kpi">
+            <span>Avg ticket</span><strong>${money(d0.avgTicket)}</strong>
+            ${trendBadge(avgTrend, 'money', 'vs yesterday')}
+          </div>
+          <div class="dash-kpi"><span>Units today</span><strong>${d0.units}</strong></div>
           ${isManager ? `
-          <div class="dash-kpi warn"><span>Refunds</span><strong>−${money(todayRefunds)}</strong></div>
-          <div class="dash-kpi warn"><span>Paid out</span><strong>−${money(todayPayouts)}</strong></div>
-          <div class="dash-kpi dash-gp"><span>Gross profit today</span><strong>${money(todayGP)}</strong></div>` : ''}
+          <div class="dash-kpi warn"><span>Refunds</span><strong>−${money(d0.refunds)}</strong></div>
+          <div class="dash-kpi warn"><span>Paid out</span><strong>−${money(d0.payouts)}</strong></div>
+          <div class="dash-kpi"><span>Collected</span><strong>${money(d0.collections)}</strong></div>
+          <div class="dash-kpi dash-gp">
+            <span>Gross profit today</span><strong>${money(d0.gp)}</strong>
+            ${trendBadge(gpTrend, 'money', 'vs 7-day avg')}
+          </div>` : ''}
         </div>
 
         <section class="dash-section">
@@ -138,17 +141,18 @@ export const screen = {
               <div><strong>No open shift</strong><p class="muted">Open one to reconcile the till when you close. Sales run fine either way.</p></div>
               <button class="btn" id="shiftOpen">Open shift</button>
             </div>`}
-          ${isManager ? `
-            <div class="rank-list" style="margin-top:10px">
-              ${shifts.filter((s) => s.status === 'CLOSED').slice(0, 5).map((s) => `
-                <div class="rank-row">
-                  <div class="rank-main"><div class="rank-name">${esc(s.userName)}</div><div class="muted">${humanDate(s.closedAt)} · expected ${money(s.expectedCash)}</div></div>
-                  <b class="${s.overShort === 0 ? 'gp' : 'neg'}">${s.overShort > 0 ? '+' : ''}${money(s.overShort)}</b>
-                </div>`).join('') || '<p class="muted">No closed shifts yet.</p>'}
-            </div>` : ''}
+          ${isManager ? shiftSummary(shifts, today) : ''}
         </section>
 
         ${isManager ? `
+        <section class="dash-section">
+          <div class="sect-head">
+            <h3>Today by hour</h3>
+            <span class="muted">${peak ? 'busiest ' + hourLabel(peak.hour) + ' · ' + money(peak.sales) : 'no sales yet today'}</span>
+          </div>
+          <div class="dash-chart">${hourChart(hours)}</div>
+        </section>
+
         <section class="dash-section">
           <h3>Revenue — last 14 days</h3>
           <div class="dash-chart">${barChart(last14(txs))}</div>
@@ -177,15 +181,27 @@ export const screen = {
         </section>` : ''}
 
         <section class="dash-section">
-          <h3>Top sellers <span class="muted">· last ${last30(txs).length} sales</span></h3>
-          ${topSellers(last30(txs)).length
-            ? `<div class="rank-list">${topSellers(last30(txs)).map((t, i) => `
-                <div class="rank-row">
-                  <span class="rank-idx">${i + 1}</span>
-                  <div class="rank-main"><div class="rank-name">${esc(t.name)}</div><div class="muted">${t.units} unit${t.units === 1 ? '' : 's'}</div></div>
-                  <b>${money(t.rev)}${t.gp !== 0 ? `<span class="gp">&nbsp;·&nbsp;${money(t.gp)} margin</span>` : ''}</b>
-                </div>`).join('')}</div>`
-            : `<p class="empty">No sales synced yet.</p>`}
+          <div class="sect-head">
+            <h3>Top sellers</h3>
+            <span class="muted">last 30 days · ${sellerWindow} sale${sellerWindow === 1 ? '' : 's'}</span>
+          </div>
+          ${sellers.length
+            ? `<div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th>#</th><th>Item</th><th class="num">Units</th><th class="num">Revenue</th><th class="num">Margin</th></tr></thead>
+                  <tbody>
+                    ${sellers.map((t, i) => `
+                      <tr>
+                        <td class="rank-cell">${i + 1}</td>
+                        <td>${esc(t.name)}</td>
+                        <td class="num">${t.units}</td>
+                        <td class="num">${money(t.rev)}</td>
+                        <td class="num ${t.gp < 0 ? 'neg' : 'gp'}">${money(t.gp)}${t.rev ? ' <em class="muted">' + t.margin.toFixed(0) + '%</em>' : ''}</td>
+                      </tr>`).join('')}
+                  </tbody>
+                </table>
+              </div>`
+            : emptyState({ icon: '🏷', title: 'No sales synced yet', body: 'Top sellers appear once sales reach the server.' })}
         </section>
 
         <section class="dash-section">
@@ -217,7 +233,16 @@ export const screen = {
 
         <div class="row dash-actions">
           <button class="btn" id="dashExport">My report today → Drive</button>
+          <button class="btn btn-ghost" id="dashStaff">Time clock</button>
         </div>
+
+        <section class="dash-section">
+          <div class="sect-head">
+            <h3>My day by hour</h3>
+            <span class="muted">${peak ? 'busiest ' + hourLabel(peak.hour) : 'no sales yet today'}</span>
+          </div>
+          <div class="dash-chart">${hourChart(hours)}</div>
+        </section>
 
         <section class="dash-section">
           <h3>My recent</h3>
@@ -230,7 +255,7 @@ export const screen = {
               </div>
               <div class="hx-right"><strong>${money(t.grandTotal)}</strong></div>
             </button>`).join('')}</div>`
-            : `<p class="empty">No sales yet — start with the register.</p>`}
+            : emptyState({ icon: '🛒', title: 'No sales yet', body: 'Ring your first sale from the register.' })}
         </section>
 
         <button class="btn btn-block" id="dashHistory">View full history</button>
@@ -247,6 +272,8 @@ export const screen = {
       if (invBtn) invBtn.addEventListener('click', () => router.show('inventory'));
       const alertBtn = root.querySelector('#dashAlerts');
       if (alertBtn) alertBtn.addEventListener('click', () => router.show('alerts'));
+      const staffBtn = root.querySelector('#dashStaff');
+      if (staffBtn) staffBtn.addEventListener('click', () => router.show('staff'));
       const payoutBtn = root.querySelector('#dashPayout');
       if (payoutBtn) payoutBtn.addEventListener('click', () => openPayoutModal());
       const shiftOpenBtn = root.querySelector('#shiftOpen');
@@ -457,6 +484,14 @@ export const screen = {
       modalEl.querySelector('#res-ok').addEventListener('click', closeModal);
     }
 
+    root.innerHTML = `
+      <header class="scr-head">
+        <div class="scr-title"><h2>Dashboard</h2><p>Loading today’s numbers…</p></div>
+      </header>
+      ${skeleton('kpis', isManager ? 8 : 4)}
+      ${skeleton('chart', 1)}
+      ${skeleton('rows', 3)}`;
+
     const onSync = () => { load(); };
     window.addEventListener(SYNC_EVENT, onSync);
 
@@ -499,7 +534,6 @@ function openStr(open) {
 }
 
 function last14(txs) {
-  const kindOf = (t) => t.kind || 'sale';
   const buckets = [];
   for (let i = 13; i >= 0; i--) {
     const key = todayKey(i);
@@ -511,9 +545,7 @@ function last14(txs) {
     const k = dayKeyOf(t.createdAt);
     for (const b of buckets) {
       if (b.key === k) {
-        const v = t.grandTotal || 0;
-        if (kindOf(t) === 'sale' || (t.kind || '') === 'payment') b.total += v;
-        else b.total -= v; // refunds and payouts reduce net cash; payments are money in
+        b.total += signedNet(t);
         b.count += 1;
         break;
       }
@@ -546,38 +578,84 @@ function barChart(buckets) {
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" aria-label="Revenue last 14 days">${grid}${bars}</svg>`;
 }
 
-function last30(txs) {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 30);
-  return txs.filter((t) => new Date(t.createdAt) >= cutoff);
-}
 
-function topSellers(txs) {
-  const tally = new Map();
-  for (const t of txs) {
-    if ((t.kind || 'sale') !== 'sale') continue; // refund/payout lines aren't units sold
-    for (const it of t.items || []) {
-      const name = String(it.name || 'Item');
-      const e = tally.get(name) || { name, units: 0, rev: 0, gp: 0 };
-      e.units += it.quantity || 1;
-      e.rev += (it.unitPrice || 0) * (it.quantity || 1);
-      if (it.unitCost != null) e.gp += ((it.unitPrice || 0) - (it.unitCost || 0)) * (it.quantity || 1);
-      tally.set(name, e);
-    }
-  }
-  return [...tally.values()].sort((a, b) => b.units - a.units).slice(0, 5);
-}
 
-function lowStock(products) {
-  return products
-    .map((p) => ({ ...p, onHand: Number(p.onHand) || 0 }))
-    .filter((p) => p.onHand <= 5)
-    .sort((a, b) => a.onHand - b.onHand);
-}
 
 function humanDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d)) return iso;
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+/* Direction chip under a KPI: an arrow, the size of the move, and what it is
+   measured against. A zero baseline has no honest percentage, so it shows the
+   absolute move instead of a fabricated one. */
+function trendBadge(t, unit = 'money', label = '') {
+  if (!t) return '';
+  const arrow = t.dir === 'up' ? '\u2191' : (t.dir === 'down' ? '\u2193' : '\u2192');
+  const mag = t.pct == null
+    ? (unit === 'money' ? money(Math.abs(t.delta)) : String(Math.abs(t.delta)))
+    : Math.abs(t.pct).toFixed(t.pct !== 0 && Math.abs(t.pct) < 10 ? 1 : 0) + '%';
+  const cls = t.dir === 'flat' ? 'flat' : (t.dir === 'up' ? 'up' : 'down');
+  return `<em class="kpi-trend ${cls}">${arrow} ${esc(mag)}${label ? ' <span>' + esc(label) + '</span>' : ''}</em>`;
+}
+
+function hourLabel(h) {
+  const hh = ((Number(h) || 0) % 24 + 24) % 24;
+  const ampm = hh < 12 ? 'am' : 'pm';
+  const base = hh % 12 === 0 ? 12 : hh % 12;
+  return `${base}${ampm}`;
+}
+
+/* Today, hour by hour, across the trading window only — an all-night axis
+   would squash the day into a sliver. Bars carry a title so a long-press or
+   hover names the hour and its takings. */
+function hourChart(buckets) {
+  const win = tradingWindow(buckets);
+  const slice = buckets.slice(win.from, win.to + 1);
+  const W = 340, H = 116, PAD = 8, H2 = 82, base = H - H2 - 12;
+  const max = Math.max(1, ...slice.map((b) => b.sales));
+  const bw = (W - PAD * 2) / Math.max(1, slice.length);
+  const bars = slice.map((b, i) => {
+    const h = b.sales > 0 ? Math.max(3, Math.round((b.sales / max) * H2)) : 2;
+    const x = Math.round(PAD + i * bw + bw * 0.18);
+    const w = Math.max(2, Math.round(bw * 0.64));
+    const y = base + H2 - h;
+    const showLabel = slice.length <= 14 || i % 2 === 0;
+    return `
+      <g>
+        <title>${hourLabel(b.hour)} — ${money(b.sales)} (${b.count})</title>
+        <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${b.sales ? '#c9982a' : '#e6ebf2'}"></rect>
+        ${showLabel ? `<text x="${x + w / 2}" y="${H - 3}" text-anchor="middle" font-size="8" fill="#7b8ca0">${hourLabel(b.hour)}</text>` : ''}
+      </g>`;
+  }).join('');
+  const grid = [0, 0.5, 1].map((f) => {
+    const y = Math.round(base + H2 - f * H2);
+    return `<line x1="${PAD}" y1="${y}" x2="${W - PAD}" y2="${y}" stroke="#eef2f7" stroke-width="1"></line>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Sales by hour today">${grid}${bars}</svg>`;
+}
+
+/* The store's shift picture at a glance: who is still open, what closed today,
+   and whether the drawers balanced. The detail lives on the Staff screen. */
+function shiftSummary(shifts, today) {
+  const rows = shifts || [];
+  const open = rows.filter((s) => s.status === 'OPEN');
+  const closedToday = rows.filter((s) => s.status === 'CLOSED' && dayKey(s.closedAt) === today);
+  const net = closedToday.reduce((sum, s) => sum + (Number(s.overShort) || 0), 0);
+  const recent = rows.filter((s) => s.status === 'CLOSED').slice(0, 3);
+  return `
+    <div class="stat-row shift-stats">
+      <div class="stat"><span>Open now</span><strong>${open.length}</strong></div>
+      <div class="stat"><span>Closed today</span><strong>${closedToday.length}</strong></div>
+      <div class="stat"><span>Over / short today</span><strong class="${net === 0 ? '' : (net > 0 ? 'gp' : 'neg')}">${net > 0 ? '+' : ''}${money(net)}</strong></div>
+    </div>
+    ${recent.length ? `<div class="rank-list">
+      ${recent.map((s) => `
+        <div class="rank-row">
+          <div class="rank-main"><div class="rank-name">${esc(s.userName)}</div><div class="muted">${humanDate(s.closedAt)} \u00b7 expected ${money(s.expectedCash)}</div></div>
+          <b class="${Number(s.overShort) === 0 ? 'gp' : 'neg'}">${Number(s.overShort) > 0 ? '+' : ''}${money(s.overShort)}</b>
+        </div>`).join('')}
+    </div>` : '<p class="muted">No closed shifts yet.</p>'}
+    <div class="row dash-actions"><button class="btn btn-ghost btn-sm" id="dashStaff">Staff &amp; time clock</button></div>`;
 }

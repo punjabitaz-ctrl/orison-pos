@@ -5,6 +5,66 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] — 2026-09-10
+
+Screen refresh, an enhanced dashboard, and the staff tools that were missing:
+a time clock everyone can punch, per-cashier performance for managers, and a
+dashboard that answers "is today good?" instead of only "what is today?".
+
+### Added
+
+- **Time clock** — new `TimeClock` sheet and two endpoints. `/api/timeclock/punch`
+  toggles the caller's **own** clock (one OPEN entry per account; punching out
+  closes that row in place with the elapsed minutes, never appending a second),
+  and `/api/timeclock` lists punches with an `onFloor` count. Nobody can punch
+  for anybody else, so an entry is always evidence about the account that made
+  it. Double punch-in → 409, punch-out with nothing open → 409.
+- **Staff screen** (`public/js/screens/staff.js`, new `staff` tab in both navs)
+  — every role gets their own clock card (state, punch button, hours today /
+  last 7 days, recent punches) and their shift history. Managers and admins
+  additionally get **On the floor** (who is clocked in, and for how long),
+  **Team performance** over today / 7 days / 30 days (sales, tickets, avg
+  ticket, margin, hours worked, sales per hour) and the **till reconciliation**
+  table with a net over/short footer.
+- **Dashboard trend chips** — net revenue, ticket count and average ticket
+  carry a direction chip against yesterday, and gross profit against the
+  trailing 7-day average. A zero baseline prints the absolute move rather than
+  a fabricated percentage.
+- **Today by hour** — an hourly sales chart for the current day (managers see
+  the store, cashiers see themselves), drawn across the trading window only so
+  an empty overnight can't flatten the day, with the busiest hour called out.
+- **Top sellers table** — the rank list became a real table: units, revenue,
+  gross profit and margin %, ranked by revenue over the last 30 days.
+- **Shift summary on the dashboard** — open now / closed today / over-short
+  today as a stat strip, the three most recent closes, and a jump to Staff.
+- **`public/js/stats.js`** — one pure aggregation module (day totals, signed
+  net, trends, baseline averages, hourly buckets, trading window, top sellers,
+  hours from punches, duration formatting) shared by Dashboard and Staff so
+  every surface agrees on the numbers. 36 new unit checks in
+  `tests/client-stats.mjs`.
+- **`skeleton()` and `emptyState()`** in `ui.js` — one loading placeholder that
+  holds the layout, and one empty state (glyph, what's missing, why, and the
+  action that fills it) for every screen.
+
+### Fixed
+
+- **Security — shift roster leak.** `/api/shifts` honoured `?status=all` from
+  any caller, so a cashier could read every other cashier's opening float,
+  expected drawer, declared cash and over/short. The parameter is gone; the
+  store-wide roster is `isStoreRole_`-gated and a cashier's open-shift count is
+  now their own rather than the store's.
+- **Touch targets** — buttons, chips, segments, quantity steppers and icon
+  buttons all meet 44px; the bottom tab bar scrolls horizontally (64px tabs)
+  now that a manager has ten destinations on it, instead of shaving every
+  target below the thumb minimum. The active tab scrolls itself into view.
+- **KPI grid on phones** — two columns below 560px (three to 900px, four above)
+  so a KPI, its figure and its trend line fit without wrapping mid-phrase.
+
+### Removed
+
+- Dead `lowStock()` helper in `dashboard.js`, and the local `topSellers`/`last30`
+  copies now that `stats.js` owns them.
+
 ## [1.13.0] — 2026-09-09
 
 Theme polish + responsive infrastructure. The desktop terminal finally gets a

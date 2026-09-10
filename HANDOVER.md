@@ -13,9 +13,9 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.13.0** — theme polish + responsive shell (`2026-09-09`) |
-| Validation bar | `backend-sim` **PASS 359 / FAIL 0** · client units **PASS 154 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
-| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~3,340 lines) |
+| Current version | **v1.14.0** — screen refresh + dashboard context + staff tools (`2026-09-10`) |
+| Validation bar | `backend-sim` **PASS 374 / FAIL 0** · client units **PASS 190 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~3,870 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell |
 | Node | ≥ 20 (dev/test only) |
 
@@ -126,6 +126,24 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.14.0** Screen refresh + dashboard context + staff tools: new
+  **`TimeClock`** sheet with `/api/timeclock` + `/api/timeclock/punch` (own
+  clock only, one OPEN entry per account, closed in place with elapsed
+  minutes); new **Staff** screen (own clock + hours + punches + shift history
+  for everyone; *On the floor*, *Team performance* over today/7/30 days with
+  hours and sales-per-hour, and the till-reconciliation table for
+  managers/admins); dashboard **trend chips** (vs yesterday, vs 7-day average),
+  **Today by hour** chart across the trading window with the busiest hour
+  named, **top sellers as a table** (units/revenue/margin %), and a **shift
+  strip** (open now / closed today / over-short today). New pure module
+  **`public/js/stats.js`** owns all of that aggregation (36 unit checks in
+  `tests/client-stats.mjs`). `ui.js` gained `skeleton()` + `emptyState()`.
+  **Security:** `/api/shifts?status=all` let any cashier read every till
+  reconciliation — the escape hatch is gone and the roster is
+  `isStoreRole_`-gated. **Fixed:** 44px touch targets everywhere; the bottom
+  tab bar now scrolls (64px tabs) rather than shaving targets across ten
+  destinations, and the active tab scrolls into view; KPI grid is 2/3/4 columns
+  by width so the trend line fits on a phone.
 - **v1.7.1** Post-review hardening: **refunds now admin/manager-only**;
   role changes revoke sessions immediately; Drive export no longer counts
   purchase receipts as SALES and nets collections as money-in (`COLLECTIONS`
@@ -139,7 +157,7 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
 
 `Meta` (kv) · `Users` · `Products` · `Serials` (`AVAILABLE`/`SOLD`/`VOIDED`) ·
 `Transactions` · `Conflicts` · `Devices` · `Customers` · `Shifts` ·
-`Suppliers` · `PurchaseOrders` · `PriceHistory`.
+`Suppliers` · `PurchaseOrders` · `PriceHistory` · `TimeClock`.
 
 Ledger kinds: `sale` (incl. legacy `''`), `refund`, `payout`, `payment`
 (= collection, money-in), `purchase` (PO receipt — must never count as sales
@@ -150,15 +168,19 @@ admin/manager.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. 359 checks: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. 374 checks: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
-  PO receive math, role gates.
+  PO receive math, role gates, and the time clock (punch toggle, 409 guards,
+  cashier-scoped reads, the `?status=all` shift-roster fix).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  154 checks: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  190 checks: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
-  ui `fmt`/`esc`/`debounce`.
+  ui `fmt`/`esc`/`debounce`, and (v1.14.0) `stats.js` — day totals by kind,
+  signed net, trends against a zero/negative baseline, baseline averages that
+  exclude their own day, hourly buckets + trading window, top sellers/margin,
+  hours from open and closed punches.
 - `tests/pdf-send-smoke.mjs` — real headless browser, receipt PDF/share.
 - `tests/e2e.mjs` — online happy path only; **skips without a live backend**;
   offline toggle, queue-then-reconnect sync, refunds, customers, reports, and
@@ -237,13 +259,14 @@ Status of every finding class:
      races, VOIDED re-push idempotency, same-batch refunds/duplicates, GP
      cost-at-sale, discounts in breakdowns, store-TZ day windows).
    - ~~**Client test harness for `money.js`/`sync.js`**~~ — shipped in
-     **v1.12.0** (154 unit checks across money/sync/db/alerts/ui).
-2. **Deploy current version** — v1.13.0 changes **the public shell only**
-   (`public/` HTML/CSS/JS + `sw.js` VERSION bump). No backend redeploy; push
-   `public/` to Cloudflare Pages as usual and hardware terminals pick up the
-   v1.13.0 shell automatically on next load (SW drops the old cache). Nothing
-   to run locally unless you want a quick shell smoke:
-   `npm run serve` + a browser at ≥1024px.
+     **v1.12.0** (154 unit checks across money/sync/db/alerts/ui; 190 after
+     v1.14.0 added `stats.js`).
+2. **Deploy current version** — v1.14.0 needs **both halves**: paste
+   `backend/Code.gs` into Apps Script and deploy a new Web App version (the
+   time-clock endpoints and the `shifts_` role fix live there; the `TimeClock`
+   tab is created on first use), then push `public/` to Cloudflare Pages as
+   usual. Terminals pick up the v1.14.0 shell on next load. Local smoke:
+   `npm run serve` + a browser at 375px and ≥1024px.
 3. **Visual roadmap (user-approved order):**
    - ~~v1.12.0~~ **done** — client test harness.
    - ~~v1.13.0~~ **done** — theme polish + responsive shell: typography/
@@ -252,10 +275,10 @@ Status of every finding class:
      register** (product grid left, cart right on desktop), right-side
      checkout + sheets on wide screens, `app.js` responsive state
      (`mobile`/`tablet`/`desktop`) via `matchMedia`.
-   - **v1.14.0** — screen refresh + enhanced dashboard + staff tools: trend
-     KPIs, hourly chart, top-seller table, shift summary; new staff screen
-     (time clock, shift history, per-cashier performance); consistent spacing,
-     empty states, loading skeletons, 44px touch targets across every screen.
+   - ~~v1.14.0~~ **done** — screen refresh + enhanced dashboard + staff tools:
+     trend KPIs, hourly chart, top-seller table, shift summary; Staff screen
+     (time clock, shift history, per-cashier performance); shared skeletons,
+     one empty-state component, 44px touch targets, scrolling tab bar.
    - **v1.15.0** — customer display + inventory tools: BroadcastChannel mirror
      mode with a **second-screen-only option**; bulk price update, stock-take
      mode, barcode label printing, low-stock reorder worksheet.

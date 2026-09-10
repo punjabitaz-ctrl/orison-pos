@@ -183,8 +183,19 @@ demotion takes effect at the first request after the change (no 12-hour lag).
 | `/api/admin/devices`, `/admin/revoke-device` | admin |
 | `/api/admin/pin` | admin |
 | `/api/admin/customers` | admin, manager |
+| `/api/timeclock` | admin, manager see the roster; a cashier's request is forced to their own punches |
+| `/api/timeclock/punch` | any signed-in user, own clock only |
 | `/api/pin` | any signed-in user, own PIN only |
 | `/api/logout` | any signed-in user, own sessions only |
+
+### Fixed in v1.14.0 — shift roster leak
+
+`/api/shifts` treated `?status=all` as an opt-in to the store-wide roster
+*before* checking the caller's role, so any signed-in cashier could read every
+other cashier's opening float, expected drawer, declared cash and over/short.
+The parameter is gone: the roster is `isStoreRole_`-gated like every other
+store-scope read, and a cashier's open-shift count is now their own rather than
+the store's. Covered by two sim assertions.
 
 ## The shared app token
 

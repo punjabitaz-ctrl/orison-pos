@@ -21,7 +21,8 @@
   0-30 / 31-60 / 61-90 / 90+ days with units and value-at-cost per bucket,
   oldest first. Serialized stock counts `IN_STOCK` serials, matching the
   product DTO.
-- **Till shifts**: `/api/shifts/open` (any role) and `/api/shifts/close` with denomination count → *declared / expected / over-or-short*, scoped per user with `kind`-aware cash math (sales + cash collections − cash refunds − payouts).
+- **Till shifts**: `/api/shifts/open` (any role) and `/api/shifts/close` with denomination count → *declared / expected / over-or-short*, scoped per user with `kind`-aware cash math (sales + cash collections − cash refunds − payouts). `/api/shifts` returns the store-wide roster to managers/admins only — a cashier always gets their own rows (v1.14.0 closed a `?status=all` escape hatch that handed anyone every till reconciliation).
+- **Time clock** (v1.14.0): `/api/timeclock/punch` toggles the **caller's own** clock — one OPEN entry per account, closed in place with the elapsed minutes; nobody can punch for somebody else, so an entry is always evidence about the account that made it. `/api/timeclock` lists punches: a cashier sees only their own (a `userId` param is ignored for them), managers/admins see the roster and may filter it, plus an `onFloor` count.
 - **Reports**: `/api/reports` (manager/admin) — gross sales, refunds, payouts, collections, net revenue, GP, by day / category / cashier / tender, top products and customers, over a date window.
 - **Suppliers & purchase orders**: `/api/suppliers`, `/api/purchase-orders` (draft → ordered → partial/received → cancelled), `/detail`, `/receive` (posts stock with weighted-average cost, per-unit serial intake, and a `purchase` ledger row that never touches drawer math), `/cancel`.
 - **Price history** (`/api/price-history`, admin/manager): per-product audit of every cost/retail change — a `create` baseline when a product is added, a `patch` row when Item settings edit a value (no-op saves stay quiet), and a `po` row when receiving blends cost by weighted average (tagged with the PO number). Written atomically beside the product update, inside the same script lock.
@@ -43,6 +44,7 @@
 | `Shifts` | id, userId, openedAt/closedAt, openingFloat, cashExpected, cashDeclared, overShort, tendersJson (denomination count), status |
 | `Suppliers` | id, storeId, name, phone, email, address, paymentTerms, active, createdAt |
 | `PurchaseOrders` | id, storeId, supplierId, poNumber, orderDate, expectedDate, status, itemsJson, receivedJson, subtotal, discountPct, taxAmount, total, note, createdBy |
+| `TimeClock` | id, storeId, userId, deviceId, clockIn, clockOut, minutes, note, status (OPEN/CLOSED) |
 | `PriceHistory` | id, storeId, productId, productName, field (cost_price/retail_price), oldValue, newValue, source (create/patch/po), poId, changedBy, createdAt |
 
 Only `APP_TOKEN` knows which sheet is the "backend" — keep it secret.
