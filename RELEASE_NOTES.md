@@ -7,25 +7,29 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.10.0 — inventory aging
+## Latest: v1.11.0 — offline sync hardening
 
-**2026-09-09.** Dead stock is now visible before it becomes a write-off.
-`/api/inventory/aging` (admin/manager) answers "how long has this been
-sitting?" for every stocked item, bucket by bucket.
+**2026-09-09.** The sync path can no longer lie, race, or mis-bucket.
 
 **What shipped**
 
-- **Products → *Aging*** (admin/manager): one screen with 0–30 / 31–60 / 61–90 /
-  90+ day buckets — each with units on hand and value at cost — plus an
-  oldest-first item list showing units, days sitting, and value at cost.
-- **How the clock works:** a product's age starts at creation and re-sets every
-  time a purchase-order receipt brings more in (the receipt's own `PriceHistory`
-  timestamp, added in v1.8.0). No PO history → age from creation.
-- Serialized stock ages by **available serial count**, matching how the rest of
-  the app counts serialized on-hand.
-- Read-only: no new writes, no behavior change to stock math.
+- **VOIDED re-pushes are re-evaluated.** A failed sale (locked product, claimed
+  serial) is retried fresh on every re-push; when the blocker clears, success
+  **rewrites the failure in place** — same transaction id, never a second row.
+- **Same-batch `clientTxId` duplicates** resolve like re-pushes
+  (`ALREADY_SYNCED` / `DUPLICATE_CLIENT`) without double-applying.
+- **Refunds see the same batch**: a sale + its refund in one request (offline
+  void) finds the original in-batch, and same-batch refunds count toward the
+  refundable balance.
+- **GP uses cost-at-sale** (captured `unitCost`), not today's edited cost;
+  category/product breakdowns now apply line + order discounts.
+- **Store-time-zone day windows**: reports and the Drive export bucket by the
+  store's local calendar day (`tzOffsetMin`, via `adminStore_`).
+- **Lock-scope fixes** across PO receiving, suppliers, products/serials, and
+  shift open/close; sign-safe `round2_`; removal of the dead `uuid_()` helper;
+  first-run seeding is crash-safe against a partial seed.
 
-**Validation:** backend-sim **PASS 341 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** ·
+**Validation:** backend-sim **PASS 359 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** ·
 `node --check` clean.
 
 ### Deploying
@@ -37,7 +41,7 @@ sitting?" for every stocked item, bucket by bucket.
 
 ---
 
-## The road here (1.9.0 → 1.10.0)
+## The road here (1.10.0 → 1.11.0)
 
 | Version | What shipped |
 | --- | --- |

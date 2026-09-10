@@ -17,6 +17,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Price history & tracking** (v1.8.0): every cost/retail change — manual edit or weighted cost from a PO receipt — is recorded per product (who, when, why) and browsable from the Products screen 📈.
 - **Customer statements** (v1.9.0): a printable / CSV-exportable statement of account — every transaction a customer touched as chronological debit/credit lines with a running balance, from the Customers → ledger → *Statement* button.
 - **Inventory aging** (v1.10.0): Products → *Aging* shows 0–30 / 31–60 / 61–90 / 90+ day buckets (units + value at cost) so dead stock is visible before it becomes a write-off.
+- **Hardened offline sync** (v1.11.0): a failed (VOIDED) push is re-evaluated — never answered with a false "already synced" — and its retry rewrites the failure in place with the same transaction id; gross profit uses the cost captured at sale time; reports and Drive export bucket by the store's local time zone day.
 - **Role-gated dashboard**: admin/manager see store KPIs, a 14-day revenue chart, top sellers, low-stock alerts, open conflicts, recent shift closes, and one-tap Drive export; cashiers get their own daily numbers.
 - **Admin tools** (in-app): create products and users, adjust non-serialized stock, add serials, manage suppliers and purchase orders, release login lockouts, review conflicts, and revoke a stolen terminal's sessions.
 - **POS lock**: staff sign in with a PIN pad; five wrong PINs lock that account for 15 minutes.

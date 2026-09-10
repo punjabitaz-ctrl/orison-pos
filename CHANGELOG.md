@@ -5,6 +5,45 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] — 2026-09-09
+
+Hardening pass: the offline sync path can no longer lie, race, or mis-bucket.
+
+### Fixed
+
+- **VOIDED re-pushes are re-evaluated, not gaslit into "already synced".** A
+  sale that failed (locked product, serial claimed elsewhere) is retried fresh
+  on every re-push — and when the blocker clears, the success **rewrites the
+  original failure in place** (same transaction id, never a second row). A
+  retry that still fails reports the fresh reasons against the same id.
+- **Same-batch duplicate `clientTxId`s** now resolve like re-pushes: the second
+  identical entry answers `ALREADY_SYNCED`, a conflicting one flags
+  `DUPLICATE_CLIENT` — in both cases without double-applying.
+- **Refunds now see the same batch.** A sale and its refund arriving in one
+  request (an offline void) finds the original sale in-batch, and earlier
+  same-batch refunds count toward the refundable balance.
+- **Gross profit uses the cost captured at sale time** (`unitCost` in the sale
+  row), not today's product cost — editing a cost no longer rewrites history.
+  Refunds carry the original sale's captured cost too.
+- **Category/product breakdowns apply discounts**: line `discountPct` then the
+  order-level discount, in rounded cents, on both revenue and profit.
+- **Store time-zone-correct day windows.** `Reports` and the Drive export now
+  bucket sales by the store's local calendar day (`tzOffsetMin`, settable via
+  `adminStore_`); a 23:30 UTC sale in UTC+1 lands on the next local day.
+- **Lock-scope fixes.** All reads + validation for purchase-order receiving,
+  supplier creation, product/serial CRUD, and shift open/close now happen
+  inside the script lock (previously reads/recheck raced a concurrent writer).
+- **`round2_` is now a true half-away-from-zero** (sign-safe); dead `uuid_()`
+  helper removed; payouts/payments/refunds attribute to the authenticated
+  cashier when their session id matches an account; first-run seeding is
+  crash-safe against a partial seed re-running.
+
+### Added
+
+- Hardening sim section (18 checks) locking the above, including: aging stays
+  gross of store-credit refunds; `config_` roster width is active-only.
+- `getStore_`/admin response expose `tzOffsetMin` for the client.
+
 ## [1.10.0] — 2026-09-09
 
 Dead stock is now visible before it becomes a write-off.

@@ -460,6 +460,9 @@ function getStore_() {
     /* single store-level sales tax, as a percent. Missing kv (pre-1.2.6
        sheets) reads as 0 so older sales stay untaxed. */
     taxRate: k.store_tax_rate == null || k.store_tax_rate === '' ? 0 : num_(k.store_tax_rate),
+    /* store wall-clock offset vs UTC, in minutes (−720..+840). Drives which
+       calendar day a sale belongs to for reports/export bucketing. */
+    tzOffsetMin: k.store_tz_offset == null || k.store_tz_offset === '' || isNaN(num_(k.store_tz_offset)) ? 0 : num_(k.store_tz_offset),
   };
 }
 
@@ -586,8 +589,11 @@ function ensureSeed_() {
   if (!lock.tryLock(20000)) return;
   try {
     // Set the flag for a deployment seeded before it existed, so it too stops
-    // taking the lock on every request from here on.
-    if (kv_().store_id) { props.setProperty('SEEDED', '1'); return; }
+    // taking the lock on every request from here on. The users-count guard
+    // also crash-proofs a partial seed: if that property write was skipped
+    // (gated by the 50s Apps Script max-execution, a lock timeout, ...) a
+    // second run must see the already-created accounts and NOT seed twice.
+    if (kv_().store_id && readRows_('Users', USER_HEADERS).length > 0) { props.setProperty('SEEDED', '1'); return; }
     seed_();
     props.setProperty('SEEDED', '1');
   } finally {
@@ -1087,6 +1093,11 @@ function syncPush_(session, payload) {
     var newConflictRows = [];
     var serialPatches = {};
     var productPatches = {};
+    /* in-place rewrites for retried VOIDED sales (see clientKey handling) */
+    var txRewrites = {};
+    /* same-batch duplicate guard: rows accepted earlier in THIS batch must be
+       visible to later batch entries, exactly like rows from earlier pushes. */
+    var batchSeen = {};
 
     var nowMs = Date.now();
     var skewFuture = 15 * 60 * 1000;      /* > 15 min ahead of server clock */
@@ -1099,9 +1110,14 @@ function syncPush_(session, payload) {
       var items = Array.isArray(tx.items) ? tx.items : [];
       var clientKey = deviceId + '::' + String(tx.clientTxId || '');
 
-      /* duplicate push for the same device+client id? (compare raw content) */
-      var existing = deviceTx[clientKey];
-      if (existing) {
+      /* duplicate push for the same device+client id? (compare raw content).
+         A COMPLETED row is answered idempotently. A VOIDED row, however, was
+         a *failed* push — the terminal never saw accepted:true, so it keeps
+         retrying, and the blocker (locked product, serial claimed elsewhere)
+         may have cleared since. Those must fall through to a fresh re-evaluation,
+         never an ALREADY_SYNCED lie. */
+      var existing = batchSeen[clientKey] || deviceTx[clientKey];
+      if (existing && String(existing.status) !== 'VOIDED') {
         var sigSame = txSignature_(items) === txSignature_(itobjs_(existing.items_json))
           && String(existing.grand_total) === String(num_(tx.grandTotal))
           && canonicalJson_(existing.tenders_json) === canonicalJson_(JSON.stringify(tx.tenders || []))
@@ -1128,20 +1144,27 @@ function syncPush_(session, payload) {
         });
         continue;
       }
+      /* re-processing a VOIDED row: reuse its id so a retry that now succeeds
+         rewrites the original failure in place instead of stacking a second
+         transaction row (and a retry that still fails leaves the sheet alone). */
+      var reuseId = (existing && String(existing.status) === 'VOIDED') ? String(existing.id) : '';
 
       var kind = String(tx.kind || 'sale');
       if (kind === 'payout') {
         pushResult_(results, tx, processPayout_(session, store, newTxRows, tx, deviceId, userRows));
+        indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows);
         continue;
       }
       if (kind === 'payment') {
         pushResult_(results, tx, processPayment_(session, store, newTxRows, tx, deviceId, userRows, customerIds));
+        indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows);
         continue;
       }
       if (kind === 'refund') {
         pushResult_(results, tx, processRefund_(
           txRows, prodRows, serialRows, store, newTxRows, newConflictRows,
           serialPatches, productPatches, session, deviceId, tx, userRows));
+        indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows);
         continue;
       }
 
@@ -1201,7 +1224,7 @@ function syncPush_(session, payload) {
       var itemsJson = JSON.stringify(resolvedItems_(resolved));
 
       var hasErrors = errors.length > 0;
-      var txId = Utilities.getUuid();
+      var txId = reuseId || Utilities.getUuid();
       /* a sale linked to a customer that does not exist must not complete —
          it would create an unmatched receivable or empty the ledger book. */
       var custId = String(tx.customerId || '');
@@ -1222,7 +1245,7 @@ function syncPush_(session, payload) {
       var grandTotal = totals
         ? totals.total
         : (num_(tx.grandTotal) || resolved.reduce(function (sum, r) { return sum + r.unitPrice * r.quantity; }, 0));
-      var userId = userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows);
+      var userId = userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows, session);
       var created = String(tx.createdAt || new Date().toISOString());
       var createdMs = new Date(created).getTime();
       var clockFlagged = !isNaN(createdMs) && (createdMs > nowMs + skewFuture || createdMs < nowMs - skewPast);
@@ -1231,7 +1254,7 @@ function syncPush_(session, payload) {
         ? 'Conflict rejected: ' + errors.map(function (er) { return er.reason; }).join(', ')
         : (tx.note || '');
 
-      newTxRows.push({
+      var rowObj = {
         id: txId,
         store_id: store.id,
         user_id: userId,
@@ -1250,7 +1273,24 @@ function syncPush_(session, payload) {
         tax_amount: totals ? totals.tax : 0,
         discount_pct: orderPct,
         customer_id: custId,
-      });
+      };
+      if (reuseId && hasErrors) {
+        /* still blocked: report the fresh failure against the SAME transaction
+           id and leave the existing VOIDED row untouched — no new row. */
+        results.push({
+          clientTxId: tx.clientTxId,
+          transactionId: String(existing.id),
+          accepted: false,
+          status: 'VOIDED',
+          conflicts: errors.slice(),
+        });
+        continue;
+      }
+      if (reuseId) {
+        txRewrites[String(existing.id)] = rowObj;
+      } else {
+        newTxRows.push(rowObj);
+      }
 
       var txConflicts = hasErrors ? errors.slice() : [];
       if (!hasErrors) {
@@ -1284,9 +1324,15 @@ function syncPush_(session, payload) {
         status: hasErrors ? 'VOIDED' : 'COMPLETED',
         conflicts: txConflicts,
       });
+
+      /* index accepted rows so a repeated clientTxId later in this same batch
+         resolves to ALREADY_SYNCED (identical) or DUPLICATE_CLIENT (differs),
+         exactly as if it had been pushed in an earlier request. */
+      if (!reuseId && !hasErrors) batchSeen[clientKey] = rowObj;
     }
 
     appendRows_('Transactions', TX_HEADERS, newTxRows);
+    if (Object.keys(txRewrites).length) applyPatches_('Transactions', TX_HEADERS, 'id', txRewrites);
     if (newConflictRows.length) appendRows_('Conflicts', CONFLICT_HEADERS, newConflictRows);
     applyPatches_('Serials', SERIAL_HEADERS, 'id', serialPatches);
     applyPatches_('Products', PRODUCT_HEADERS, 'id', productPatches);
@@ -1355,8 +1401,11 @@ function resolvedItems_(resolved) {
     if (String(r.product.taxable) === '0') it.taxable = false;
     /* Cost is captured at sale time so profit history is stable even if the
        product's cost is edited later. Omitted when zero so costless lines
-       (and legacy rows) stay compact. */
-    var uc = Math.round(num_(r.product.cost_price) * 100) / 100;
+       (and legacy rows) stay compact. An explicit per-line cost override
+       (refunds re-using the original sale's captured cost) wins. */
+    var uc = (typeof r.unitCost === 'number' && r.unitCost > 0)
+      ? r.unitCost
+      : Math.round(num_(r.product.cost_price) * 100) / 100;
     if (uc > 0) it.unitCost = uc;
     return it;
   });
@@ -1388,6 +1437,23 @@ function canonicalJson_(s) {
   try { return JSON.stringify(JSON.parse(s || '[]')); } catch (_) { return String(s); }
 }
 
+/* Store-local calendar-day helpers. created_at timestamps are UTC, so a store
+   at UTC+1 that rings a sale at 23:30Z is doing it on the NEXT local day.
+   Every "which calendar day?" question — reports windows, byDay buckets, the
+   Drive export date — shifts by the store's tzOffsetMin before slicing. */
+function localDayKey_(iso, tzMin) {
+  var ms = new Date(String(iso || '')).getTime();
+  if (isNaN(ms)) return String(iso || '').slice(0, 10);
+  return new Date(ms + (tzMin || 0) * 60000).toISOString().slice(0, 10);
+}
+
+function dateOnlyToIso_(dateStr, tzMin, endOfDay) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || '').trim());
+  if (!m) return String(dateStr);
+  var base = Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+  return new Date((endOfDay ? base + 86399999 : base) - (tzMin || 0) * 60000).toISOString();
+}
+
 function pushResult_(results, tx, outcome) {
   var errors = (outcome && outcome.errors) || [];
   results.push({
@@ -1399,6 +1465,19 @@ function pushResult_(results, tx, outcome) {
       return { reason: er.reason, serialNumber: er.serialNumber ? String(er.serialNumber) : '' };
     }),
   });
+}
+
+/* Record a just-accepted payout/payment/refund row into the batch-level
+   duplicate index so a repeated clientTxId later in the same batch resolves
+   to ALREADY_SYNCED (identical) or DUPLICATE_CLIENT (differs) instead of
+   double-applying. Rejected rows are never indexed — a failed retry must stay
+   re-evaluable. */
+function indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows) {
+  var last = newTxRows[newTxRows.length - 1];
+  if (!last) return;
+  if (String(last.device_id) !== deviceId) return;
+  if (String(last.client_tx_id || '') !== String(tx.clientTxId || '')) return;
+  batchSeen[clientKey] = last;
 }
 
 /* Cash payout ("money out"): vendor payment, cash pick-up, or expense. Only
@@ -1417,7 +1496,7 @@ function processPayout_(session, store, newTxRows, tx, deviceId, userRows) {
   newTxRows.push({
     id: txId,
     store_id: store.id,
-    user_id: userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows),
+    user_id: userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows, session),
     device_id: deviceId,
     client_tx_id: String(tx.clientTxId || ''),
     kind: 'payout',
@@ -1452,7 +1531,7 @@ function processPayment_(session, store, newTxRows, tx, deviceId, userRows, cust
   newTxRows.push({
     id: txId,
     store_id: store.id,
-    user_id: userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows),
+    user_id: userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows, session),
     device_id: deviceId,
     client_tx_id: String(tx.clientTxId || ''),
     kind: 'payment',
@@ -1483,9 +1562,14 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
   }
   var errors = [];
   var originalClientTx = String(tx.originalClientTx || '');
+  /* A sale and its refund can arrive in the same batch (an offline terminal
+     can void a sale it rung up minutes earlier while still offline). Validate
+     against the persisted ledger PLUS anything already accepted earlier in
+     this batch, so prior refunds within the batch count toward "remaining". */
+  var allRows = txRows.concat(newTxRows);
   var original = null;
-  for (var i = 0; i < txRows.length; i++) {
-    var r = txRows[i];
+  for (var i = 0; i < allRows.length; i++) {
+    var r = allRows[i];
     if (String(r.client_tx_id) === originalClientTx
         && String(r.status) === 'COMPLETED'
         && (String(r.kind || '') === '' || String(r.kind) === 'sale')) {
@@ -1499,8 +1583,8 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
   if (refundAmount <= 0) return { errors: [{ reason: 'invalid_amount' }], original: original };
 
   var priorTotal = 0;
-  for (var p = 0; p < txRows.length; p++) {
-    var pr = txRows[p];
+  for (var p = 0; p < allRows.length; p++) {
+    var pr = allRows[p];
     if (String(pr.kind) === 'refund'
         && String(pr.original_client_tx) === originalClientTx
         && String(pr.status) === 'COMPLETED') {
@@ -1515,15 +1599,19 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
   /* outstanding quantity + serials still returnable per product */
   var byProduct = {};
   var origItems = itobjs_(original.items_json);
+  var origCostByProduct = {};
   for (var oi = 0; oi < origItems.length; oi++) {
     var o = origItems[oi];
     var opk = String(o.productId || '');
     if (!byProduct[opk]) byProduct[opk] = { qty: 0, serials: [] };
     byProduct[opk].qty += o.quantity || 1;
     if (o.serialNumber) byProduct[opk].serials.push(String(o.serialNumber));
+    if (typeof o.unitCost === 'number' && o.unitCost > 0 && !origCostByProduct[opk]) {
+      origCostByProduct[opk] = o.unitCost;
+    }
   }
-  for (var pr2 = 0; pr2 < txRows.length; pr2++) {
-    var pr2r = txRows[pr2];
+  for (var pr2 = 0; pr2 < allRows.length; pr2++) {
+    var pr2r = allRows[pr2];
     if (String(pr2r.kind) === 'refund'
         && String(pr2r.original_client_tx) === originalClientTx
         && String(pr2r.status) === 'COMPLETED') {
@@ -1573,7 +1661,7 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
         continue;
       }
       line.serials.splice(line.serials.indexOf(sn), 1);
-      resolved.push({ product: product, serial: serial, quantity: 1, unitPrice: unitPrice });
+      resolved.push({ product: product, serial: serial, quantity: 1, unitPrice: unitPrice, unitCost: origCostByProduct[String(product.id)] });
     } else {
       var qty = Math.max(1, item.quantity || 1);
       var line2 = byProduct[String(product.id)];
@@ -1584,7 +1672,7 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
       }
       line2.qty -= qty;
       var restoreStock = String(product.item_type) !== 'service';
-      resolved.push({ product: product, serial: null, quantity: qty, unitPrice: unitPrice, restoreStock: restoreStock });
+      resolved.push({ product: product, serial: null, quantity: qty, unitPrice: unitPrice, restoreStock: restoreStock, unitCost: origCostByProduct[String(product.id)] });
     }
   }
   if (errors.length) return { errors: errors, original: original };
@@ -1608,7 +1696,7 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
   newTxRows.push({
     id: txId,
     store_id: store.id,
-    user_id: userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows),
+    user_id: userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows, session),
     device_id: deviceId,
     client_tx_id: String(tx.clientTxId || ''),
     kind: 'refund',
@@ -1648,7 +1736,15 @@ function conflictRow_(openSet, newRows, store, type, serialNumber, deviceId, los
   return id;
 }
 
-function fallbackUserId_(userRows) {
+function fallbackUserId_(userRows, session) {
+  /* prefer the authenticated caller when they're a real account: a payout/payment
+     recorded under the first admin instead of the actual cashier misattributes
+     money. Falls back to the first active admin, then any user, then ''. */
+  if (session && session.uid) {
+    for (var s2 = 0; s2 < userRows.length; s2++) {
+      if (String(userRows[s2].id) === String(session.uid)) return String(userRows[s2].id);
+    }
+  }
   for (var i = 0; i < userRows.length; i++) {
     if (userRows[i].role === 'admin' && String(userRows[i].active) === '1') return String(userRows[i].id);
   }
@@ -2071,12 +2167,16 @@ function reports_(session, params) {
   var from = String((params && params.from) || '');
   var to = String((params && params.to) || '');
   var nowMs = Date.now();
+  var tzMin = num_(getStore_().tzOffsetMin);
   if (!from || !to) {
-    from = new Date(nowMs - 29 * 86400000).toISOString();
-    to = new Date(nowMs + 86400000).toISOString();
+    from = new Date(nowMs - 29 * 86400000 + tzMin * 60000).toISOString().slice(0, 10);
+    to = new Date(nowMs + 86400000 + tzMin * 60000).toISOString().slice(0, 10);
   }
-  var fromIso = from.indexOf('T') >= 0 ? from : from + 'T00:00:00.000Z';
-  var toIso = to.indexOf('T') >= 0 ? to : to + 'T23:59:59.999Z';
+  /* date-only params are LOCAL calendar days, not UTC: translate them to UTC
+     instants via the store's tzOffsetMin so a 23:30 sale in UTC+1 lands in the
+     NEXT local day's window (and midnight ones stay out of yesterday's). */
+  var fromIso = from.indexOf('T') >= 0 ? from : dateOnlyToIso_(from, tzMin, false);
+  var toIso = to.indexOf('T') >= 0 ? to : dateOnlyToIso_(to, tzMin, true);
   if (fromIso > toIso) { var tmp = fromIso; fromIso = toIso; toIso = tmp; }
 
   var prodRows = readRows_('Products', PRODUCT_HEADERS);
@@ -2108,8 +2208,13 @@ function reports_(session, params) {
     var items = itobjs_(t.items_json);
     var cost = 0;
     for (var i = 0; i < items.length; i++) {
-      var prod = prodById[String(items[i].productId || '')];
-      cost += (items[i].quantity || 1) * (prod ? num_(prod.cost_price) : 0);
+      var it = items[i] || {};
+      var prod = prodById[String(it.productId || '')];
+      /* cost-at-sale first (captured by resolvedItems_ in cents); legacy rows
+         with no captured cost fall back to the product's current cost. */
+      var costPer = (typeof it.unitCost === 'number' && it.unitCost > 0) ? it.unitCost
+        : (prod ? num_(prod.cost_price) : 0);
+      cost += (it.quantity || 1) * costPer;
     }
     return cost;
   }
@@ -2122,7 +2227,7 @@ function reports_(session, params) {
     try { out = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
     return out;
   }
-  function dayKeyOf_(iso) { return String(iso || '').slice(0, 10); }
+  function dayKeyOf_(iso) { return localDayKey_(iso, tzMin); }
 
   for (var r = 0; r < txRows.length; r++) {
     var t = txRows[r];
@@ -2157,14 +2262,25 @@ function reports_(session, params) {
         var it = items[it1];
         var prod = prodById[String(it.productId || '')];
         var cat = prod ? String(prod.category || 'Uncategorized') : 'Uncategorized';
+        var qty = it.quantity || 1;
+        /* revenue per line: line unitPrice × qty, minus the line's own
+           discountPct, then the order-level discount, both in rounded cents. */
+        var linePct = clampPct_(num_(it.discountPct));
+        var orderPct = num_(t.discount_pct);
+        var lineNetCents = round2_(num_(it.unitPrice) * 100 * qty * (1 - linePct / 100));
+        var revCents = round2_(lineNetCents * (100 - orderPct) / 100);
+        var lineRev = revCents / 100;
+        var costPer = (typeof it.unitCost === 'number' && it.unitCost > 0) ? it.unitCost
+          : (prod ? num_(prod.cost_price) : 0);
+        var lineGp = lineRev - qty * costPer;
         var ce = byCat[cat] || (byCat[cat] = { units: 0, sales: 0, gp: 0 });
-        ce.units += it.quantity || 1;
-        ce.sales += (it.unitPrice || 0) * (it.quantity || 1);
-        ce.gp += ((it.unitPrice || 0) - (prod ? num_(prod.cost_price) : 0)) * (it.quantity || 1);
+        ce.units += qty;
+        ce.sales += lineRev;
+        ce.gp += lineGp;
         var pe = byProduct[String(it.productId || '')] || (byProduct[String(it.productId || '')] = { name: prod ? String(prod.name || 'Item') : 'Item', sku: prod ? String(prod.sku || '') : '', units: 0, sales: 0, gp: 0 });
-        pe.units += it.quantity || 1;
-        pe.sales += (it.unitPrice || 0) * (it.quantity || 1);
-        pe.gp += ((it.unitPrice || 0) - (prod ? num_(prod.cost_price) : 0)) * (it.quantity || 1);
+        pe.units += qty;
+        pe.sales += lineRev;
+        pe.gp += lineGp;
       }
       var custId = String(t.customer_id || '');
       if (custId) {
@@ -2395,18 +2511,22 @@ function suppliers_(session, payload) {
 
   var name = String(payload.name || '').trim();
   if (!name) throw statusError_(400, 'Supplier name is required');
-  var existing = readRows_('Suppliers', SUPPLIER_HEADERS);
-  var store = getStore_();
-  for (var i = 0; i < existing.length; i++) {
-    if (String(existing[i].store_id) === store.id
-        && String(existing[i].name).toLowerCase() === name.toLowerCase()) {
-      throw statusError_(409, 'A supplier with that name already exists');
-    }
-  }
 
+  /* Name uniqueness is a first-committed-wins claim: the existing-name check
+     and the append both happen under the lock so two parallel creates of the
+     same supplier can't both pass the pre-lock snapshot. */
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
+    var existing = readRows_('Suppliers', SUPPLIER_HEADERS);
+    var store = getStore_();
+    for (var i = 0; i < existing.length; i++) {
+      if (String(existing[i].store_id) === store.id
+          && String(existing[i].name).toLowerCase() === name.toLowerCase()) {
+        throw statusError_(409, 'A supplier with that name already exists');
+      }
+    }
+
     var now = new Date().toISOString();
     var id = Utilities.getUuid();
     appendRows_('Suppliers', SUPPLIER_HEADERS, [{
@@ -2421,7 +2541,14 @@ function suppliers_(session, payload) {
   }
 }
 
-function round2_(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+function round2_(n) {
+  /* half-away-from-zero, sign-safe: a negative -1.005 must round to -1.01,
+     never to -1.00 (the historical Math.round(+EPSILON) form was asymmetric
+     and only correct for positives). */
+  var x = Number(n) || 0;
+  var sign = x < 0 ? -1 : 1;
+  return sign * Math.round((Math.abs(x) + Number.EPSILON) * 100) / 100;
+}
 
 function poItemsFromPayload_(lines, createdBy) {
   if (!Array.isArray(lines) || !lines.length) throw statusError_(400, 'At least one line is required');
@@ -2560,91 +2687,96 @@ function purchaseOrderReceive_(session, payload) {
   var lines = Array.isArray(payload && payload.lines) ? payload.lines : [];
   if (!id || !lines.length) throw statusError_(400, 'Order id and lines are required');
 
-  var poRows = readRows_('PurchaseOrders', PO_HEADERS);
-  var po = null;
-  for (var i = 0; i < poRows.length; i++) {
-    if (String(poRows[i].id) === id) { po = poRows[i]; break; }
-  }
-  if (!po) throw statusError_(404, 'Purchase order not found');
-  var status = String(po.status || 'DRAFT');
-  if (status !== 'ORDERED' && status !== 'PARTIAL') {
-    throw statusError_(409, 'Only an ordered purchase can be received');
-  }
-
-  var items = itobjs_(po.items_json);
-  var received = itobjs_(po.received_json);
-  var prodRows = readRows_('Products', PRODUCT_HEADERS);
-  var prodById = {};
-  for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
-  var suppliers = poSupplierMap_(readRows_('Suppliers', SUPPLIER_HEADERS));
-  var supplierName = String((suppliers[String(po.supplier_id)] || {}).name || '');
-
-  /* index ordered lines by product */
-  var orderedById = {};
-  for (var oi = 0; oi < items.length; oi++) orderedById[String(items[oi].productId)] = items[oi];
-  var receivedById = {};
-  for (var ri = 0; ri < received.length; ri++) receivedById[String(received[ri].productId)] = received[ri];
-
-  var newReceived = [];
-  var patches = {};
-  var serialNew = [];
-  var serialSet = {};
-  var serialRows = readRows_('Serials', SERIAL_HEADERS);
-  for (var sr = 0; sr < serialRows.length; sr++) serialSet[String(serialRows[sr].serial_number)] = true;
-
-  var stamp = new Date().toISOString();
-  var receivedValue = 0;
-  var txItems = [];
-
-  var project = {};
-  for (var li = 0; li < lines.length; li++) {
-    var ln = lines[li];
-    var pid = String(ln.productId || '');
-    var ordered = orderedById[pid];
-    if (!ordered) throw statusError_(400, 'Line not on this order');
-    var prod = prodById[pid];
-    if (!prod || String(prod.active) !== '1') throw statusError_(400, 'Product is unknown or inactive');
-    var qty = num_(ln.quantity);
-    if (!(qty > 0)) throw statusError_(400, 'Quantity must be greater than zero');
-    var prevQty = num_(receivedById[pid] ? receivedById[pid].quantity : 0);
-    var remaining = num_(ordered.quantity) - prevQty;
-    if (qty > remaining) throw statusError_(400, 'Cannot receive more than the outstanding quantity');
-    var unitCost = num_(ordered.unitCost);
-    var sn = Array.isArray(ln.serialNumbers) ? ln.serialNumbers.map(function (s) { return String(s).trim(); }).filter(Boolean) : [];
-    if (String(prod.is_serialized) === '1') {
-      if (sn.length !== qty) throw statusError_(400, 'Serials required for serialized stock');
-      for (var s2 = 0; s2 < sn.length; s2++) {
-        if (serialSet[sn[s2]]) throw statusError_(409, 'Serial already registered: ' + sn[s2]);
-        serialSet[sn[s2]] = true;
-        serialNew.push({ id: Utilities.getUuid(), product_id: pid, serial_number: sn[s2], status: 'IN_STOCK', tx_id: '', updated_at: stamp });
-      }
-    }
-    newReceived.push({ productId: pid, quantity: prevQty + qty, serials: sn });
-    receivedValue += qty * unitCost;
-    for (var tx = 0; tx < qty; tx++) {
-      txItems.push({ productId: pid, name: String(ordered.name || ''), quantity: 1, unitPrice: unitCost, unitCost: unitCost, taxable: !(String(prod.taxable) === '0') });
-    }
-    if (String(prod.is_serialized) !== '1') {
-      var onHand = num_(prod.on_hand);
-      var newOnHand = onHand + qty;
-      var newCost = (onHand * num_(prod.cost_price) + qty * unitCost) / newOnHand;
-      if (!(newCost > 0)) newCost = unitCost;
-      patches[pid] = { on_hand: newOnHand, cost_price: round2_(newCost), updated_at: stamp };
-      project[pid] = { onHand: newOnHand, unitCost: round2_(newCost) };
-    } else {
-      project[pid] = { onHand: num_(prod.on_hand) + qty, unitCost: num_(prod.cost_price) };
-    }
-  }
-
-  /* all outstanding received? */
-  var allDone = items.every(function (it) {
-    var post = newReceived.find(function (r) { return String(r.productId) === String(it.productId); });
-    return post ? num_(post.quantity) >= num_(it.quantity) : num_(receivedById[String(it.productId)] || 0) >= num_(it.quantity);
-  });
-
+  /* The whole receipt is one first-committed-wins claim: the order lookup,
+     the outstanding-quantity + serial-duplicate validation, the cost blend,
+     and the patches all run under the lock so two terminals receiving the
+     same PO in parallel can't both pass the pre-lock snapshot and over-apply
+     stock or register the same serial twice. */
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
+    var poRows = readRows_('PurchaseOrders', PO_HEADERS);
+    var po = null;
+    for (var i = 0; i < poRows.length; i++) {
+      if (String(poRows[i].id) === id) { po = poRows[i]; break; }
+    }
+    if (!po) throw statusError_(404, 'Purchase order not found');
+    var status = String(po.status || 'DRAFT');
+    if (status !== 'ORDERED' && status !== 'PARTIAL') {
+      throw statusError_(409, 'Only an ordered purchase can be received');
+    }
+
+    var items = itobjs_(po.items_json);
+    var received = itobjs_(po.received_json);
+    var prodRows = readRows_('Products', PRODUCT_HEADERS);
+    var prodById = {};
+    for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
+    var suppliers = poSupplierMap_(readRows_('Suppliers', SUPPLIER_HEADERS));
+    var supplierName = String((suppliers[String(po.supplier_id)] || {}).name || '');
+
+    /* index ordered lines by product */
+    var orderedById = {};
+    for (var oi = 0; oi < items.length; oi++) orderedById[String(items[oi].productId)] = items[oi];
+    var receivedById = {};
+    for (var ri = 0; ri < received.length; ri++) receivedById[String(received[ri].productId)] = received[ri];
+
+    var newReceived = [];
+    var patches = {};
+    var serialNew = [];
+    var serialSet = {};
+    var serialRows = readRows_('Serials', SERIAL_HEADERS);
+    for (var sr = 0; sr < serialRows.length; sr++) serialSet[String(serialRows[sr].serial_number)] = true;
+
+    var stamp = new Date().toISOString();
+    var receivedValue = 0;
+    var txItems = [];
+
+    var project = {};
+    for (var li = 0; li < lines.length; li++) {
+      var ln = lines[li];
+      var pid = String(ln.productId || '');
+      var ordered = orderedById[pid];
+      if (!ordered) throw statusError_(400, 'Line not on this order');
+      var prod = prodById[pid];
+      if (!prod || String(prod.active) !== '1') throw statusError_(400, 'Product is unknown or inactive');
+      var qty = num_(ln.quantity);
+      if (!(qty > 0)) throw statusError_(400, 'Quantity must be greater than zero');
+      var prevQty = num_(receivedById[pid] ? receivedById[pid].quantity : 0);
+      var remaining = num_(ordered.quantity) - prevQty;
+      if (qty > remaining) throw statusError_(400, 'Cannot receive more than the outstanding quantity');
+      var unitCost = num_(ordered.unitCost);
+      var sn = Array.isArray(ln.serialNumbers) ? ln.serialNumbers.map(function (s) { return String(s).trim(); }).filter(Boolean) : [];
+      if (String(prod.is_serialized) === '1') {
+        if (sn.length !== qty) throw statusError_(400, 'Serials required for serialized stock');
+        for (var s2 = 0; s2 < sn.length; s2++) {
+          if (serialSet[sn[s2]]) throw statusError_(409, 'Serial already registered: ' + sn[s2]);
+          serialSet[sn[s2]] = true;
+          serialNew.push({ id: Utilities.getUuid(), product_id: pid, serial_number: sn[s2], status: 'IN_STOCK', tx_id: '', updated_at: stamp });
+        }
+      }
+      newReceived.push({ productId: pid, quantity: prevQty + qty, serials: sn });
+      receivedValue += qty * unitCost;
+      for (var tx = 0; tx < qty; tx++) {
+        txItems.push({ productId: pid, name: String(ordered.name || ''), quantity: 1, unitPrice: unitCost, unitCost: unitCost, taxable: !(String(prod.taxable) === '0') });
+      }
+      if (String(prod.is_serialized) !== '1') {
+        var onHand = num_(prod.on_hand);
+        var newOnHand = onHand + qty;
+        var newCost = (onHand * num_(prod.cost_price) + qty * unitCost) / newOnHand;
+        if (!(newCost > 0)) newCost = unitCost;
+        patches[pid] = { on_hand: newOnHand, cost_price: round2_(newCost), updated_at: stamp };
+        project[pid] = { onHand: newOnHand, unitCost: round2_(newCost) };
+      } else {
+        project[pid] = { onHand: num_(prod.on_hand) + qty, unitCost: num_(prod.cost_price) };
+      }
+    }
+
+    /* all outstanding received? */
+    var allDone = items.every(function (it) {
+      var post = newReceived.find(function (r) { return String(r.productId) === String(it.productId); });
+      return post ? num_(post.quantity) >= num_(it.quantity) : num_(receivedById[String(it.productId)] || 0) >= num_(it.quantity);
+    });
+
     var merged = received.slice();
     for (var m = 0; m < newReceived.length; m++) {
       var hit = merged.find(function (r) { return String(r.productId) === String(newReceived[m].productId); });
@@ -2731,104 +2863,120 @@ function shiftOpen_(session, payload) {
   var openingFloat = num_(payload && payload.openingFloat);
   if (!(openingFloat >= 0)) throw statusError_(400, 'opening_float_required');
   var note = String((payload && payload.note) || '').slice(0, 200);
-  var store = getStore_();
-  var shiftRows = readRows_('Shifts', SHIFTS_HEADERS);
-  for (var s = 0; s < shiftRows.length; s++) {
-    if (String(shiftRows[s].status) === 'OPEN' && String(shiftRows[s].user_id) === String(session.uid)) {
-      throw statusError_(409, 'shift_already_open');
+
+  /* "is there already an OPEN shift for this user?" is a first-committed-wins
+     claim: read the shifts + append under the lock so two parallel opens by
+     the same cashier can't both pass the pre-lock check and open twice. */
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var store = getStore_();
+    var shiftRows = readRows_('Shifts', SHIFTS_HEADERS);
+    for (var s = 0; s < shiftRows.length; s++) {
+      if (String(shiftRows[s].status) === 'OPEN' && String(shiftRows[s].user_id) === String(session.uid)) {
+        throw statusError_(409, 'shift_already_open');
+      }
     }
+    var row = {
+      id: Utilities.getUuid(),
+      store_id: store.id,
+      user_id: String(session.uid),
+      device_id: String((payload && payload.deviceId) || ''),
+      opened_at: new Date().toISOString(),
+      closed_at: '',
+      opening_float: openingFloat,
+      cash_expected: '',
+      cash_declared: '',
+      over_short: '',
+      tenders_json: '{}',
+      note: note,
+      status: 'OPEN',
+    };
+    appendRows_('Shifts', SHIFTS_HEADERS, [row]);
+    return { shift: shift_views_(session, [row])[0], open: true, msg: 'Shift opened' };
+  } finally {
+    lock.releaseLock();
   }
-  var row = {
-    id: Utilities.getUuid(),
-    store_id: store.id,
-    user_id: String(session.uid),
-    device_id: String((payload && payload.deviceId) || ''),
-    opened_at: new Date().toISOString(),
-    closed_at: '',
-    opening_float: openingFloat,
-    cash_expected: '',
-    cash_declared: '',
-    over_short: '',
-    tenders_json: '{}',
-    note: note,
-    status: 'OPEN',
-  };
-  appendRows_('Shifts', SHIFTS_HEADERS, [row]);
-  return { shift: shift_views_(session, [row])[0], open: true, msg: 'Shift opened' };
 }
 
 function shiftClose_(session, payload) {
   var shiftId = String((payload && payload.shiftId) || '');
   var note = String((payload && payload.note) || '').slice(0, 200);
-  var shiftRows = readRows_('Shifts', SHIFTS_HEADERS);
-  var shift = null;
-  for (var s = 0; s < shiftRows.length; s++) {
-    if (shiftId && String(shiftRows[s].id) === shiftId) { shift = shiftRows[s]; break; }
-    if (String(shiftRows[s].status) === 'OPEN' && String(shiftRows[s].user_id) === String(session.uid)) shift = shiftRows[s];
-  }
-  if (!shift) throw statusError_(404, 'no_open_shift');
-  if (String(shift.user_id) !== String(session.uid)) throw statusError_(403, 'not_your_shift');
-  if (String(shift.status) !== 'OPEN') throw statusError_(409, 'shift_already_closed');
 
-  var declared = shiftDenomsValue_(payload && payload.denoms);
-  var openedAt = new Date(String(shift.opened_at)).getTime();
-  var txRows = readRows_('Transactions', TX_HEADERS)
-    .filter(function (t) {
-      return String(t.status) === 'COMPLETED'
-        && String(t.user_id) === String(shift.user_id)
-        && new Date(String(t.created_at)).getTime() >= openedAt
-        && new Date(String(t.created_at)).getTime() <= Date.now();
-    });
-  var expected = num_(shift.opening_float);
-  for (var t = 0; t < txRows.length; t++) {
-    var tr = txRows[t];
-    var kind = String(tr.kind || 'sale');
-    var tenders = [];
-    try { tenders = JSON.parse(tr.tenders_json || '[]'); } catch (_) {}
-    if (kind === 'sale') {
-      for (var k = 0; k < tenders.length; k++) {
-        if (String(tenders[k].type || '') === 'cash') expected += num_(tenders[k].amount);
-      }
-    } else if (kind === 'payout') {
-      expected -= num_(tr.grand_total);
-    } else if (kind === 'refund') {
-      for (var m = 0; m < tenders.length; m++) {
-        if (String(tenders[m].type || '') === 'cash') expected -= num_(tenders[m].amount);
-      }
-    } else if (kind === 'payment') {
-      for (var p = 0; p < tenders.length; p++) {
-        if (String(tenders[p].type || '') === 'cash') expected += num_(tenders[p].amount);
+  /* Close is a mutate-in-place on a shared row: read the shifts, compute the
+     expected drawer, and write the CLOSED row all under the lock so a
+     double-close can't race into two partial writes or a lost over/short. */
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var shiftRows = readRows_('Shifts', SHIFTS_HEADERS);
+    var shift = null;
+    for (var s = 0; s < shiftRows.length; s++) {
+      if (shiftId && String(shiftRows[s].id) === shiftId) { shift = shiftRows[s]; break; }
+      if (String(shiftRows[s].status) === 'OPEN' && String(shiftRows[s].user_id) === String(session.uid)) shift = shiftRows[s];
+    }
+    if (!shift) throw statusError_(404, 'no_open_shift');
+    if (String(shift.user_id) !== String(session.uid)) throw statusError_(403, 'not_your_shift');
+    if (String(shift.status) !== 'OPEN') throw statusError_(409, 'shift_already_closed');
+
+    var declared = shiftDenomsValue_(payload && payload.denoms);
+    var openedAt = new Date(String(shift.opened_at)).getTime();
+    var txRows = readRows_('Transactions', TX_HEADERS)
+      .filter(function (t) {
+        return String(t.status) === 'COMPLETED'
+          && String(t.user_id) === String(shift.user_id)
+          && new Date(String(t.created_at)).getTime() >= openedAt
+          && new Date(String(t.created_at)).getTime() <= Date.now();
+      });
+    var expected = num_(shift.opening_float);
+    for (var t = 0; t < txRows.length; t++) {
+      var tr = txRows[t];
+      var kind = String(tr.kind || 'sale');
+      var tenders = [];
+      try { tenders = JSON.parse(tr.tenders_json || '[]'); } catch (_) {}
+      if (kind === 'sale') {
+        for (var k = 0; k < tenders.length; k++) {
+          if (String(tenders[k].type || '') === 'cash') expected += num_(tenders[k].amount);
+        }
+      } else if (kind === 'payout') {
+        expected -= num_(tr.grand_total);
+      } else if (kind === 'refund') {
+        for (var m = 0; m < tenders.length; m++) {
+          if (String(tenders[m].type || '') === 'cash') expected -= num_(tenders[m].amount);
+        }
+      } else if (kind === 'payment') {
+        for (var p = 0; p < tenders.length; p++) {
+          if (String(tenders[p].type || '') === 'cash') expected += num_(tenders[p].amount);
+        }
       }
     }
-  }
-  var overShort = declared - expected;
+    var overShort = declared - expected;
 
-  /* update the existing OPEN row in place rather than appending a second. */
-  var sh = sheet_('Shifts', SHIFTS_HEADERS);
-  var values = sh.getDataRange().getValues();
-  var hdrs = [];
-  for (var c = 0; c < values[0].length; c++) hdrs.push(String(values[0][c]));
-  var idCol = hdrs.indexOf('id');
-  for (var r = 1; r < values.length; r++) {
-    if (String(values[r][idCol]) !== String(shift.id)) continue;
-    var map = {};
-    for (var cc = 0; cc < hdrs.length; cc++) map[hdrs[cc]] = values[r][cc];
-    map.closed_at = new Date().toISOString();
-    map.cash_expected = expected;
-    map.cash_declared = declared;
-    map.over_short = overShort;
-    map.tenders_json = JSON.stringify((payload && payload.denoms) || {});
-    map.note = map.note ? String(map.note) + ' | ' + note : note;
-    map.status = 'CLOSED';
-    var out = [];
-    for (var cc2 = 0; cc2 < hdrs.length; cc2++) out.push(map[hdrs[cc2]] == null ? '' : String(map[hdrs[cc2]]));
-    sh.getRange(r + 1, 1, 1, hdrs.length).setValues([out]);
+    /* update the existing OPEN row in place rather than appending a second. */
+    var closedAt = new Date().toISOString();
+    var tendersJson = JSON.stringify((payload && payload.denoms) || {});
+    applyPatches_('Shifts', SHIFTS_HEADERS, 'id', {
+      [String(shift.id)]: {
+        closed_at: closedAt,
+        cash_expected: expected,
+        cash_declared: declared,
+        over_short: overShort,
+        tenders_json: tendersJson,
+        note: shift.note ? String(shift.note) + ' | ' + note : note,
+        status: 'CLOSED',
+      },
+    });
+    return {
+      shift: shift_views_(session, [Object.assign(shift, {
+        closed_at: closedAt, cash_expected: expected, cash_declared: declared,
+        over_short: overShort, tenders_json: tendersJson, status: 'CLOSED',
+      })])[0],
+      open: false,
+      msg: 'Shift closed',
+    };
+  } finally {
+    lock.releaseLock();
   }
-  return {
-    shift: shift_views_(session, [Object.assign(shift, { closed_at: map ? map.closed_at : '', cash_expected: expected, cash_declared: declared, over_short: overShort, tenders_json: JSON.stringify((payload && payload.denoms) || {}), status: 'CLOSED' })])[0],
-    open: false,
-    msg: 'Shift closed',
-  };
 }
 
 function shifts_(session, params) {
@@ -3202,16 +3350,18 @@ function adminProducts_(session, payload) {
     ? num_(payload.reorderPoint)
     : '';
 
-  var existing = readRows_('Products', PRODUCT_HEADERS);
-  for (var i = 0; i < existing.length; i++) {
-    if (String(existing[i].sku) === sku || (upc && String(existing[i].upc) === upc)) {
-      throw statusError_(409, 'A product with that SKU or UPC already exists');
-    }
-  }
-
+  /* SKU/UPC uniqueness is a first-committed-wins claim, so the catalog read
+     happens under the lock — two terminals creating the same SKU in parallel
+     must not both pass the check against the pre-lock snapshot. */
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
+    var existing = readRows_('Products', PRODUCT_HEADERS);
+    for (var i = 0; i < existing.length; i++) {
+      if (String(existing[i].sku) === sku || (upc && String(existing[i].upc) === upc)) {
+        throw statusError_(409, 'A product with that SKU or UPC already exists');
+      }
+    }
     var now = new Date().toISOString();
     var id = Utilities.getUuid();
     appendRows_('Products', PRODUCT_HEADERS, [{
@@ -3251,23 +3401,26 @@ function adminSerials_(session, payload) {
     .map(function (s) { return String(s).trim(); })
     .filter(function (s) { return s; });
 
-  var prodRows = readRows_('Products', PRODUCT_HEADERS);
-  var product = null;
-  for (var i = 0; i < prodRows.length; i++) {
-    if (String(prodRows[i].id) === productId) { product = prodRows[i]; break; }
-  }
-  if (!product) throw statusError_(404, 'Product not found');
-  if (String(product.is_serialized) !== '1') {
-    throw statusError_(400, 'Serials only apply to serialized products');
-  }
-
-  var serialRows = readRows_('Serials', SERIAL_HEADERS);
-  var snSet = {};
-  for (var j = 0; j < serialRows.length; j++) snSet[String(serialRows[j].serial_number)] = true;
-
+  /* Serial intake is a same-name claim too: the product lookup, the existing
+     serial set, and the append must all read under the lock so two terminals
+     grabbing "the same SN" can't both pass the pre-lock duplicate check. */
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
+    var prodRows = readRows_('Products', PRODUCT_HEADERS);
+    var product = null;
+    for (var i = 0; i < prodRows.length; i++) {
+      if (String(prodRows[i].id) === productId) { product = prodRows[i]; break; }
+    }
+    if (!product) throw statusError_(404, 'Product not found');
+    if (String(product.is_serialized) !== '1') {
+      throw statusError_(400, 'Serials only apply to serialized products');
+    }
+
+    var serialRows = readRows_('Serials', SERIAL_HEADERS);
+    var snSet = {};
+    for (var j = 0; j < serialRows.length; j++) snSet[String(serialRows[j].serial_number)] = true;
+
     var now = new Date().toISOString();
     var added = [];
     var duplicates = [];
@@ -3337,10 +3490,15 @@ function adminStore_(session, payload) {
   if (taxRate < 0 || taxRate > 100) {
     throw statusError_(400, 'taxRate must be between 0 and 100');
   }
+  var tzMinUpd = payload.tzOffsetMin == null || payload.tzOffsetMin === '' ? undefined : num_(payload.tzOffsetMin);
+  if (tzMinUpd !== undefined && (tzMinUpd < -720 || tzMinUpd > 840)) {
+    throw statusError_(400, 'tzOffsetMin must be between -720 and 840');
+  }
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
     setKv_('store_tax_rate', taxRate);
+    if (tzMinUpd !== undefined) setKv_('store_tz_offset', tzMinUpd);
     return getStore_();
   } finally {
     lock.releaseLock();
@@ -3397,11 +3555,12 @@ function driveExport_(session, payload, params) {
   var ownerId = String(session.uid || '');
   if (!isStore && !ownerId) throw statusError_(403, 'Cannot attribute report');
 
-  var day = String(payload.date || params.date || new Date().toISOString().slice(0, 10));
+  var tzExp = num_(getStore_().tzOffsetMin);
+  var day = String(payload.date || params.date || localDayKey_(new Date().toISOString(), tzExp));
   var txRows = readRows_('Transactions', TX_HEADERS);
   var dayRows = txRows.filter(function (t) {
     if (String(t.status) !== 'COMPLETED') return false;
-    if (String(t.created_at).slice(0, 10) !== day) return false;
+    if (localDayKey_(t.created_at, tzExp) !== day) return false;
     return isStore || String(t.user_id) === ownerId;
   });
 
@@ -3571,8 +3730,4 @@ function saleTotals_(lines, orderPct, taxRate) {
     tax: taxC / 100,
     total: grandC / 100,
   };
-}
-
-function uuid_() {
-  return Utilities.getUuid();
 }

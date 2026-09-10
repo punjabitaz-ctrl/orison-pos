@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.10.0** — inventory aging (`2026-09-09`) |
-| Validation bar | `backend-sim` **PASS 341 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.11.0** — offline sync hardening (`2026-09-09`) |
+| Validation bar | `backend-sim` **PASS 359 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~3,340 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell |
 | Node | ≥ 20 (dev/test only) |
@@ -81,6 +81,20 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `PriceHistory` timestamp); buckets 0–30/31–60/61–90/90+ with units + value
   at cost via `/api/inventory/aging`, viewed read-only from Products → *Aging*
   (serialized stock counted from `IN_STOCK` serials).
+- **v1.11.0** Offline sync hardening: **VOIDED re-pushes are re-evaluated**
+  (a failed sale is retried fresh and a success **rewrites the failure in
+  place** — same transaction id, never a duplicate row); same-batch
+  `clientTxId` duplicates resolve like re-pushes; refunds see sale + prior
+  refunds **within the same batch**; gross profit uses the **cost captured at
+  sale time** (`unitCost`) instead of the live editing cost, and refunds carry
+  the original's captured cost; `byCategory`/`byProduct` apply line + order
+  discounts in cents; reports + Drive export bucket by the **store's local
+  calendar day** (`store_tz_offset`, minutes via `adminStore_`); every
+  read+validate for PO receiving, suppliers, products/serials, and shift
+  open/close is **inside the script lock**; `round2_` is sign-safe
+  half-away-from-zero; `uuid_()` dead code removed; payouts/payments/refunds
+  attribute to the authenticated cashier; first-run seed is crash-safe against
+  a partial seed.
 - **v1.7.1** Post-review hardening: **refunds now admin/manager-only**;
   role changes revoke sessions immediately; Drive export no longer counts
   purchase receipts as SALES and nets collections as money-in (`COLLECTIONS`
@@ -140,25 +154,42 @@ Status of every finding class:
 - HIGH (operational) — service worker frozen at v1.2.0, missing new screens from the shell. → versioned v1.7.1 + precaches customers/reports/purchases.
 - LOW — inactive users leaked via `config_`; `package.json` version drift; pdf smoke not in `npm` scripts; brittle E2E stock assertion.
 
-**Deferred (do not silently leave):**
-- Lock scope: `purchaseOrderReceive_`, `suppliers_`, `adminProducts_`,
+**Deferred (do not silently leave):** — **all shipped in v1.11.0** (2026-09-09):
+
+- ~~Lock scope: `purchaseOrderReceive_`, `suppliers_`, `adminProducts_`,
   `adminSerials_` read/validate *before* acquiring the script lock → two
-  concurrent writes can clobber. Sim can't catch it. Fix: re-read under the
-  lock.
-- Idempotency: re-pushing a `VOIDED` row returns `ALREADY_SYNCED`/accepted
+  concurrent writes can clobber.~~ → every read+validate now runs inside the
+  lock, and `shiftOpen_`/`shiftClose_` were brought under the lock too
+  (`shiftClose_` updates in place via `applyPatches_`).
+- ~~Idempotency: re-pushing a `VOIDED` row returns `ALREADY_SYNCED`/accepted
   (looks complete locally, sale never recorded); same-batch duplicate
-  `clientTxId` can double-append. Fix in `syncPush_`.
-- Reports GP uses live `cost_price` instead of captured `unitCost` → history
-  rewrites after cost edits (current design choice — change deliberately).
-- `byCategory`/`byProduct` ignore discounts → can overstate vs store total.
-- Same-batch double refund validated against a pre-batch snapshot → both pass.
-- `shiftOpen_`/`shiftClose_` run without the script lock (double-open /
-  lost-write on double-close).
-- Aging buckets net store-credit refunds as the balance does.
-- Day-windows key on UTC in reports/exports — wrong for UTC+ stores.
-- Win/Win small: `round2_` negative rounding, `uuid_()` dead code,
+  `clientTxId` can double-append.~~ → a VOIDED row is re-evaluated on every
+  re-push and a success rewrites it in place (same id, no duplicate rows);
+  same-batch duplicates resolve to `ALREADY_SYNCED`/`DUPLICATE_CLIENT` via a
+  batch-level `batchSeen` index.
+- ~~Reports GP uses live `cost_price` instead of captured `unitCost` → history
+  rewrites after cost edits.~~ → `costOf_`/`byCategory`/`byProduct` prefer the
+  captured `unitCost` (live cost fallback for legacy rows); refunds carry the
+  original sale's captured cost.
+- ~~`byCategory`/`byProduct` ignore discounts → can overstate vs store total.~~ →
+  line `discountPct` + order discount applied per line, rounded cents.
+- ~~Same-batch double refund validated against a pre-batch snapshot → both
+  pass.~~ → `processRefund_` validates against the persisted ledger **plus
+  this batch's accepted rows** (original sale and prior refunds both).
+- ~~`shiftOpen_`/`shiftClose_` run without the script lock (double-open /
+  lost-write on double-close).~~ → both now run under the lock; closing
+  rewrites the shift row in place.
+- ~~Aging buckets net store-credit refunds as the balance does.~~ → confirmed
+  **already gross** (buckets only age net30/account tenders FIFO against
+  payments); locked by a sim assertion documenting the semantics.
+- ~~Day-windows key on UTC in reports/exports — wrong for UTC+ stores.~~ →
+  `store_tz_offset` (minutes) via `adminStore_`; reports/export interpret
+  date-only params and day keys in store-local time.
+- ~~Win/Win small: `round2_` negative rounding, `uuid_()` dead code,
   `fallbackUserId_` attribution, `config_` roster width, seed gate only checks
-  `store_id`.
+  `store_id`.~~ → `round2_` sign-safe half-away-from-zero; `uuid_()` deleted;
+  `fallbackUserId_(userRows, session)` prefers the authenticated account;
+  `config_` active-only roster locked by sim; seed gate also requires users.
 
 ## 9. Standing todo (do these next)
 
@@ -166,18 +197,16 @@ Status of every finding class:
    - ~~**Price history & tracking**~~ — shipped in **v1.8.0**.
    - ~~**Customer statements**~~ — shipped in **v1.9.0**.
    - ~~**Aging inventory**~~ — shipped in **v1.10.0**.
-   - **All three priority features are done.** Next candidate: knock down the
-     deferred hardening list (lock-scope race in `purchaseOrderReceive_` /
-     `suppliers_` / `adminProducts_` / `adminSerials_`, VOIDED re-push
-     idempotency, same-batch double refund, GP live-cost, UTC day windows).
+   - ~~**Deferred hardening list**~~ — **all shipped in v1.11.0** (lock-scope
+     races, VOIDED re-push idempotency, same-batch refunds/duplicates, GP
+     cost-at-sale, discounts in breakdowns, store-TZ day windows).
 2. **Deploy current version** — re-deploy `backend/Code.gs` as the Apps Script
-   Web App (new `PriceHistory` tab auto-creates on first read; `setup`
-   re-seed also works, it backs up to Drive first) and make sure Cloudflare
-   Pages is serving `public/` (no build, output dir `public`). Hardware
-   terminals will pick up the v1.10.0 shell automatically on next load.
-3. Optionally knock down the deferred hardening list above (lock-scope + VOIDED
-   re-push idempotency are the two with real teeth).
-4. Consider a client test harness for `money.js`/`sync.js` (biggest test gap).
+   Web App (no new tabs; run `setup` only if you want to re-seed, it backs up
+   to Drive first) and make sure Cloudflare Pages is serving `public/` (no
+   build, output dir `public`). Hardware terminals will pick up the v1.11.0
+   shell automatically on next load.
+3. Next candidate ideas: client test harness for `money.js`/`sync.js` (biggest
+   test gap); re-run the full code review against v1.11.0.
 
 ## 10. Session context / reconstructability
 

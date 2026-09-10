@@ -1982,6 +1982,227 @@ check('statement carries the changer/cashier',
     Math.abs(newCost - 21.88) < 0.001 && Math.abs(ag1Alpha.value - 8 * newCost) < 0.001, String(newCost));
 }
 
+{
+  section('hardening — v1.11.0');
+
+  const hAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'], deviceId: 'dev-hd-adm' }).data.token;
+  const hCas = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'], deviceId: 'dev-hd-cas' }).data.token;
+  const hNear = (a, b) => Math.abs(a - b) < 0.01;
+  const hTxRows = (cid) => ss._sheets.get('Transactions')._grid.filter((r, i) => i > 0 && String(r[4]) === cid);
+  const hIt = (oid, qty) => ({ productId: oid, quantity: qty, unitPrice: 10 });
+
+  /* --- VOIDED re-push: a failed push must be re-evaluable, id-stable, and
+         must never stack a second row once it succeeds --- */
+  const hdProd = req('/api/admin/products', {
+    name: 'Harden Lock', sku: 'HD-LOCK-01', category: 'HD Lock', costPrice: 10, retailPrice: 30, onHand: 2,
+  }, { session: hAdm }).data.id;
+  req('/api/admin/products/patch', { productId: hdProd, locked: true }, { session: hAdm });
+  const hdBlocked = req('/api/sync/push', {
+    deviceId: 'dev-hd-a',
+    batch: [{
+      clientTxId: 'tx-hd-a', userId: pin.data.user.id, grandTotal: 30,
+      tenders: [{ type: 'cash', amount: 30 }], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdProd, quantity: 1, unitPrice: 30 }],
+    }],
+  }, { session: hCas });
+  const hdT1 = hdBlocked.data.results[0].transactionId;
+  check('blocked sale rejected as VOIDED with a real transaction id',
+    hdBlocked.data.results[0].accepted === false && hdBlocked.data.results[0].status === 'VOIDED' && !!hdT1,
+    JSON.stringify(hdBlocked));
+  check('VOIDED failure left exactly one row',
+    hTxRows('tx-hd-a').length === 1 && hTxRows('tx-hd-a')[0][9] === 'VOIDED', JSON.stringify(hTxRows('tx-hd-a')));
+  const hdOnHand0 = req('/api/products', {}, { session: hAdm }).data.find((p) => p.id === hdProd).onHand;
+  check('blocked sale consumed no stock', hdOnHand0 === 2);
+
+  req('/api/admin/products/patch', { productId: hdProd, locked: false }, { session: hAdm });
+  const hdRetry = req('/api/sync/push', {
+    deviceId: 'dev-hd-a',
+    batch: [{
+      clientTxId: 'tx-hd-a', userId: pin.data.user.id, grandTotal: 30,
+      tenders: [{ type: 'cash', amount: 30 }], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdProd, quantity: 1, unitPrice: 30 }],
+    }],
+  }, { session: hCas });
+  check('re-push of a VOIDED row re-processes and wins now',
+    hdRetry.data.results[0].accepted === true && hdRetry.data.results[0].status === 'COMPLETED'
+      && hdRetry.data.results[0].transactionId === hdT1, JSON.stringify(hdRetry));
+  check('successful re-push rewrote the row in place (no duplicate)',
+    hTxRows('tx-hd-a').length === 1 && hTxRows('tx-hd-a')[0][9] === 'COMPLETED');
+  const hdOnHand1 = req('/api/products', {}, { session: hAdm }).data.find((p) => p.id === hdProd).onHand;
+  check('accepted re-push consumed stock exactly once', hdOnHand1 === 1);
+
+  const hdRe = req('/api/sync/push', {
+    deviceId: 'dev-hd-a',
+    batch: [{
+      clientTxId: 'tx-hd-a', userId: pin.data.user.id, grandTotal: 30,
+      tenders: [{ type: 'cash', amount: 30 }], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdProd, quantity: 1, unitPrice: 30 }],
+    }],
+  }, { session: hCas });
+  check('post-success re-push answers ALREADY_SYNCED on the same id',
+    hdRe.data.results[0].status === 'ALREADY_SYNCED' && hdRe.data.results[0].transactionId === hdT1);
+  const hdChanged = req('/api/sync/push', {
+    deviceId: 'dev-hd-a',
+    batch: [{
+      clientTxId: 'tx-hd-a', userId: pin.data.user.id, grandTotal: 31,
+      tenders: [{ type: 'cash', amount: 31 }], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdProd, quantity: 1, unitPrice: 31 }],
+    }],
+  }, { session: hCas });
+  check('changed content for the same id still flags DUPLICATE_CLIENT',
+    hdChanged.data.results[0].conflicts.some((c) => c.reason === 'duplicate_client_tx')
+      && hTxRows('tx-hd-a').length === 1, JSON.stringify(hdChanged));
+
+  /* --- same-batch duplicate clientTxId resolves like a re-push --- */
+  const hdB = req('/api/sync/push', {
+    deviceId: 'dev-hd-b',
+    batch: [{
+      clientTxId: 'tx-hd-b', userId: pin.data.user.id, grandTotal: 30,
+      tenders: [], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdProd, quantity: 1, unitPrice: 30 }],
+    }, {
+      clientTxId: 'tx-hd-b', userId: pin.data.user.id, grandTotal: 30,
+      tenders: [], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdProd, quantity: 1, unitPrice: 30 }],
+    }],
+  }, { session: hCas });
+  check('second identical entry in one batch answers ALREADY_SYNCED once',
+    hdB.data.results[0].status === 'COMPLETED' && hdB.data.results[1].status === 'ALREADY_SYNCED'
+      && hTxRows('tx-hd-b').length === 1, JSON.stringify(hdB.data.results));
+
+  /* --- same-batch sale + prior refunds: the refund must see the same-batch
+         original sale AND count same-batch refunds toward "remaining" --- */
+  const hdGrossC = req('/api/admin/customers', { name: 'Harden Batch' }, { session: hAdm }).data.customer.id;
+  const hdBatchP = req('/api/admin/products', {
+    name: 'Harden Batch Prod', sku: 'HD-BATCH-01', category: 'HD Batch', costPrice: 10, retailPrice: 8, onHand: 5,
+  }, { session: hAdm }).data.id;
+  const hdSame = req('/api/sync/push', {
+    deviceId: 'dev-hd-c',
+    batch: [{
+      clientTxId: 'tx-hd-c', customerId: hdGrossC, grandTotal: 40,
+      tenders: [{ type: 'net30', amount: 40 }], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdBatchP, quantity: 5, unitPrice: 8 }],
+    }, {
+      clientTxId: 'tx-hd-rf1', kind: 'refund', originalClientTx: 'tx-hd-c', grandTotal: 15,
+      tenders: [{ type: 'cash', amount: 15 }], note: '', createdAt: new Date().toISOString(),
+      items: [hIt(hdBatchP, 1)],
+    }, {
+      clientTxId: 'tx-hd-rf2', kind: 'refund', originalClientTx: 'tx-hd-c', grandTotal: 25,
+      tenders: [{ type: 'cash', amount: 25 }], note: '', createdAt: new Date().toISOString(),
+      items: [hIt(hdBatchP, 1)],
+    }],
+  }, { session: hAdm });
+  check('same-batch sale then two refunds against it all accept',
+    hdSame.data.results[0].accepted && hdSame.data.results[1].accepted && hdSame.data.results[2].accepted,
+    JSON.stringify(hdSame));
+  const hdRf3 = req('/api/sync/push', {
+    deviceId: 'dev-hd-c',
+    batch: [{
+      clientTxId: 'tx-hd-rf3', kind: 'refund', originalClientTx: 'tx-hd-c', grandTotal: 10,
+      tenders: [{ type: 'cash', amount: 10 }], note: '', createdAt: new Date().toISOString(),
+      items: [hIt(hdBatchP, 1)],
+    }],
+  }, { session: hAdm });
+  check('third refund past the same-batch total is refused',
+    hdRf3.data.results[0].accepted === false
+      && hdRf3.data.results[0].conflicts.some((c) => c.reason === 'refund_exceeds_sale'), JSON.stringify(hdRf3));
+
+  /* --- gross profit uses cost-at-sale, not the live (edited) cost --- */
+  const hdCostP = req('/api/admin/products', {
+    name: 'GP Cost Widget', sku: 'HD-COST-01', category: 'HD Cost', costPrice: 9, retailPrice: 30, onHand: 5,
+  }, { session: hAdm }).data.id;
+  req('/api/sync/push', {
+    deviceId: 'dev-hd-d',
+    batch: [{
+      clientTxId: 'tx-hd-gp', userId: pin.data.user.id, grandTotal: 60,
+      tenders: [], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdCostP, quantity: 2, unitPrice: 30 }],
+    }],
+  }, { session: hCas });
+  req('/api/admin/products/patch', { productId: hdCostP, costPrice: 99 }, { session: hAdm });
+  const hpDay = new Date().toISOString().slice(0, 10);
+  const hpRep = req('/api/reports', {}, { session: hAdm, params: { from: hpDay, to: hpDay } }).data;
+  const hpCat = hpRep.byCategory.find((c) => c.category === 'HD Cost');
+  check('GP stays at sale-time cost after live cost edit (9 → 99)',
+    hpCat && hNear(hpCat.sales, 60) && hNear(hpCat.gp, 60 - 2 * 9), JSON.stringify(hpCat));
+
+  /* --- byCategory/byProduct apply line + order discounts --- */
+  const hdDisP = req('/api/admin/products', {
+    name: 'Harden Discount', sku: 'HD-DIS-01', category: 'HD Discount', costPrice: 4, retailPrice: 20, onHand: 5,
+  }, { session: hAdm }).data.id;
+  req('/api/sync/push', {
+    deviceId: 'dev-hd-e',
+    batch: [{
+      clientTxId: 'tx-hd-dis', userId: pin.data.user.id, discountPct: 5, grandTotal: 18.34,
+      tenders: [{ type: 'cash', amount: 18.34 }], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdDisP, quantity: 1, unitPrice: 20, discountPct: 10 }],
+    }],
+  }, { session: hCas });
+  const disDeliver = req('/api/transactions', {}, { params: { limit: '500' }, session: hAdm }).data.transactions.find((t) => t.clientTxId === 'tx-hd-dis');
+  const disRep = req('/api/reports', {}, { session: hAdm, params: { from: hpDay, to: hpDay } }).data;
+  const disCat = disRep.byCategory.find((c) => c.category === 'HD Discount');
+  check('discounted line nets 10% line + 5% order discount',
+    hpDay && disCat && hNear(disCat.sales, 17.10) && hNear(disCat.gp, 17.10 - 4), JSON.stringify(disCat));
+  check('discounted totals ledger matches reference',
+    disDeliver && hNear(disDeliver.grandTotal, 18.34) && hNear(disDeliver.subtotal, 18.00), JSON.stringify(disDeliver));
+
+  /* --- store-TZ day windows: a 23:30Z sale is the NEXT local day --- */
+  req('/api/admin/store', { taxRate: 7.25, tzOffsetMin: 60 }, { session: hAdm });
+  req('/api/sync/push', {
+    deviceId: 'dev-hd-f',
+    batch: [{
+      clientTxId: 'tx-hd-tz1', userId: pin.data.user.id, grandTotal: 21.45,
+      tenders: [{ type: 'cash', amount: 21.45 }], note: '', createdAt: '2026-09-09T23:30:00.000Z',
+      items: [{ productId: hdDisP, quantity: 1, unitPrice: 20 }],
+    }],
+  }, { session: hCas });
+  const tzNext = req('/api/reports', {}, { session: hAdm, params: { from: '2026-09-10', to: '2026-09-10' } }).data;
+  const tzPrev = req('/api/reports', {}, { session: hAdm, params: { from: '2026-09-09', to: '2026-09-09' } }).data;
+  const tzNextDay = tzNext.byDay.find((d) => d.date === '2026-09-10');
+  check('UTC 2026-09-09T23:30 sale lands in the 2026-09-10 LOCAL day (UTC+1)',
+    tzNextDay && tzNextDay.sales >= 21.44 && !tzPrev.byDay.some((d) => d.date === '2026-09-10'),
+    JSON.stringify({ next: tzNext.byDay, prev: tzPrev.byDay }));
+  const tzExpNext = req('/api/drive/export', { date: '2026-09-10' }, { session: hAdm });
+  const tzExpPrev = req('/api/drive/export', { date: '2026-09-09' }, { session: hAdm });
+  const tzNextCsv = driveFiles.find((f) => f.id === tzExpNext.data.fileId).content;
+  const tzPrevCsv = driveFiles.find((f) => f.id === tzExpPrev.data.fileId).content;
+  check('drive export buckets the same sale to the local day',
+    tzNextCsv.includes('tx-hd-tz1') && !tzPrevCsv.includes('tx-hd-tz1'));
+  req('/api/admin/store', { taxRate: 7.25, tzOffsetMin: 0 }, { session: hAdm });
+
+  /* --- config roster is active-only (locked) --- */
+  const cfgH = req('/api/config', {}, { session: hAdm }).data;
+  check('config roster width is active-only (deactivated Luca excluded)',
+    cfgH.users.length === 4 && !cfgH.users.some((u) => u.email === 'luca@example.com'),
+    JSON.stringify(cfgH.users.map((u) => u.email)));
+
+  /* --- receivables aging is gross of store-credit refunds --- */
+  const hdAgingC = req('/api/admin/customers', { name: 'Gross Aging' }, { session: hAdm }).data.customer.id;
+  const hdAgingP = req('/api/admin/products', {
+    name: 'Harden Aging', sku: 'HD-AGING-01', category: 'HD Aging', costPrice: 5, retailPrice: 10, onHand: 20,
+  }, { session: hAdm }).data.id;
+  req('/api/sync/push', {
+    deviceId: 'dev-hd-g',
+    batch: [{
+      clientTxId: 'tx-hd-gross', customerId: hdAgingC, grandTotal: 100,
+      tenders: [{ type: 'net30', amount: 100 }], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdAgingP, quantity: 10, unitPrice: 10 }],
+    }],
+  }, { session: hCas });
+  req('/api/sync/push', {
+    deviceId: 'dev-hd-g',
+    batch: [{
+      clientTxId: 'tx-hd-gross-rf', kind: 'refund', originalClientTx: 'tx-hd-gross', grandTotal: 30,
+      tenders: [{ type: 'store_credit', amount: 30 }], note: '', createdAt: new Date().toISOString(),
+      items: [{ productId: hdAgingP, quantity: 3, unitPrice: 10 }],
+    }],
+  }, { session: hAdm });
+  const hdAgingLed = req('/api/customers/ledger', {}, { session: hAdm, params: { customerId: hdAgingC } }).data;
+  check('aging stays gross of a store-credit refund (balance nets it)',
+    hNear(hdAgingLed.aging.current, 100) && hNear(hdAgingLed.balance, 70),
+    JSON.stringify({ aging: hdAgingLed.aging, balance: hdAgingLed.balance }));
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);
