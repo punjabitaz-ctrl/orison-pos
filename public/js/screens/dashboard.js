@@ -7,7 +7,7 @@
 import { idb } from '../db.js';
 import { api } from '../api.js';
 import { fmt, esc, toast, beep, openModal, closeModal } from '../ui.js';
-import { SYNC_EVENT } from '../sync.js';
+import { SYNC_EVENT, getDeviceId } from '../sync.js';
 import { inventoryAlerts } from '../alerts.js';
 import { createPayout } from '../money.js';
 
@@ -54,13 +54,14 @@ export const screen = {
     let pending = 0;
     let server = true;
     let conflicts = [];
+    let shifts = [];
 
     function scope() {
       return isManager ? txs : txs.filter((t) => String(t.user_id) === String(user.id));
     }
 
     async function load() {
-      const [prods, res, outbox, con] = await Promise.all([
+      const [prods, res, outbox, con, shiftRes] = await Promise.all([
         idb.getAll('products').catch(() => []),
         navigator.onLine
           ? api.get('/api/transactions?limit=300').catch((err) => { server = !(err && err.offline); return { ok:false }; })
@@ -69,11 +70,15 @@ export const screen = {
         navigator.onLine && isManager
           ? api.get('/api/conflicts').catch(() => ({ conflicts: [] }))
           : Promise.resolve({ conflicts: [] }),
+        navigator.onLine
+          ? api.get('/api/shifts').catch(() => ({ shifts: [] }))
+          : Promise.resolve({ shifts: [] }),
       ]);
       products = prods;
       txs = (res && res.transactions) || [];
       pending = outbox.filter((o) => o.status === 'PENDING').length;
       conflicts = (con && con.conflicts) || [];
+      shifts = (shiftRes && shiftRes.shifts) || [];
       draw();
     }
 
@@ -118,6 +123,30 @@ export const screen = {
           <div class="dash-kpi warn"><span>Paid out</span><strong>−${money(todayPayouts)}</strong></div>
           <div class="dash-kpi dash-gp"><span>Gross profit today</span><strong>${money(todayGP)}</strong></div>` : ''}
         </div>
+
+        <section class="dash-section">
+          <h3>Shift</h3>
+          ${myOpenShift().length ? `
+            <div class="shift-card">
+              <div>
+                <strong>Shift open</strong>
+                <p class="muted">since ${humanDate(myOpenShift()[0].openedAt)} · float ${money(myOpenShift()[0].openingFloat)}</p>
+              </div>
+              <button class="btn" id="shiftClose">Close &amp; count</button>
+            </div>` : `
+            <div class="shift-card">
+              <div><strong>No open shift</strong><p class="muted">Open one to reconcile the till when you close. Sales run fine either way.</p></div>
+              <button class="btn" id="shiftOpen">Open shift</button>
+            </div>`}
+          ${isManager ? `
+            <div class="rank-list" style="margin-top:10px">
+              ${shifts.filter((s) => s.status === 'CLOSED').slice(0, 5).map((s) => `
+                <div class="rank-row">
+                  <div class="rank-main"><div class="rank-name">${esc(s.userName)}</div><div class="muted">${humanDate(s.closedAt)} · expected ${money(s.expectedCash)}</div></div>
+                  <b class="${s.overShort === 0 ? 'gp' : 'neg'}">${s.overShort > 0 ? '+' : ''}${money(s.overShort)}</b>
+                </div>`).join('') || '<p class="muted">No closed shifts yet.</p>'}
+            </div>` : ''}
+        </section>
 
         ${isManager ? `
         <section class="dash-section">
@@ -220,6 +249,10 @@ export const screen = {
       if (alertBtn) alertBtn.addEventListener('click', () => router.show('alerts'));
       const payoutBtn = root.querySelector('#dashPayout');
       if (payoutBtn) payoutBtn.addEventListener('click', () => openPayoutModal());
+      const shiftOpenBtn = root.querySelector('#shiftOpen');
+      if (shiftOpenBtn) shiftOpenBtn.addEventListener('click', openShiftModal);
+      const shiftCloseBtn = root.querySelector('#shiftClose');
+      if (shiftCloseBtn) shiftCloseBtn.addEventListener('click', () => closeShiftModal(myOpenShift()[0]));
       const expBtn = root.querySelector('#dashExport');
       if (expBtn) expBtn.addEventListener('click', () => exportDay(expBtn));
       root.querySelectorAll('[data-go-history]').forEach((b) => b.addEventListener('click', () => router.show('history')));
@@ -299,6 +332,129 @@ export const screen = {
           toast('Failed — try again', 'warn', 2400);
         }
       });
+    }
+
+    function myOpenShift() {
+      return shifts.filter((s) => s.status === 'OPEN' && String(s.userId) === String(user.id));
+    }
+
+    function currencyGrid(sumEl) {
+      const denoms = [1000, 500, 200, 100, 50, 20];
+      const recalc = () => {
+        let total = 0;
+        for (const d of denoms) {
+          const v = Number(sumEl.querySelector(`[data-d="${d}"]`).value) || 0;
+          total += v * d;
+        }
+        sumEl.querySelector('[data-sum]').textContent = money(total);
+        sumEl._declared = total;
+      };
+      const grid = denoms.map((d) => `
+        <div class="den-row">
+          <span class="den-label">₦${d}</span>
+          <input class="field den-qty" data-d="${d}" type="number" min="0" step="1" value="0" inputmode="numeric">
+        </div>`).join('');
+      sumEl.innerHTML = `
+        <div class="den-grid">${grid}</div>
+        <div class="den-total">Declared cash <strong data-sum>${money(0)}</strong></div>`;
+      sumEl.querySelectorAll('.den-qty').forEach((inp) => {
+        inp.addEventListener('input', recalc);
+        inp.addEventListener('focus', () => inp.select());
+      });
+      recalc();
+      return sumEl;
+    }
+
+    function openShiftModal() {
+      const modalEl = openModal(`
+        <div class="tx-detail">
+          <button class="icon-btn abs-close" data-x>✕</button>
+          <h3>Open shift</h3>
+          <p class="muted">Start with the float you put in the drawer. The till isn't locked either way.</p>
+          <label class="field-label">Opening float (₦)
+            <input class="field" id="sh-float" type="number" min="0" step="0.01" placeholder="0.00" value="0">
+          </label>
+          <label class="field-label">Note (optional)
+            <input class="field" id="sh-note" placeholder="e.g. morning shift">
+          </label>
+          <button class="btn btn-block" id="sh-open-confirm" style="--bg:#2e7d32">Open shift</button>
+        </div>`);
+      modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
+      const confirm = modalEl.querySelector('#sh-open-confirm');
+      confirm.addEventListener('click', async () => {
+        const float = Number(modalEl.querySelector('#sh-float').value);
+        if (!(float >= 0)) { toast('Enter a float', 'warn'); return; }
+        confirm.disabled = true;
+        try {
+          await api.post('/api/shifts/open', {
+            openingFloat: float,
+            note: modalEl.querySelector('#sh-note').value.trim(),
+            deviceId: await getDeviceId(),
+          });
+          closeModal();
+          toast('Shift opened', 'ok'); beep('ok');
+          await load();
+        } catch (err) {
+          confirm.disabled = false;
+          toast((err && err.data && err.data.error) || 'Couldn’t open shift', 'warn');
+        }
+      });
+    }
+
+    function closeShiftModal(shift) {
+      const sumEl = document.createElement('div');
+      currencyGrid(sumEl);
+      const modalEl = openModal(`
+        <div class="tx-detail">
+          <button class="icon-btn abs-close" data-x>✕</button>
+          <h3>Close shift</h3>
+          <p class="muted">Opened ${humanDate(shift.openedAt)} · float ${money(shift.openingFloat)}. Count the drawer and enter quantities.</p>
+          <div id="denBox"></div>
+          <label class="field-label">Note (optional)
+            <input class="field" id="shc-note" placeholder="e.g. busy morning, tax collected">
+          </label>
+          <button class="btn btn-block" id="shc-confirm" style="--bg:#0b3d66">Close &amp; reconcile</button>
+        </div>`);
+      modalEl.querySelector('#denBox').appendChild(sumEl);
+      modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
+      const confirm = modalEl.querySelector('#shc-confirm');
+      confirm.addEventListener('click', async () => {
+        const denoms = {};
+        for (const d of [1000, 500, 200, 100, 50, 20]) denoms[d] = Number(sumEl.querySelector(`[data-d="${d}"]`).value) || 0;
+        confirm.disabled = true;
+        try {
+          const res = await api.post('/api/shifts/close', {
+            shiftId: shift.id,
+            denoms,
+            note: modalEl.querySelector('#shc-note').value.trim(),
+          });
+          closeModal();
+          const s = res.shift;
+          const diff = Number(s.overShort) || 0;
+          showCloseResult(s, diff);
+          await load();
+        } catch (err) {
+          confirm.disabled = false;
+          toast((err && err.data && err.data.error) || 'Couldn’t close shift', 'warn');
+        }
+      });
+    }
+
+    function showCloseResult(s, diff) {
+      const modalEl = openModal(`
+        <div class="tx-detail">
+          <button class="icon-btn abs-close" data-x>✕</button>
+          <h3>Shift closed</h3>
+          <div class="ledger-bal">
+            <div><span>Declared</span><b>${money(s.declaredCash)}</b></div>
+            <div><span>Expected</span><b>${money(s.expectedCash)}</b></div>
+            <div class="lg-total"><span>Over / short</span><strong class="${diff === 0 ? 'gp' : diff > 0 ? 'gp' : 'neg'}">${diff > 0 ? '+' : ''}${money(diff)}</strong></div>
+          </div>
+          <p class="muted">${diff === 0 ? 'The drawer balances exactly.' : diff > 0 ? 'There is more cash than the register expects — check the count and prior payouts.' : 'Cash is less than expected — check the drawer before signing off.'}</p>
+          <button class="btn btn-block" id="res-ok" style="--bg:#2e7d32">Done</button>
+        </div>`);
+      modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
+      modalEl.querySelector('#res-ok').addEventListener('click', closeModal);
     }
 
     const onSync = () => { load(); };

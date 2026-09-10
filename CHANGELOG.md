@@ -5,6 +5,32 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-09-09
+
+Till reconciliation without the spreadsheet gymnastics: open a shift with the
+float, close it later by counting the drawer, and the register marks the
+over/short against what the POS says the drawer should hold.
+
+### Added
+
+- **Shifts.** `/api/shifts/open` (any role) starts a shift with an opening
+  float. `/api/shifts/close` takes a denomination breakdown of the physical
+  drawer and reports *declared*, *expected*, and *over / short*. The lifecycle
+  is soft on purpose — sales never require an open shift, so a terminal can
+  never be locked out.
+- **Expected drawer math.** `float + cash sales − cash refunds − payouts +
+  cash collections`, scoped to the shift owner's window. One shift, one
+  drawer, one person's cash.
+- **Dashboard shift card.** Cashiers open and close their shift straight from
+  the KPI row, count ₦1000 / 500 / 200 / 100 / 50 / 20 notes with a live total,
+  and land on a clear close-out result ("the drawer balances exactly" or why it
+  doesn't). Managers see the last five closes with over/short chips and how many
+  tills currently sit open.
+- `/api/shifts` listing: cashiers see their own; managers see everyone's.
+- **Denominations ledgered.** The physical count is stored per shift
+  (`tenders_json`) so a disputed close-out can be re-audited against the
+  recorded stack.
+
 ## [1.4.1] — 2026-09-09
 
 Receivables grow teeth. Managers can record payments against a customer account

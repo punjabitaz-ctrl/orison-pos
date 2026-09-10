@@ -68,6 +68,9 @@ function dispatch_(action, session, payload, params) {
     case '/api/customers':       return customers_(session, payload, params);
     case '/api/customers/ledger': return customerLedger_(session, params);
     case '/api/customers/receivables': return receivables_(session);
+    case '/api/shifts':          return shifts_(session, params);
+    case '/api/shifts/open':     return shiftOpen_(session, payload);
+    case '/api/shifts/close':    return shiftClose_(session, payload);
     case '/api/conflicts':       return conflicts_(session, params);
     case '/api/conflicts/review': return reviewConflict_(session, payload);
     case '/api/admin/unlock':    return adminUnlock_(session, payload);
@@ -304,6 +307,7 @@ var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 're
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
 var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at'];
+var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 
 function spreadSheet_() {
@@ -647,6 +651,7 @@ function seed_() {
   sheet_('Transactions', TX_HEADERS);
   sheet_('Conflicts', CONFLICT_HEADERS);
   sheet_('Customers', CUSTOMERS_HEADERS);
+  sheet_('Shifts', SHIFTS_HEADERS);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1907,6 +1912,177 @@ function agingBuckets_(txRows) {
     if (!oldestDays) oldestDays = days;
   }
   return { current: b.current, d30: b.d30, d60: b.d60, d90: b.d90, oldestDays: oldestDays };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Shifts: soft lifecycle for till reconciliation.
+ *
+ *  open  → float + opening frame. close → the cashier declares the physical
+ *  drawer (as a denomination breakdown) and we compare it to what the POS
+ *  says the drawer should hold: float + cash sales − cash out (refunds made
+ *  in cash, payouts) + cash collections, scoped to the shift's user window.
+ *
+ *  Enforcement is deliberately soft: sales never require an open shift, so a
+ *  register can never be locked out. The shift is a reconciliation record.
+ * ------------------------------------------------------------------ */
+
+function shiftDenomsValue_(denoms) {
+  var denominations = [1000, 500, 200, 100, 50, 20];
+  var total = 0;
+  denoms = denoms || {};
+  for (var d = 0; d < denominations.length; d++) {
+    var qty = num_(denoms[denominations[d]]);
+    if (qty > 0) total += denominations[d] * qty;
+  }
+  return total;
+}
+
+function shiftOpen_(session, payload) {
+  var openingFloat = num_(payload && payload.openingFloat);
+  if (!(openingFloat >= 0)) throw statusError_(400, 'opening_float_required');
+  var note = String((payload && payload.note) || '').slice(0, 200);
+  var store = getStore_();
+  var shiftRows = readRows_('Shifts', SHIFTS_HEADERS);
+  for (var s = 0; s < shiftRows.length; s++) {
+    if (String(shiftRows[s].status) === 'OPEN' && String(shiftRows[s].user_id) === String(session.uid)) {
+      throw statusError_(409, 'shift_already_open');
+    }
+  }
+  var row = {
+    id: Utilities.getUuid(),
+    store_id: store.id,
+    user_id: String(session.uid),
+    device_id: String((payload && payload.deviceId) || ''),
+    opened_at: new Date().toISOString(),
+    closed_at: '',
+    opening_float: openingFloat,
+    cash_expected: '',
+    cash_declared: '',
+    over_short: '',
+    tenders_json: '{}',
+    note: note,
+    status: 'OPEN',
+  };
+  appendRows_('Shifts', SHIFTS_HEADERS, [row]);
+  return { shift: shift_views_(session, [row])[0], open: true, msg: 'Shift opened' };
+}
+
+function shiftClose_(session, payload) {
+  var shiftId = String((payload && payload.shiftId) || '');
+  var note = String((payload && payload.note) || '').slice(0, 200);
+  var shiftRows = readRows_('Shifts', SHIFTS_HEADERS);
+  var shift = null;
+  for (var s = 0; s < shiftRows.length; s++) {
+    if (shiftId && String(shiftRows[s].id) === shiftId) { shift = shiftRows[s]; break; }
+    if (String(shiftRows[s].status) === 'OPEN' && String(shiftRows[s].user_id) === String(session.uid)) shift = shiftRows[s];
+  }
+  if (!shift) throw statusError_(404, 'no_open_shift');
+  if (String(shift.user_id) !== String(session.uid)) throw statusError_(403, 'not_your_shift');
+  if (String(shift.status) !== 'OPEN') throw statusError_(409, 'shift_already_closed');
+
+  var declared = shiftDenomsValue_(payload && payload.denoms);
+  var openedAt = new Date(String(shift.opened_at)).getTime();
+  var txRows = readRows_('Transactions', TX_HEADERS)
+    .filter(function (t) {
+      return String(t.status) === 'COMPLETED'
+        && String(t.user_id) === String(shift.user_id)
+        && new Date(String(t.created_at)).getTime() >= openedAt
+        && new Date(String(t.created_at)).getTime() <= Date.now();
+    });
+  var expected = num_(shift.opening_float);
+  for (var t = 0; t < txRows.length; t++) {
+    var tr = txRows[t];
+    var kind = String(tr.kind || 'sale');
+    var tenders = [];
+    try { tenders = JSON.parse(tr.tenders_json || '[]'); } catch (_) {}
+    if (kind === 'sale') {
+      for (var k = 0; k < tenders.length; k++) {
+        if (String(tenders[k].type || '') === 'cash') expected += num_(tenders[k].amount);
+      }
+    } else if (kind === 'payout') {
+      expected -= num_(tr.grand_total);
+    } else if (kind === 'refund') {
+      for (var m = 0; m < tenders.length; m++) {
+        if (String(tenders[m].type || '') === 'cash') expected -= num_(tenders[m].amount);
+      }
+    } else if (kind === 'payment') {
+      for (var p = 0; p < tenders.length; p++) {
+        if (String(tenders[p].type || '') === 'cash') expected += num_(tenders[p].amount);
+      }
+    }
+  }
+  var overShort = declared - expected;
+
+  /* update the existing OPEN row in place rather than appending a second. */
+  var sh = sheet_('Shifts', SHIFTS_HEADERS);
+  var values = sh.getDataRange().getValues();
+  var hdrs = [];
+  for (var c = 0; c < values[0].length; c++) hdrs.push(String(values[0][c]));
+  var idCol = hdrs.indexOf('id');
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][idCol]) !== String(shift.id)) continue;
+    var map = {};
+    for (var cc = 0; cc < hdrs.length; cc++) map[hdrs[cc]] = values[r][cc];
+    map.closed_at = new Date().toISOString();
+    map.cash_expected = expected;
+    map.cash_declared = declared;
+    map.over_short = overShort;
+    map.tenders_json = JSON.stringify((payload && payload.denoms) || {});
+    map.note = map.note ? String(map.note) + ' | ' + note : note;
+    map.status = 'CLOSED';
+    var out = [];
+    for (var cc2 = 0; cc2 < hdrs.length; cc2++) out.push(map[hdrs[cc2]] == null ? '' : String(map[hdrs[cc2]]));
+    sh.getRange(r + 1, 1, 1, hdrs.length).setValues([out]);
+  }
+  return {
+    shift: shift_views_(session, [Object.assign(shift, { closed_at: map ? map.closed_at : '', cash_expected: expected, cash_declared: declared, over_short: overShort, tenders_json: JSON.stringify((payload && payload.denoms) || {}), status: 'CLOSED' })])[0],
+    open: false,
+    msg: 'Shift closed',
+  };
+}
+
+function shifts_(session, params) {
+  var role = String(session.role || '');
+  var all = String((params && params.status) || '') === 'all' || role === 'admin' || role === 'manager';
+  var rows = readRows_('Shifts', SHIFTS_HEADERS)
+    .filter(function (s) { return all || String(s.user_id) === String(session.uid); })
+    .sort(function (a, b) { return String(b.opened_at).localeCompare(String(a.opened_at)); });
+  return { shifts: shift_views_(session, rows), open: shiftOpenCount_() };
+}
+
+function shiftOpenCount_() {
+  var rows = readRows_('Shifts', SHIFTS_HEADERS);
+  var n = 0;
+  for (var i = 0; i < rows.length; i++) if (String(rows[i].status) === 'OPEN') n++;
+  return n;
+}
+
+function shift_views_(session, rows) {
+  var userRows = readRows_('Users', USER_HEADERS);
+  var byUser = {};
+  for (var u = 0; u < userRows.length; u++) byUser[String(userRows[u].id)] = userRows[u];
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var s = rows[i];
+    var denoms = {};
+    try { denoms = JSON.parse(String(s.tenders_json || '{}')); } catch (_) {}
+    var u = byUser[String(s.user_id)] || {};
+    out.push({
+      id: String(s.id),
+      userId: String(s.user_id),
+      userName: String(u.first_name || '') + ' ' + String(u.last_name || ''),
+      openedAt: String(s.opened_at || ''),
+      closedAt: String(s.closed_at || ''),
+      openingFloat: num_(s.opening_float),
+      expectedCash: s.cash_expected === '' ? null : num_(s.cash_expected),
+      declaredCash: s.cash_declared === '' ? null : num_(s.cash_declared),
+      overShort: s.over_short === '' ? null : num_(s.over_short),
+      denoms: denoms,
+      note: String(s.note || ''),
+      status: String(s.status || 'OPEN'),
+    });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ *

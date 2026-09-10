@@ -800,3 +800,12 @@ button:disabled { cursor: default; }
 .age60 { background: #ffe0b2; color: #bf5b00; }
 .age90 { background: #fbe9e7; color: #c62828; }
 .lg-aging { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
+
+.shift-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #f6f9fc; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.shift-card p { margin: 2px 0 0; }
+.den-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.den-row { display: flex; align-items: center; gap: 10px; }
+.den-label { width: 54px; font-weight: 700; font-size: 14px; }
+.den-qty { text-align: right; }
+.den-total { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 14px; }
+.den-total strong { font-size: 18px; color: #0b3d66; }

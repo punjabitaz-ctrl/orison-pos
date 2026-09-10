@@ -1513,6 +1513,79 @@ section('discounts & tax');
   void once;
 }
 
+{
+  section('till shifts');
+
+  const shAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const shCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const shDiego = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const shSara = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const usersL = req('/api/admin/users/list', {}, { session: shAdm }).data.users;
+  const amaraId = usersL.find((u) => u.email === 'amara@example.com').id;
+  const cableS = req('/api/products', {}, { session: shAdm }).data.find((p) => p.sku === 'CB-USBC-1M');
+  const pushS = (session, userId, clientTxId, kind, amount, extra) => req('/api/sync/push', {
+    deviceId: 'dev-sh-1',
+    batch: [{
+      clientTxId, userId, kind, grandTotal: amount, createdAt: new Date().toISOString(),
+      tenders: extra.tenders, items: extra.items || [],
+    }],
+  }, { session });
+  const pushCosted = (txId, amount, tenders, items) => pushS(shCash, amaraId, txId, 'sale', amount, { tenders, items });
+
+  const opm = req('/api/shifts/open', { openingFloat: 5000, note: 'morning float' }, { session: shCash });
+  check('cashier opens a shift with float', opm.data.open === true && opm.data.shift.openingFloat === 5000 && opm.data.shift.status === 'OPEN');
+  const cashShiftId = opm.data.shift.id;
+  const admShift = req('/api/shifts/open', { openingFloat: 0 }, { session: shAdm });
+  const admShiftId = admShift.data.shift.id;
+
+  const c = (qty) => [{ productId: cableS.id, quantity: qty, unitPrice: 10 }];
+  check('sale inside shift window (cash in)',
+    pushCosted('tx-sh-s1', 40, [{ type: 'cash', amount: 40 }], c(1)).data.results[0].accepted === true);
+  check('another cash sale',
+    pushCosted('tx-sh-s2', 60, [{ type: 'cash', amount: 60 }], c(2)).data.results[0].accepted === true);
+  check('cash refund inside shift (cash out)',
+    req('/api/sync/push', {
+      deviceId: 'dev-sh-1',
+      batch: [{
+        clientTxId: 'tx-sh-rf', userId: amaraId, kind: 'refund', originalClientTx: 'tx-sh-s2',
+        grandTotal: 10, tenders: [{ type: 'cash', amount: 10 }], createdAt: new Date().toISOString(), items: [],
+      }],
+    }, { session: shCash }).data.results[0].accepted === true);
+  const admId = usersL.find((u) => u.email === 'tariq@example.com').id;
+  check('payout is admin/manager only (cashier denied)',
+    pushS(shCash, amaraId, 'tx-sh-po', 'payout', 25, { tenders: [] }).data.results[0].accepted === false);
+  check('admin payout inside own shift (cash out)',
+    pushS(shAdm, admId, 'tx-sh-po', 'payout', 25, { tenders: [] }).data.results[0].accepted === true);
+
+  const closeSh = req('/api/shifts/close', { shiftId: cashShiftId, denoms: { 1000: 5 }, note: 'end of day' }, { session: shCash });
+  check('close computes expected = float + cash in - cash out',
+    closeSh.data.shift.declaredCash === 5000
+      && closeSh.data.shift.expectedCash === 5090
+      && closeSh.data.shift.overShort === -90,
+    JSON.stringify(closeSh.data.shift));
+  check('over-short persists on the view', closeSh.data.shift.status === 'CLOSED');
+  check('can’t open a second shift while one is open', req('/api/shifts/open', { openingFloat: 1 }, { session: shAdm }).status === 409);
+  const closeAdm = req('/api/shifts/close', { shiftId: admShiftId, denoms: {} }, { session: shAdm });
+  check('manager close nets the payout (short float over)' ,
+    closeAdm.data.shift.expectedCash === -25 && closeAdm.data.shift.overShort === 25, JSON.stringify(closeAdm.data.shift));
+
+  check('can’t close another user’s shift', req('/api/shifts/close', { shiftId: cashShiftId, denoms: {} }, { session: shDiego }).status === 403);
+  check('closing a closed shift errors', req('/api/shifts/close', { shiftId: cashShiftId, denoms: {} }, { session: shCash }).status === 409);
+  check('close with no open shift errors', req('/api/shifts/close', { denoms: {} }, { session: shDiego }).status === 404);
+  check('sales work with no open shift (soft enforcement)',
+    pushS(shDiego, usersL.find((u) => u.email === 'diego@example.com').id, 'tx-sh-ns', 'sale', 12, { tenders: [{ type: 'cash', amount: 12 }], items: c(1) }).data.results[0].accepted === true);
+
+  const myRows = req('/api/shifts', {}, { session: shCash }).data;
+  check('cashier sees own shifts only',
+    myRows.shifts.length === 1 && myRows.shifts[0].id === cashShiftId);
+  const allRows = req('/api/shifts', {}, { session: shSara }).data;
+  check('manager sees every shift and open count',
+    allRows.shifts.length === 2 && allRows.open === 0);
+  check('shift view carries username + denoms',
+    allRows.shifts.some((s) => s.id === cashShiftId && s.userName === 'Amara Njoku' && s.denoms[1000] === 5));
+  void shAdm;
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);
