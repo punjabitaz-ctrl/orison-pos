@@ -5,7 +5,7 @@
 
 import { idb } from './db.js';
 import { api, setSessionExpiredHandler } from './api.js';
-import { syncNow, SYNC_EVENT } from './sync.js';
+import { syncNow, SYNC_EVENT, applyStoreFormat } from './sync.js';
 import { inventoryAlerts } from './alerts.js';
 import { screen as login } from './screens/login.js';
 import { screen as register } from './screens/register.js';
@@ -137,6 +137,9 @@ async function boot() {
     setTimeout(() => syncNow().catch(() => {}), 600);
   }
   if (m && m.store) state.store = m.store;
+  /* install the store's money format before the first screen paints, so no
+     figure is ever briefly shown in the wrong currency. */
+  applyStoreFormat(state.store);
 
   // Tab bar + sidebar nav.
   document.querySelectorAll('[data-tab]').forEach((tab) => {

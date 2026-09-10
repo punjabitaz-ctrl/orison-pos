@@ -1,8 +1,11 @@
 'use strict';
 
-import { describe, it } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { fmt, fmtQty, esc, debounce, csvCell, csvRows, emptyState, skeleton } from '../public/js/ui.js';
+import {
+  fmt, fmtQty, esc, debounce, csvCell, csvRows, emptyState, skeleton,
+  setMoneyFormat, getMoneyFormat, currencySymbol, denomLabel,
+} from '../public/js/ui.js';
 
 /* ── fmt() ───────────────────────────────────────────────────── */
 
@@ -148,5 +151,70 @@ describe('skeleton()', () => {
   });
   it('is hidden from assistive technology', () => {
     assert.ok(skeleton('kpis', 2).includes('aria-hidden="true"'));
+  });
+});
+
+
+/* ── store money format (v1.16.0) ──────────────────────── */
+
+describe('setMoneyFormat()', () => {
+  const original = getMoneyFormat();
+  afterEach(() => setMoneyFormat(original));
+
+  it('defaults to en-US dollars, so an unconfigured store still prints money', () => {
+    setMoneyFormat({ locale: 'en-US', currency: 'USD' });
+    assert.equal(fmt(1234.5), '$1,234.50');
+  });
+
+  it('follows the store into another currency', () => {
+    setMoneyFormat({ locale: 'en-NG', currency: 'NGN' });
+    assert.equal(fmt(1234.5), '₦1,234.50');
+    assert.equal(currencySymbol(), '₦');
+  });
+
+  it('follows the store into another locale, grouping and all', () => {
+    setMoneyFormat({ locale: 'de-DE', currency: 'EUR' });
+    const out = fmt(1234.5);
+    assert.ok(out.includes('1.234,50'), out);
+    assert.ok(out.includes('€'), out);
+  });
+
+  it('changes only what it is given', () => {
+    setMoneyFormat({ locale: 'en-GB', currency: 'GBP' });
+    setMoneyFormat({ currency: 'USD' });
+    assert.equal(getMoneyFormat().locale, 'en-GB');
+    assert.equal(getMoneyFormat().currency, 'USD');
+  });
+
+  it('uppercases a lowercase currency code', () => {
+    setMoneyFormat({ currency: 'ngn' });
+    assert.equal(getMoneyFormat().currency, 'NGN');
+  });
+
+  it('an unusable locale falls back instead of throwing on every price', () => {
+    setMoneyFormat({ locale: 'not a locale', currency: 'USD' });
+    assert.equal(fmt(10), '$10.00');
+  });
+});
+
+describe('denomLabel()', () => {
+  const original = getMoneyFormat();
+  afterEach(() => setMoneyFormat(original));
+
+  it('prints a note without decimals and a coin with them', () => {
+    setMoneyFormat({ locale: 'en-US', currency: 'USD' });
+    assert.equal(denomLabel(100), '$100');
+    assert.equal(denomLabel(0.25), '$0.25');
+  });
+
+  it('uses the store currency', () => {
+    setMoneyFormat({ locale: 'en-NG', currency: 'NGN' });
+    assert.equal(denomLabel(1000), '₦1,000');
+  });
+
+  it('treats a missing or junk value as zero rather than NaN', () => {
+    setMoneyFormat({ locale: 'en-US', currency: 'USD' });
+    assert.equal(denomLabel(undefined), '$0');
+    assert.equal(denomLabel('abc'), '$0');
   });
 });

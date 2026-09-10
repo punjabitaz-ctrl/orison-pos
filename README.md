@@ -24,6 +24,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Dashboard with context** (v1.14.0): KPIs carry trend chips (vs yesterday, vs the 7-day average), today is charted hour by hour with the busiest hour called out, top sellers became a table with units / revenue / margin %, and the shift picture summarises open, closed and over-short for the day.
 - **Customer display** (v1.15.0): a second-screen mirror of the cart, checkout breakdown and a thank-you with change due, driven over a same-origin `BroadcastChannel` — works offline, and never shows cost, margin, customer records or till figures. Turn it on per terminal in Settings.
 - **Inventory tools** (v1.15.0): **bulk price update** by rule (percent / amount / set, with rounding, previewed before it writes), **stock take** that posts the counted shelf and records expected / counted / variance / value-at-cost, **barcode labels** (Code 128, encoded in-app) with name and price, and a **reorder worksheet** built from real sales velocity — days of cover, suggested quantity, last supplier — printable or CSV.
+- **Store localisation & multi-currency** (v1.16.0): the first admin sets the shop's **language, country and currency** at first run, and gets that currency's notes and coins for the till. Every figure — receipts, reports, exports, the customer display, the drawer count — formats through that choice. 18 currencies ship with real cash ladders; any ladder can be replaced. Changeable later in Settings. (The locale drives formatting; interface copy is still English.)
 - **Role-gated dashboard**: admin/manager see store KPIs, a 14-day revenue chart, top sellers, low-stock alerts, open conflicts, recent shift closes, and one-tap Drive export; cashiers get their own daily numbers.
 - **Admin tools** (in-app): create products and users, adjust non-serialized stock, add serials, manage suppliers and purchase orders, release login lockouts, review conflicts, and revoke a stolen terminal's sessions.
 - **POS lock**: staff sign in with a PIN pad; five wrong PINs lock that account for 15 minutes.
@@ -161,7 +162,7 @@ public/js/db.js          IndexedDB layer (products, catalog, outbox, offline cre
 public/js/sync.js        Outbox push/pull, First-Committed-Wins + VOIDED handling
 public/js/money.js       Money math (integer-cents engine, refund builder)
 public/js/receipt-send.js  Receipt PDF / share transport (thermal, clipboard, Web Share)
-public/js/screens/*.js   login, register, checkout, history, customers, reports, purchases, inventory, inventory-tools, settings, dashboard, alerts, staff
+public/js/screens/*.js   login, register, checkout, history, customers, reports, purchases, inventory, inventory-tools, store-setup, settings, dashboard, alerts, staff
 public/css/style.css     Full UI + @media print receipt mode
 public/sw.js             Service worker — VERSION bumped every release; precaches the shell
 tests/backend-sim.mjs    Backend logic tests vs an in-memory Apps Script mock (359 cases)

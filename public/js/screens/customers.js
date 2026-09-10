@@ -6,7 +6,7 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
-import { fmt, esc, openModal, closeModal, toast, beep, csvRows, downloadCsv } from '../ui.js';
+import { fmt, esc, openModal, closeModal, toast, beep, csvRows, downloadCsv, currencySymbol } from '../ui.js';
 import { createCollection } from '../money.js';
 
 export const screen = {
@@ -231,7 +231,7 @@ export const screen = {
           <button class="icon-btn abs-close" data-x>✕</button>
           <h3>Collect payment</h3>
           <p class="muted">${esc(l.customer.name)} · ${fmt(l.balance)} on balance</p>
-          <label class="field-label">Amount (₦)
+          <label class="field-label">Amount (${esc(currencySymbol())})
             <input class="field" id="col-amt" type="number" min="0.01" step="0.01" placeholder="0.00">
           </label>
           <div class="seg">

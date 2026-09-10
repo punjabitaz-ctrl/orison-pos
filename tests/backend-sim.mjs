@@ -1608,6 +1608,17 @@ check('statement carries the changer/cashier',
   }, { session });
   const pushCosted = (txId, amount, tenders, items) => pushS(shCash, amaraId, txId, 'sale', amount, { tenders, items });
 
+  /* The drawer is counted against the store's own cash ladder, so the store has
+     to be set up before a count means anything. Adopting NGN brings its default
+     notes (1000/500/200/100/50/20/10) with it. */
+  const shStore = req('/api/admin/store', { locale: 'en-NG', country: 'NG', currency: 'NGN' }, { session: shAdm });
+  check('admin sets the store locale, country and currency',
+    shStore.ok === true && shStore.data.currency === 'NGN' && shStore.data.locale === 'en-NG'
+    && shStore.data.country === 'NG' && shStore.data.configured === true);
+  check('switching currency adopts that currency’s notes',
+    shStore.data.denoms[0] === 1000 && shStore.data.denoms.indexOf(10) >= 0
+    && shStore.data.denoms.indexOf(0.25) === -1, JSON.stringify(shStore.data.denoms));
+
   const opm = req('/api/shifts/open', { openingFloat: 5000, note: 'morning float' }, { session: shCash });
   check('cashier opens a shift with float', opm.data.open === true && opm.data.shift.openingFloat === 5000 && opm.data.shift.status === 'OPEN');
   const cashShiftId = opm.data.shift.id;
@@ -2514,6 +2525,77 @@ check('statement carries the changer/cashier',
   check('product patch still applies and stays audited', patched.ok === true
     && req('/api/price-history', {}, { session: hdAdm, params: { productId: protoProd } }).data.history
       .some((h) => h.source === 'patch' && h.field === 'retail_price' && h.oldValue === 10 && h.newValue === 14));
+}
+
+{
+  section('store localisation (v1.16.0)');
+
+  const locAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const locMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const locCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+
+  check('only an admin can change store settings',
+    req('/api/admin/store', { currency: 'USD' }, { session: locMgr }).status === 403
+    && req('/api/admin/store', { currency: 'USD' }, { session: locCash }).status === 403);
+
+  /* --- validation --- */
+  check('a malformed locale is refused',
+    req('/api/admin/store', { locale: 'english' }, { session: locAdm }).status === 400);
+  check('a malformed country is refused',
+    req('/api/admin/store', { country: 'NGA' }, { session: locAdm }).status === 400);
+  check('a malformed currency is refused',
+    req('/api/admin/store', { currency: 'NAIRA' }, { session: locAdm }).status === 400);
+  check('an empty cash ladder is refused',
+    req('/api/admin/store', { denoms: [] }, { session: locAdm }).status === 400);
+  check('a ladder with a zero or negative note is refused',
+    req('/api/admin/store', { denoms: [100, 0] }, { session: locAdm }).status === 400
+    && req('/api/admin/store', { denoms: [100, -5] }, { session: locAdm }).status === 400);
+  check('a ladder with a duplicate note is refused',
+    req('/api/admin/store', { denoms: [100, 50, 100] }, { session: locAdm }).status === 400);
+  check('a ladder with sub-cent precision is refused',
+    req('/api/admin/store', { denoms: [100, 0.005] }, { session: locAdm }).status === 400);
+
+  /* --- the endpoint only writes what it is sent --- */
+  req('/api/admin/store', { taxRate: 7.5 }, { session: locAdm });
+  const afterTz = req('/api/admin/store', { tzOffsetMin: 60 }, { session: locAdm }).data;
+  check('changing one setting does not reset the others',
+    afterTz.taxRate === 7.5 && afterTz.tzOffsetMin === 60,
+    JSON.stringify({ tax: afterTz.taxRate, tz: afterTz.tzOffsetMin }));
+
+  /* --- currency switch adopts that currency's notes --- */
+  const toUsd = req('/api/admin/store', { locale: 'en-US', country: 'US', currency: 'USD' }, { session: locAdm }).data;
+  check('switching to USD adopts US notes and coins',
+    toUsd.currency === 'USD' && toUsd.denoms[0] === 100 && toUsd.denoms.indexOf(0.25) >= 0);
+  check('the ladder always comes back largest first',
+    toUsd.denoms.every((v, i, a) => i === 0 || a[i - 1] > v), JSON.stringify(toUsd.denoms));
+
+  const custom = req('/api/admin/store', { denoms: [5, 100, 20, 0.5] }, { session: locAdm }).data;
+  check('an explicit ladder is accepted and sorted, and survives a re-read',
+    JSON.stringify(custom.denoms) === JSON.stringify([100, 20, 5, 0.5])
+    && JSON.stringify(req('/api/config', {}, { session: locCash }).data.store.denoms) === JSON.stringify([100, 20, 5, 0.5]));
+  check('an explicit ladder wins over the currency default in the same call',
+    JSON.stringify(req('/api/admin/store', { currency: 'GBP', denoms: [50, 10] }, { session: locAdm }).data.denoms)
+      === JSON.stringify([50, 10]));
+
+  /* --- a counted drawer is valued against the store ladder --- */
+  req('/api/admin/store', { locale: 'en-US', country: 'US', currency: 'USD', denoms: null }, { session: locAdm });
+  req('/api/admin/store', { currency: 'USD', denoms: [100, 50, 20, 10, 5, 1, 0.25, 0.1, 0.05] }, { session: locAdm });
+  const locShift = req('/api/shifts/open', { openingFloat: 0 }, { session: locAdm }).data.shift.id;
+  const locClose = req('/api/shifts/close', {
+    shiftId: locShift,
+    denoms: { 20: 3, 5: 1, 0.25: 4, 1000: 99 },
+  }, { session: locAdm }).data.shift;
+  check('the drawer is valued in the store currency, coins included',
+    locClose.declaredCash === 66, String(locClose.declaredCash));
+  check('a note the store does not hold is ignored, not trusted',
+    locClose.declaredCash === 66, 'the 1000s would have added 99,000');
+
+  /* --- a fresh workbook says it has not been set up --- */
+  check('the seeded store reports a usable default and its configured flag',
+    typeof req('/api/config', {}, { session: locCash }).data.store.configured === 'boolean'
+    && req('/api/config', {}, { session: locCash }).data.store.currency === 'USD');
+  check('every terminal can read the store settings it needs to format money',
+    req('/api/config', {}, { session: locCash }).data.store.locale === 'en-US');
 }
 
 console.log('\n-------------------------------------');

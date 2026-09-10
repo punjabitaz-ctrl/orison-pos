@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.15.1** — post-review hardening (`2026-09-10`) |
-| Validation bar | `backend-sim` **PASS 427 / FAIL 0** · client units **PASS 228 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.16.0** — store localisation & multi-currency (`2026-09-10`) |
+| Validation bar | `backend-sim` **PASS 446 / FAIL 0** · client units **PASS 237 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,21 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.16.0** Store localisation & multi-currency: `getStore_()` carries
+  **`locale` / `country` / `currency` / `denoms` / `configured`**; admin-only
+  `/api/admin/store` validates and writes any subset of them (every field
+  optional — it used to reset the sales tax on any call); `/api/config` serves
+  the **currency catalogue** so the client can't offer what the server would
+  reject. **First-run setup dialog** (`screens/store-setup.js`) asks the first
+  admin on an unconfigured store for language, country and currency, with a
+  live price sample and that currency's cash ladder; re-openable from Settings.
+  `ui.js` gained `setMoneyFormat`/`getMoneyFormat`/`currencySymbol`/
+  `denomLabel` — `fmt(n)` keeps its shape but formats through the store, and
+  boot/login/pull all install it. **Fixed:** the till counted a hard-coded ₦
+  ladder whatever the store traded in (now the store's own, in integer cents,
+  ignoring notes it does not hold), and the payout/collections dialogs were
+  labelled ₦ regardless. **Known limitation:** the locale drives formatting;
+  interface copy is still English (see §10).
 - **v1.15.1** Post-review hardening (see §10 for what is still open):
   **CSP `connect-src` now allows `script.googleusercontent.com`** — an Apps
   Script `/exec` answers with a redirect there and CSP applies to every hop, so
@@ -207,7 +222,7 @@ admin/manager.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. 427 checks: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. 446 checks: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -217,7 +232,7 @@ admin/manager.
   the guards that now read under the lock).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  228 checks: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  237 checks: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
   ui `fmt`/`esc`/`debounce`/`csvCell`/`emptyState`/`skeleton`, (v1.15.0)
@@ -307,12 +322,16 @@ Status of every finding class:
    - ~~**Client test harness for `money.js`/`sync.js`**~~ — shipped in
      **v1.12.0** (154 unit checks across money/sync/db/alerts/ui; 228 after
      v1.14.0 added `stats.js` and v1.15.0 added `labels.js` + the CSV helpers).
-2. **Deploy current version** — v1.15.0 needs **both halves**: paste
+2. **Deploy current version** — v1.16.0 needs **both halves**: paste
    `backend/Code.gs` into Apps Script and deploy a new Web App version (the
-   v1.14.0 time-clock endpoints and `shifts_` fix, plus the v1.15.0 reorder /
-   bulk-price / stock-take endpoints; the `TimeClock` and `StockTakes` tabs are
-   created on first use), then push `public/` to Cloudflare Pages as usual.
-   Terminals pick up the v1.15.0 shell on next load. Per terminal that wants a
+   v1.14.0 time-clock endpoints and `shifts_` fix, the v1.15.0 reorder /
+   bulk-price / stock-take endpoints, the v1.15.1 hardening and the v1.16.0
+   localisation fields; the `TimeClock` and `StockTakes` tabs are created on
+   first use), then push `public/` to Cloudflare Pages as usual — **`_headers`
+   changed in v1.15.1, so confirm the new CSP is actually being served**.
+   Terminals pick up the v1.16.0 shell on next load. **Then sign in as an admin
+   once and complete the store setup dialog** (language, country, currency);
+   until that is done the store formats as en-US / USD with a US cash ladder. Per terminal that wants a
    customer display: Settings → *Customer display* → mirror + open window
    (allow pop-ups once). Local smoke: `npm run serve` + a browser at 375px and
    ≥1024px.
@@ -331,8 +350,12 @@ Status of every finding class:
    - ~~v1.15.0~~ **done** — customer display + inventory tools:
      BroadcastChannel mirror with a second-screen option; bulk price update,
      stock-take mode, barcode label printing, low-stock reorder worksheet.
+   - ~~v1.16.0~~ **done** — store localisation & multi-currency: first-run
+     language / country / currency setup, 18 currencies with real cash
+     ladders, every money surface formatting through the store's choice.
    - **The roadmap the user approved is now complete.** Next work is
-     unscheduled: see §10 for the open review findings and what they cost.
+     unscheduled: see §10 for the open review findings and what they cost —
+     the first is whether to translate the interface, and into which languages.
 
 ## 10. Review findings — open (2026-09-10)
 
@@ -341,21 +364,27 @@ safe to fix shipped in **v1.15.1** (CSP redirect, prototype-key corruption,
 two remaining pre-lock reads, dialog keyboard access). What is left is here,
 with what each would cost. Nothing below is silently ignored.
 
-### Open — needs a decision from the owner
+### Closed since the review
 
-1. **The app cannot decide what currency it is in.** `fmt()` in `ui.js`
-   formats every figure as `en-US` **USD** (`$`), while the till counts a
-   **₦** denomination ladder (1000/500/200/100/50/20) and the payout and
-   shift dialogs are labelled "Amount (₦)" / "Opening float (₦)". A drawer
-   count and the revenue it reconciles against are therefore printed in two
-   different currencies. This is not cosmetic: the denomination values feed
-   `shiftDenomsValue_` and land in `cash_declared`, so *expected vs declared*
-   is only meaningful if the ladder matches the notes actually in the drawer.
-   **Fix:** one `store_currency` kv (code + symbol + locale + denomination
-   ladder), read by `fmt()` and by the shift dialogs, defaulting to whatever
-   the shop actually uses. Half a day including sim coverage — but it needs
-   the answer to "which currency is this store in?" first, and guessing it
-   would put wrong money on receipts.
+- ~~**The app cannot decide what currency it is in.**~~ **Shipped in v1.16.0**:
+  the owner asked for multiple currencies with the admin setting language,
+  country and currency at first setup, and that is what the release does —
+  store-level locale/country/currency/ladder, a first-run dialog, and every
+  money surface formatting through it.
+
+### Open — the one that needs a decision
+
+1. **The interface itself is not translated.** v1.16.0 made the *locale* real —
+   currency, number grouping, dates all follow the store — but every string in
+   the UI is still English. Translating it is a different shape of work:
+   extract ~600–1,000 strings from 15 screens into a catalogue, add a `t()`
+   lookup and a per-locale bundle, handle plurals, and re-check every layout
+   that assumes English word lengths (German and French run 20–30% longer;
+   Arabic and Urdu need RTL, which the CSS has never been tested against).
+   Ballpark: 3–5 days for the machinery plus one screen-by-screen pass, then a
+   real translator per language. **Worth asking:** which languages actually
+   need it, and is RTL in scope? A half-translated UI is worse than an English
+   one, so this should be all-or-nothing per language.
 
 ### Open — worth doing, no decision needed
 

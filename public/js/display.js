@@ -10,8 +10,26 @@ import { DISPLAY_CHANNEL, DISPLAY_STATE_KEY } from './customer-display.js';
 const root = document.getElementById('cd');
 const IDLE_AFTER_THANKS_MS = 45000;
 
+/* The register tells the display which currency the shop trades in; until a
+   frame arrives, nothing is on screen to mis-format. */
+let money = { locale: 'en-US', currency: 'USD' };
+let formatter = null;
+
+function useMoney(next) {
+  if (!next || (next.locale === money.locale && next.currency === money.currency)) return;
+  money = { locale: next.locale || money.locale, currency: next.currency || money.currency };
+  formatter = null;
+}
+
 function fmt(n) {
-  return (Number(n) || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  if (!formatter) {
+    try {
+      formatter = new Intl.NumberFormat(money.locale, { style: 'currency', currency: money.currency });
+    } catch (_) {
+      formatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+    }
+  }
+  return formatter.format(Number(n) || 0);
 }
 
 function esc(s) {
@@ -91,6 +109,7 @@ let idleTimer = null;
 
 function paint(frame) {
   if (!frame || !root) return;
+  useMoney(frame.money);
   clearTimeout(idleTimer);
   const view = frame.view || 'idle';
   root.dataset.view = view;

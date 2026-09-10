@@ -5,7 +5,7 @@
    - /api/*: never cached, network only
 */
 
-const VERSION = 'orison-pos-v1.15.1';
+const VERSION = 'orison-pos-v1.16.0';
 
 const SHELL = [
   './',
@@ -33,6 +33,7 @@ const SHELL = [
   './js/screens/alerts.js',
   './js/screens/staff.js',
   './js/screens/inventory-tools.js',
+  './js/screens/store-setup.js',
   './js/screens/customers.js',
   './js/screens/reports.js',
   './js/screens/purchases.js',

@@ -23,6 +23,20 @@
   product DTO.
 - **Till shifts**: `/api/shifts/open` (any role) and `/api/shifts/close` with denomination count → *declared / expected / over-or-short*, scoped per user with `kind`-aware cash math (sales + cash collections − cash refunds − payouts). `/api/shifts` returns the store-wide roster to managers/admins only — a cashier always gets their own rows (v1.14.0 closed a `?status=all` escape hatch that handed anyone every till reconciliation).
 - **Time clock** (v1.14.0): `/api/timeclock/punch` toggles the **caller's own** clock — one OPEN entry per account, closed in place with the elapsed minutes; nobody can punch for somebody else, so an entry is always evidence about the account that made it. `/api/timeclock` lists punches: a cashier sees only their own (a `userId` param is ignored for them), managers/admins see the roster and may filter it, plus an `onFloor` count.
+- **Store localisation** (v1.16.0): `getStore_()` carries `locale` (BCP-47),
+  `country` (ISO-3166), `currency` (ISO-4217), `denoms` (the cash ladder,
+  largest first) and `configured` — false until an admin has saved a locale and
+  currency, which is what the client's first-run setup dialog keys off.
+  `/api/admin/store` (**admin only**) validates and writes any subset of
+  `taxRate`, `tzOffsetMin`, `locale`, `country`, `currency`, `denoms`; every
+  field is optional and only written when sent (it used to reset the sales tax
+  on any call). Changing `currency` without an explicit ladder adopts that
+  currency's default notes, because a ladder left from the previous currency
+  would count the drawer wrong. `/api/config` returns the currency catalogue
+  the setup dialog offers, so the client cannot present a currency the server
+  rejects. `shiftDenomsValue_` values a counted drawer against the store's own
+  ladder in integer cents, and ignores a quantity sent for a denomination the
+  store does not hold.
 - **Reorder worksheet** (`/api/inventory/reorder`, admin/manager): units sold
   over a window (refunds give units back), demand per day, days of cover, and a
   suggested quantity that tops each shelf up to a target cover but never below
@@ -51,7 +65,7 @@
 
 | Tab | Purpose |
 | --- | --- |
-| `Meta` | key/value store — **header row required** (the API writes a header so the first row isn't misread) |
+| `Meta` | key/value store — holds `store_*` settings incl. `store_locale`, `store_country`, `store_currency`, `store_denoms` (JSON), `store_tax_rate`, `store_tz_offset` — **header row required** (the API writes a header so the first row isn't misread) |
 | `Users` | id, firstName, lastName, email, pinHash (+pinSalt), role, active |
 | `Products` | id, sku, name, category, retailPrice, unitCost, qty, isSerialized, serials (JSON), createdBy, createdAt |
 | `Serials` | id/lot#, serial, productId, status (AVAILABLE/SOLD/VOIDED), createdAt |

@@ -464,6 +464,104 @@ function setKv_(key, value) {
   sh.getRange(sh.getLastRow() + 1, 1, 1, 2).setValues([[key, value]]);
 }
 
+/* ------------------------------------------------------------------ *
+ *  Store localisation (v1.16.0): language, country, currency
+ *
+ *  One store, one locale. Everything that prints money — receipts, reports,
+ *  the customer display, exports — formats through the store's locale and
+ *  currency, and the till counts the notes and coins that currency actually
+ *  circulates. Before this, figures printed as US dollars while the drawer
+ *  was counted in a fixed 1000/500/200/100/50/20 ladder, so "expected vs
+ *  declared" compared two different currencies.
+ * ------------------------------------------------------------------ */
+
+/* Default cash ladders, largest first. Values are in major units and may be
+ * fractional (coins). An admin can replace any ladder with their own — these
+ * are only what a fresh setup starts from. */
+var CURRENCY_TABLE = {
+  USD: { name: 'US Dollar', symbol: '$', denoms: [100, 50, 20, 10, 5, 1, 0.25, 0.1, 0.05] },
+  NGN: { name: 'Nigerian Naira', symbol: '₦', denoms: [1000, 500, 200, 100, 50, 20, 10] },
+  EUR: { name: 'Euro', symbol: '€', denoms: [200, 100, 50, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1] },
+  GBP: { name: 'Pound Sterling', symbol: '£', denoms: [50, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1] },
+  CAD: { name: 'Canadian Dollar', symbol: '$', denoms: [100, 50, 20, 10, 5, 2, 1, 0.25, 0.1, 0.05] },
+  AUD: { name: 'Australian Dollar', symbol: '$', denoms: [100, 50, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1] },
+  INR: { name: 'Indian Rupee', symbol: '₹', denoms: [500, 200, 100, 50, 20, 10, 5, 2, 1] },
+  ZAR: { name: 'South African Rand', symbol: 'R', denoms: [200, 100, 50, 20, 10, 5, 2, 1] },
+  KES: { name: 'Kenyan Shilling', symbol: 'KSh', denoms: [1000, 500, 200, 100, 50, 20, 10, 5, 1] },
+  GHS: { name: 'Ghanaian Cedi', symbol: 'GH₵', denoms: [200, 100, 50, 20, 10, 5, 2, 1] },
+  AED: { name: 'UAE Dirham', symbol: 'AED', denoms: [1000, 500, 200, 100, 50, 20, 10, 5, 1] },
+  SAR: { name: 'Saudi Riyal', symbol: 'SAR', denoms: [500, 100, 50, 10, 5, 1] },
+  PKR: { name: 'Pakistani Rupee', symbol: 'Rs', denoms: [5000, 1000, 500, 100, 50, 20, 10] },
+  PHP: { name: 'Philippine Peso', symbol: '₱', denoms: [1000, 500, 200, 100, 50, 20, 10, 5, 1] },
+  KHR: { name: 'Cambodian Riel', symbol: '៛', denoms: [50000, 20000, 10000, 5000, 2000, 1000, 500, 100] },
+  JPY: { name: 'Japanese Yen', symbol: '¥', denoms: [10000, 5000, 1000, 500, 100, 50, 10, 5, 1] },
+  BRL: { name: 'Brazilian Real', symbol: 'R$', denoms: [200, 100, 50, 20, 10, 5, 2, 1, 0.5, 0.25] },
+  MXN: { name: 'Mexican Peso', symbol: '$', denoms: [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1] },
+};
+
+var DEFAULT_LOCALE = 'en-US';
+var DEFAULT_COUNTRY = 'US';
+var DEFAULT_CURRENCY = 'USD';
+
+/* A BCP-47 tag this app will accept: language, optional script, optional
+ * region. Deliberately strict — the value is handed to Intl on every client,
+ * and a malformed tag throws there rather than here. */
+function isLocaleTag_(v) {
+  return /^[a-z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?$/.test(String(v || ''));
+}
+
+function isCountryCode_(v) {
+  return /^[A-Z]{2}$/.test(String(v || ''));
+}
+
+function isCurrencyCode_(v) {
+  return /^[A-Z]{3}$/.test(String(v || ''));
+}
+
+/* Validate and normalise a cash ladder: positive major-unit amounts, at most
+ * two decimal places, largest first, no duplicates. A ladder with a value the
+ * drawer does not hold silently corrupts a shift's declared total, so this is
+ * strict rather than forgiving. */
+function normaliseDenoms_(list) {
+  if (Object.prototype.toString.call(list) !== '[object Array]') return null;
+  if (!list.length || list.length > 20) return null;
+  var seen = Object.create(null);
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var v = num_(list[i]);
+    if (!(v > 0) || v > 1000000) return null;
+    if (Math.round(v * 100) !== v * 100) return null;
+    var key = String(Math.round(v * 100));
+    if (seen[key]) return null;
+    seen[key] = true;
+    out.push(Math.round(v * 100) / 100);
+  }
+  out.sort(function (a, b) { return b - a; });
+  return out;
+}
+
+function currencyDenoms_(code) {
+  var entry = CURRENCY_TABLE[String(code || '').toUpperCase()];
+  return entry ? entry.denoms.slice() : CURRENCY_TABLE[DEFAULT_CURRENCY].denoms.slice();
+}
+
+/* The catalogue the setup screen offers. Sent to any signed-in terminal so the
+ * first-run dialog can be filled in offline-first, without a second call. */
+function currencyCatalogue_() {
+  var out = [];
+  for (var code in CURRENCY_TABLE) {
+    if (!Object.prototype.hasOwnProperty.call(CURRENCY_TABLE, code)) continue;
+    out.push({
+      code: code,
+      name: CURRENCY_TABLE[code].name,
+      symbol: CURRENCY_TABLE[code].symbol,
+      denoms: CURRENCY_TABLE[code].denoms.slice(),
+    });
+  }
+  out.sort(function (a, b) { return a.code.localeCompare(b.code); });
+  return out;
+}
+
 function getStore_() {
   var k = kv_();
   return {
@@ -478,7 +576,25 @@ function getStore_() {
     /* store wall-clock offset vs UTC, in minutes (−720..+840). Drives which
        calendar day a sale belongs to for reports/export bucketing. */
     tzOffsetMin: k.store_tz_offset == null || k.store_tz_offset === '' || isNaN(num_(k.store_tz_offset)) ? 0 : num_(k.store_tz_offset),
+    /* localisation. `configured` is what the first-run setup dialog keys off:
+       a workbook that has never had a locale saved is a store nobody has set
+       up yet, and it should not quietly bill anyone in dollars by default. */
+    locale: isLocaleTag_(k.store_locale) ? String(k.store_locale) : DEFAULT_LOCALE,
+    country: isCountryCode_(k.store_country) ? String(k.store_country) : DEFAULT_COUNTRY,
+    currency: isCurrencyCode_(k.store_currency) ? String(k.store_currency) : DEFAULT_CURRENCY,
+    denoms: storeDenoms_(k),
+    configured: isLocaleTag_(k.store_locale) && isCurrencyCode_(k.store_currency),
   };
+}
+
+/* The saved ladder if there is a valid one, otherwise the default for the
+   store's currency — never an empty ladder, which would make every declared
+   drawer total zero. */
+function storeDenoms_(k) {
+  var saved = null;
+  try { saved = normaliseDenoms_(JSON.parse(String(k.store_denoms || 'null'))); } catch (_) { saved = null; }
+  if (saved) return saved;
+  return currencyDenoms_(isCurrencyCode_(k.store_currency) ? k.store_currency : DEFAULT_CURRENCY);
 }
 
 /* ------------------------------------------------------------------ *
@@ -970,6 +1086,9 @@ function userDto_(u) {
 function config_() {
   return {
     store: getStore_(),
+    /* the setup dialog offers exactly what the server will accept, so the two
+       cannot drift into a currency the client can pick and the server rejects. */
+    currencies: currencyCatalogue_(),
     users: readRows_('Users', USER_HEADERS)
       .filter(function (u) { return String(u.active) === '1'; })
       .map(userDto_),
@@ -3231,15 +3350,22 @@ function purchaseOrderCancel_(session, payload) {
  *  register can never be locked out. The shift is a reconciliation record.
  * ------------------------------------------------------------------ */
 
-function shiftDenomsValue_(denoms) {
-  var denominations = [1000, 500, 200, 100, 50, 20];
-  var total = 0;
+/* Value a counted drawer against the store's own cash ladder. Only amounts the
+ * store actually holds are counted — a quantity sent for a denomination that
+ * is not in the ladder is ignored rather than trusted, so a terminal cannot
+ * inflate a declared total by inventing a note. Cents throughout: 0.05 × 3
+ * must not become 0.15000000000000002. */
+function shiftDenomsValue_(denoms, ladder) {
+  var denominations = ladder && ladder.length ? ladder : currencyDenoms_(DEFAULT_CURRENCY);
+  var cents = 0;
   denoms = denoms || {};
   for (var d = 0; d < denominations.length; d++) {
-    var qty = num_(denoms[denominations[d]]);
-    if (qty > 0) total += denominations[d] * qty;
+    var face = denominations[d];
+    var qty = num_(denoms[face]);
+    if (!(qty > 0)) continue;
+    cents += Math.round(face * 100) * Math.round(qty);
   }
-  return total;
+  return cents / 100;
 }
 
 function shiftOpen_(session, payload) {
@@ -3302,7 +3428,7 @@ function shiftClose_(session, payload) {
     if (String(shift.user_id) !== String(session.uid)) throw statusError_(403, 'not_your_shift');
     if (String(shift.status) !== 'OPEN') throw statusError_(409, 'shift_already_closed');
 
-    var declared = shiftDenomsValue_(payload && payload.denoms);
+    var declared = shiftDenomsValue_(payload && payload.denoms, getStore_().denoms);
     var openedAt = new Date(String(shift.opened_at)).getTime();
     var txRows = readRows_('Transactions', TX_HEADERS)
       .filter(function (t) {
@@ -4005,19 +4131,65 @@ function adminInventory_(session, payload) {
    admin — a manager changing tax policy should be a visible act. */
 function adminStore_(session, payload) {
   requireRole_(session, ['admin']);
-  var taxRate = num_(payload.taxRate);
-  if (taxRate < 0 || taxRate > 100) {
-    throw statusError_(400, 'taxRate must be between 0 and 100');
+  payload = payload || {};
+
+  /* Every field is optional and only written when it is actually sent. This
+     endpoint used to read `num_(payload.taxRate)` unconditionally, so a call
+     that meant to change the time zone would silently reset the store's sales
+     tax to zero — with more fields sharing the endpoint that trap gets worse,
+     not better. */
+  var taxUpd;
+  if (payload.taxRate != null && payload.taxRate !== '') {
+    taxUpd = num_(payload.taxRate);
+    if (!(taxUpd >= 0) || taxUpd > 100) throw statusError_(400, 'taxRate must be between 0 and 100');
   }
-  var tzMinUpd = payload.tzOffsetMin == null || payload.tzOffsetMin === '' ? undefined : num_(payload.tzOffsetMin);
-  if (tzMinUpd !== undefined && (tzMinUpd < -720 || tzMinUpd > 840)) {
-    throw statusError_(400, 'tzOffsetMin must be between -720 and 840');
+
+  var tzMinUpd;
+  if (payload.tzOffsetMin != null && payload.tzOffsetMin !== '') {
+    tzMinUpd = num_(payload.tzOffsetMin);
+    if (isNaN(tzMinUpd) || tzMinUpd < -720 || tzMinUpd > 840) {
+      throw statusError_(400, 'tzOffsetMin must be between -720 and 840');
+    }
   }
+
+  var localeUpd;
+  if (payload.locale != null && payload.locale !== '') {
+    localeUpd = String(payload.locale);
+    if (!isLocaleTag_(localeUpd)) throw statusError_(400, 'locale must be a BCP-47 tag such as en-NG');
+  }
+
+  var countryUpd;
+  if (payload.country != null && payload.country !== '') {
+    countryUpd = String(payload.country).toUpperCase();
+    if (!isCountryCode_(countryUpd)) throw statusError_(400, 'country must be a two-letter ISO code');
+  }
+
+  var currencyUpd;
+  if (payload.currency != null && payload.currency !== '') {
+    currencyUpd = String(payload.currency).toUpperCase();
+    if (!isCurrencyCode_(currencyUpd)) throw statusError_(400, 'currency must be a three-letter ISO code');
+  }
+
+  /* An explicit ladder wins; otherwise changing the currency adopts that
+     currency's default notes and coins, because a ladder left over from the
+     previous currency would count the drawer wrong. */
+  var denomsUpd;
+  if (payload.denoms != null) {
+    denomsUpd = normaliseDenoms_(payload.denoms);
+    if (!denomsUpd) throw statusError_(400, 'denoms must be 1-20 distinct positive amounts, at most 2 decimal places');
+  } else if (currencyUpd && currencyUpd !== getStore_().currency) {
+    denomsUpd = currencyDenoms_(currencyUpd);
+  }
+
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
-    setKv_('store_tax_rate', taxRate);
+    if (taxUpd !== undefined) setKv_('store_tax_rate', taxUpd);
     if (tzMinUpd !== undefined) setKv_('store_tz_offset', tzMinUpd);
+    if (localeUpd !== undefined) setKv_('store_locale', localeUpd);
+    if (countryUpd !== undefined) setKv_('store_country', countryUpd);
+    if (currencyUpd !== undefined) setKv_('store_currency', currencyUpd);
+    if (denomsUpd !== undefined) setKv_('store_denoms', JSON.stringify(denomsUpd));
     return getStore_();
   } finally {
     lock.releaseLock();

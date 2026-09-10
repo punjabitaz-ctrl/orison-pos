@@ -4,7 +4,7 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
-import { esc, toast, beep } from '../ui.js';
+import { esc, toast, beep, fmt, denomLabel } from '../ui.js';
 import { openModal, closeModal } from '../ui.js';
 import { getSyncState, syncNow, push, pull, setServerUrl, setAppToken, setSyncInterval, outboxStats } from '../sync.js';
 import { displayEnabled, setDisplayEnabled, openDisplay, publishIdle } from '../customer-display.js';
@@ -90,6 +90,11 @@ export const screen = {
         <div class="set-row"><span>Code</span><span>${esc(m.store.code)}</span></div>
         <div class="set-row"><span>Address</span><span>${esc(m.store.address || '—')}</span></div>
         <div class="set-row"><span>Tax rate</span><span>${m.store.taxRate != null ? `${m.store.taxRate}%` : '0%'}</span></div>
+        <div class="set-row"><span>Language &amp; country</span><span>${esc(m.store.locale || 'en-US')} · ${esc(m.store.country || 'US')}</span></div>
+        <div class="set-row"><span>Currency</span><span>${esc(m.store.currency || 'USD')} · sample ${fmt(1234.5)}</span></div>
+        <div class="set-row"><span>Till counts</span><span>${esc(((m.store.denoms || []).map(denomLabel).join(', ')) || '—')}</span></div>
+        ${(user && user.role === 'admin') ? `
+        <div class="row"><button class="btn btn-ghost btn-sm" id="storeSetupBtn">Language, country &amp; currency</button></div>` : ''}
         ${(user && user.role === 'admin') ? `
         <div class="set-row">
           <span>Sales tax % (admin)</span>
@@ -143,6 +148,11 @@ export const screen = {
       </section>
 
       <button class="btn btn-block btn-danger" id="signoutBtn">Sign out</button>`;
+
+    root.querySelector('#storeSetupBtn')?.addEventListener('click', async () => {
+      const { openStoreSetup } = await import('./store-setup.js');
+      openStoreSetup({ store: m.store, firstRun: false, onSaved: () => redraw() });
+    });
 
     root.querySelector('#cdOn').addEventListener('change', (e) => {
       setDisplayEnabled(e.target.checked);

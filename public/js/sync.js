@@ -6,7 +6,7 @@
 
 import { idb } from './db.js';
 import { api } from './api.js';
-import { toast, beep } from './ui.js';
+import { toast, beep, setMoneyFormat } from './ui.js';
 
 export const SYNC_EVENT = 'orison:sync';
 
@@ -58,6 +58,14 @@ export async function getSyncState() {
   };
 }
 
+/* One store, one money format. Every path that learns the store config — boot,
+   login, a sync pull — installs it, so a terminal never prints last week's
+   currency after the admin changes it. */
+export function applyStoreFormat(store) {
+  if (!store) return;
+  setMoneyFormat({ locale: store.locale, currency: store.currency });
+}
+
 export async function pull() {
   const data = await api.get('/api/sync/pull');
   if (!data || !data.products) throw new Error('Empty sync response');
@@ -71,6 +79,7 @@ export async function pull() {
     lastSyncAt: new Date().toISOString(),
   }, 'config');
 
+  applyStoreFormat(data.store);
   emit({ kind: 'pull', products: data.products.length });
   return data;
 }

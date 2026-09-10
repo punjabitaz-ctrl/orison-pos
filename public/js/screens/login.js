@@ -8,7 +8,7 @@
 import { idb } from '../db.js';
 import { api } from '../api.js';
 import { el, beep } from '../ui.js';
-import { pull, getDeviceId } from '../sync.js';
+import { pull, getDeviceId, applyStoreFormat } from '../sync.js';
 
 async function cachedCreds() {
   const meta = (await idb.get('meta', 'config')) || {};
@@ -131,6 +131,7 @@ export const screen = {
         const m = (await idb.get('meta', 'config')) || {};
         m.store = res.store;
         m.user = user;
+        applyStoreFormat(res.store);
         // Opaque server-issued credential for offline sign-in on this terminal.
         // The old offlinePins map was a PIN hash and is deleted here so a legacy
         // device never keeps PIN-material lying around after upgrading.

@@ -26,7 +26,7 @@ public/js/labels.js      Code 128-B encoder + shelf-label markup
 public/js/print-sheet.js Full-page printing (labels, worksheets) in its own window
 public/js/customer-display.js  Register side of the second-screen mirror
 public/display.html + public/js/display.js + public/css/display.css   The customer-facing display
-public/js/screens/*.js   login register checkout history customers reports purchases inventory inventory-tools settings dashboard alerts staff
+public/js/screens/*.js   login register checkout history customers reports purchases inventory inventory-tools store-setup settings dashboard alerts staff
 public/js/receipt-send.js  Receipt PDF/share
 public/css/style.css     UI + @media print receipt mode
 public/sw.js             Service worker (VERSION must be bumped every release)
@@ -94,6 +94,10 @@ npm run test:client               # client unit tests (money/sync/db/alerts/ui)
   `public/js/ui.js`. Never use raw `innerHTML` with unescaped data.
 - Server recomputes all money; the client's figures are advisory. Keep the
   integer-cents engine as the single source of truth for totals/discounts.
+- **Never hard-code a currency symbol or a cash denomination.** Money prints
+  through `fmt()` (store locale + currency, installed at boot/login/pull);
+  a currency symbol in a label comes from `currencySymbol()`, a note or coin
+  from `denomLabel()`, and the ladder itself from `store.denoms`.
 - New backend endpoints: register in `doPost` dispatch, add a handler block
   with a `requireRole_` gate for privileged actions, then add sim coverage.
   New UI tabs: register the screen in `app.js` `SCREENS` **and** the restricted

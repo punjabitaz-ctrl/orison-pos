@@ -8,7 +8,7 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
-import { fmt, esc, toast, beep, openModal, closeModal, skeleton, emptyState } from '../ui.js';
+import { fmt, esc, toast, beep, openModal, closeModal, skeleton, emptyState, currencySymbol, denomLabel } from '../ui.js';
 import { SYNC_EVENT, getDeviceId } from '../sync.js';
 import { inventoryAlerts } from '../alerts.js';
 import { createPayout } from '../money.js';
@@ -330,7 +330,7 @@ export const screen = {
           <label class="field-label">To / reason
             <input class="field" id="po-to" placeholder="e.g. Vendor, cash pick-up">
           </label>
-          <label class="field-label">Amount (₦)
+          <label class="field-label">Amount (${esc(currencySymbol())})
             <input class="field" id="po-amt" type="number" min="0" step="0.01" placeholder="0.00">
           </label>
           <label class="field-label">Note (optional)
@@ -365,20 +365,28 @@ export const screen = {
       return shifts.filter((s) => s.status === 'OPEN' && String(s.userId) === String(user.id));
     }
 
+    /* The ladder is whatever the store was set up with — counting a drawer
+       against notes it does not hold is how a declared total goes wrong. */
+    function storeDenoms() {
+      const d = (state.store && state.store.denoms) || [];
+      return d.length ? d : [100, 50, 20, 10, 5, 1];
+    }
+
     function currencyGrid(sumEl) {
-      const denoms = [1000, 500, 200, 100, 50, 20];
+      const denoms = storeDenoms();
       const recalc = () => {
-        let total = 0;
+        let cents = 0;
         for (const d of denoms) {
           const v = Number(sumEl.querySelector(`[data-d="${d}"]`).value) || 0;
-          total += v * d;
+          cents += Math.round(d * 100) * Math.round(v);
         }
+        const total = cents / 100;
         sumEl.querySelector('[data-sum]').textContent = money(total);
         sumEl._declared = total;
       };
       const grid = denoms.map((d) => `
         <div class="den-row">
-          <span class="den-label">₦${d}</span>
+          <span class="den-label">${esc(denomLabel(d))}</span>
           <input class="field den-qty" data-d="${d}" type="number" min="0" step="1" value="0" inputmode="numeric">
         </div>`).join('');
       sumEl.innerHTML = `
@@ -398,7 +406,7 @@ export const screen = {
           <button class="icon-btn abs-close" data-x>✕</button>
           <h3>Open shift</h3>
           <p class="muted">Start with the float you put in the drawer. The till isn't locked either way.</p>
-          <label class="field-label">Opening float (₦)
+          <label class="field-label">Opening float (${esc(currencySymbol())})
             <input class="field" id="sh-float" type="number" min="0" step="0.01" placeholder="0.00" value="0">
           </label>
           <label class="field-label">Note (optional)
@@ -447,7 +455,7 @@ export const screen = {
       const confirm = modalEl.querySelector('#shc-confirm');
       confirm.addEventListener('click', async () => {
         const denoms = {};
-        for (const d of [1000, 500, 200, 100, 50, 20]) denoms[d] = Number(sumEl.querySelector(`[data-d="${d}"]`).value) || 0;
+        for (const d of storeDenoms()) denoms[d] = Number(sumEl.querySelector(`[data-d="${d}"]`).value) || 0;
         confirm.disabled = true;
         try {
           const res = await api.post('/api/shifts/close', {
@@ -491,6 +499,20 @@ export const screen = {
       ${skeleton('kpis', isManager ? 8 : 4)}
       ${skeleton('chart', 1)}
       ${skeleton('rows', 3)}`;
+
+    /* A workbook nobody has configured trades in a default currency with a
+       default cash ladder. That is a decision, not a setting, so the first
+       admin to reach the dashboard is asked to make it — once. Anyone else
+       sees the store as it stands until an admin sets it up. */
+    if (role === 'admin' && state.store && state.store.configured === false && navigator.onLine) {
+      import('./store-setup.js').then(({ openStoreSetup }) => {
+        openStoreSetup({
+          store: state.store,
+          firstRun: true,
+          onSaved: async (saved) => { state.store = saved; await load(); },
+        });
+      }).catch(() => {});
+    }
 
     const onSync = () => { load(); };
     window.addEventListener(SYNC_EVENT, onSync);

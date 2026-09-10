@@ -15,6 +15,8 @@
    waiting for the next keystroke, and so browsers without BroadcastChannel
    still follow along through storage events. */
 
+import { getMoneyFormat } from './ui.js';
+
 export const DISPLAY_CHANNEL = 'orison:display';
 export const DISPLAY_STATE_KEY = 'orison:display:last';
 export const DISPLAY_ENABLED_KEY = 'orison:display:on';
@@ -43,7 +45,10 @@ export function setDisplayEnabled(on) {
    newly-opened display reads on boot. */
 export function publish(frame) {
   if (!frame || typeof frame !== 'object') return;
-  const msg = { ...frame, at: Date.now() };
+  /* The display is a separate document with no session and no catalog, so it
+     cannot look the store's money format up for itself — every frame carries
+     it. Locale and currency are the only store facts that ever cross. */
+  const msg = { ...frame, money: getMoneyFormat(), at: Date.now() };
   try { localStorage.setItem(DISPLAY_STATE_KEY, JSON.stringify(msg)); } catch (_) {}
   const c = chan();
   if (c) { try { c.postMessage(msg); } catch (_) {} }

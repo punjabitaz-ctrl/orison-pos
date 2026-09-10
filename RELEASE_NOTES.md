@@ -7,7 +7,56 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.15.1 — post-review hardening
+## Latest: v1.16.0 — store localisation & multi-currency
+
+**2026-09-10.** A store now says what language, country and currency it trades
+in, and everything that prints or counts money follows.
+
+**Why this release exists.** Every figure printed as US dollars, while the till
+was counted against a fixed ₦1000/500/200/100/50/20 ladder — so *expected vs
+declared* compared a drawer against a currency it did not hold.
+
+**What shipped**
+
+- **First-run setup** — the first admin to open the dashboard on an
+  unconfigured store picks **language, country and currency** and gets that
+  currency's notes and coins. Choosing a country fills the rest in; a live
+  sample shows what a price will read before you save. Changeable later at
+  **Settings → Store → Language, country & currency**.
+- **18 currencies with real cash ladders**, and any ladder can be replaced
+  with the store's own. The list the dialog offers comes from the server, so it
+  can never present a currency the server would reject.
+- **Everything follows the setting** — receipts, reports, exports, the
+  dashboard, the customer display (each frame carries the format, since the
+  display is a separate document), the payout and collections dialogs, and the
+  close-of-shift count.
+- **The drawer is valued against the store's own ladder**, in integer cents,
+  and a quantity sent for a note the store does not hold is ignored rather than
+  trusted.
+- **Fixed:** `/api/admin/store` used to reset the sales tax to zero whenever it
+  was called to change something else. Every field is now optional.
+
+**Validation:** backend-sim **PASS 446 / FAIL 0** · client units **PASS 237 / FAIL 0** ·
+pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean. Verified in a real
+browser: the dashboard prints ₦ for an NGN store, the setup dialog switches
+currency, ladder and sample together, and Save posts exactly the chosen values.
+
+**Known limitation:** the locale drives *formatting* — currency, number
+grouping, dates. The interface copy is still English; translating it is a
+separate piece of work, written up in `HANDOVER.md` §10.
+
+### Deploying
+
+1. **Backend redeploy required** — `backend/Code.gs` gained the localisation
+   fields, the currency catalogue and the validating `/api/admin/store`.
+2. Push `public/` to Cloudflare Pages.
+3. **On first load after deploying, sign in as an admin** and complete the
+   setup dialog. Until you do, the store reports `configured: false` and
+   formats as en-US / USD with a US cash ladder.
+
+---
+
+## v1.15.1 — post-review hardening
 
 **2026-09-10.** A full security and usability pass over the codebase after
 v1.15.0. This release lands the findings that were cheap and safe to fix now;

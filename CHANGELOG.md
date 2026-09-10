@@ -5,6 +5,57 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] — 2026-09-10
+
+Store localisation. The app used to print every figure as US dollars while the
+till was counted against a fixed ₦1000/500/200/100/50/20 ladder — a drawer
+reconciled against a currency it did not hold. A store now says what language,
+country and currency it trades in, once, at first run.
+
+### Added
+
+- **First-run store setup** (`public/js/screens/store-setup.js`) — the first
+  admin to reach the dashboard of an unconfigured workbook is asked to choose
+  **language, country and currency**, and gets the cash ladder that currency
+  circulates. Picking a country fills in its currency and notes; a live sample
+  shows what a price will read before anything is saved. Reachable afterwards
+  from **Settings → Store → Language, country & currency**.
+- **Store localisation in the backend** — `getStore_()` gains `locale`
+  (BCP-47), `country` (ISO-3166), `currency` (ISO-4217), `denoms` (the cash
+  ladder) and `configured`. `/api/admin/store` (admin only) validates and
+  writes each of them; `/api/config` now also returns the **currency
+  catalogue** the setup dialog offers, so the client can never present a
+  currency the server would reject. 18 currencies ship with default ladders,
+  and any ladder can be replaced with the store's own.
+- **`setMoneyFormat()` / `getMoneyFormat()` / `currencySymbol()` /
+  `denomLabel()`** in `ui.js`. `fmt(n)` keeps its one-argument shape — every
+  screen calls it — but now formats through the store's locale and currency.
+  Boot, login and every sync pull install the store's choice, so a terminal
+  never prints last week's currency after an admin changes it.
+
+### Fixed
+
+- **The till counted notes the store may not hold.** `shiftDenomsValue_` had
+  the ₦ ladder hard-coded, and the close-shift dialog rendered `₦` labels
+  regardless of the store. Both now use the store's ladder, and a quantity sent
+  for a denomination that is **not** in it is ignored rather than trusted — a
+  terminal cannot inflate a declared drawer by inventing a note. The ladder
+  sums in integer cents, so a coin ladder cannot produce
+  `0.15000000000000002`.
+- **The payout and collections dialogs said ₦** whatever the store traded in.
+  Both now label the amount with the store's own currency symbol.
+- **`/api/admin/store` reset settings it was not asked to change.** It read
+  `num_(payload.taxRate)` unconditionally, so a call that meant to change the
+  time zone silently set the store's sales tax to zero. Every field is now
+  optional and only written when sent.
+
+### Known limitation
+
+The locale drives **formatting** — currency, number grouping, dates. The
+interface copy itself is still English; translating it is a separate piece of
+work (a string catalogue plus a pass over every screen) and is written up in
+`HANDOVER.md` §10.
+
 ## [1.15.1] — 2026-09-10
 
 Post-review hardening. A full security and usability pass over the codebase

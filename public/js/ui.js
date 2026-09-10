@@ -3,9 +3,65 @@
 /* Shared UI helpers: money formatting, dom builder, toasts, modals, sheets,
    scan beeps, and camera barcode reading (BarcodeDetector when available). */
 
+/* Money formatting is store-wide: one locale, one currency, set once at first
+   run and applied everywhere money is printed. `fmt(n)` keeps its one-argument
+   shape because every screen calls it; the format lives here and `app.js`
+   installs the store's choice at boot. Until a store is set up this is en-US /
+   USD, which is also what a fresh workbook reports. */
+const moneyFormat = { locale: 'en-US', currency: 'USD' };
+let moneyFormatter = null;
+
+export function setMoneyFormat({ locale, currency } = {}) {
+  if (locale) moneyFormat.locale = String(locale);
+  if (currency) moneyFormat.currency = String(currency).toUpperCase();
+  moneyFormatter = null;
+  return { ...moneyFormat };
+}
+
+export function getMoneyFormat() {
+  return { ...moneyFormat };
+}
+
 export function fmt(n) {
   const v = Number(n) || 0;
-  return v.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  if (!moneyFormatter) {
+    try {
+      moneyFormatter = new Intl.NumberFormat(moneyFormat.locale, { style: 'currency', currency: moneyFormat.currency });
+    } catch (_) {
+      /* an unusable locale/currency pair must not take the register down: fall
+         back to the default rather than throwing on every price on screen. */
+      moneyFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+    }
+  }
+  return moneyFormatter.format(v);
+}
+
+/* The currency's own symbol, for a field label like "Amount (₦)". Derived
+   from the same formatter so it always agrees with what fmt() prints. */
+export function currencySymbol() {
+  try {
+    const parts = new Intl.NumberFormat(moneyFormat.locale, {
+      style: 'currency', currency: moneyFormat.currency, currencyDisplay: 'narrowSymbol',
+    }).formatToParts(0);
+    const hit = parts.find((p) => p.type === 'currency');
+    if (hit) return hit.value;
+  } catch (_) { /* fall through */ }
+  return moneyFormat.currency;
+}
+
+/* Label for one rung of the cash ladder: "₦1,000", "$0.25". Whole amounts drop
+   the decimals so a note ladder reads like notes. */
+export function denomLabel(value) {
+  const v = Number(value) || 0;
+  const decimals = Number.isInteger(v) ? 0 : 2;
+  try {
+    return new Intl.NumberFormat(moneyFormat.locale, {
+      style: 'currency', currency: moneyFormat.currency, currencyDisplay: 'narrowSymbol',
+      minimumFractionDigits: decimals, maximumFractionDigits: decimals,
+    }).format(v);
+  } catch (_) {
+    return currencySymbol() + v.toFixed(decimals);
+  }
 }
 
 export function fmtQty(n) {
