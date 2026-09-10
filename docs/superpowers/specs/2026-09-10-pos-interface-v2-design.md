@@ -27,15 +27,16 @@ what "clean" means on a till.
 | Home screen | **Register-first**, Square/Shopify model. |
 | Palette | **Keep the repo's light navy/gold.** The screenshot informs layout and flow only, not colour. |
 | Hardware | **All three** — phone portrait, counter tablet, desktop terminal. |
-| Navigation | **Four tabs + More**, with the launcher grid living in More. |
+| Navigation | **Register is home; the launcher is one tap away.** A flat tile grid, like the screen staff use now — no group headings, no submenus. Revised 2026-09-10 after the first draft: navigation must be simple enough that nothing has to be learned. |
 | Paid Out / Cash Pick Up / Employee Expense | **Three distinct actions**, three transaction kinds, reported and reconciled separately. |
 
 ## Goals
 
 1. A cashier ringing a sale touches fewer controls than today, and never loses
    sight of the cart.
-2. Every destination — eleven screens, checkout, and the five inventory tools —
-   remains reachable, none buried more than two taps from anywhere.
+2. Every destination is reachable in two taps or fewer, and nothing requires
+   remembering where it lives — one button opens a grid of every job, labelled
+   in plain words.
 3. Cash leaving the drawer is attributable by reason without reading notes.
 4. Every screen works at 375px, 834px and 1280px — not "adapts", works.
 
@@ -54,12 +55,17 @@ what "clean" means on a till.
 
 ## Risk accepted
 
-Register-first plus four tabs means the launcher grid staff use today is no
-longer the first thing they see. It survives as the **More** screen, but the
-opening move changes from "pick a job" to "ring a sale". This is the design's
-main relearning cost and the owner accepted it knowingly. Mitigation: More is
-one tap from every screen, and its tiles keep the visual language of the
-screen staff already know (colour chip, icon, plain label).
+The opening move changes from "pick a job" to "ring a sale". That is the only
+relearning in this design, and it is bounded: **Menu** is the largest,
+left-most, thumb-nearest control on every screen, and it opens the same flat
+grid of big labelled tiles staff use today. Someone who learns nothing else
+can press Menu and be where they already know how to be.
+
+Everything else in this design is aimed at the same constraint. Navigation is
+never more than two levels. There are no group headings to parse, no
+disclosure triangles, no long-press, no swipe-to-reveal, and no control whose
+meaning depends on remembering a previous screen. Every destination is a tile
+with a plain word under it.
 
 ---
 
@@ -80,43 +86,64 @@ Screens keep a title line for their own name and any screen-specific action
 (Refresh, + New, Tools). They stop rendering their own status pills — the
 register's `.scr-status` moves into the header.
 
-### Bottom bar — always four slots
+### Bottom bar — three items
 
-The bar's *shape* never changes; the third slot fits the person. Two layouts
-would mean two things to test and two muscle memories; one layout with one
-variable slot does not.
+**Menu · Sell · History.** Three, not four. A cashier who can only ever learn
+three things should not be given four, and three items across a 375px phone
+gives each a target half again as wide as four would.
 
-| Role | Slots |
-|---|---|
-| cashier | Sell · History · Staff · More |
-| manager, admin | Sell · History · Customers · More |
+**Menu is the primary control**: left-most (nearest the thumb), visually
+heavier than the other two — a filled navy tile with a 3×3 grid glyph — so it
+reads as *the* way to get anywhere. It opens the launcher.
 
-Staff is a cashier's third-most-used destination because it holds their time
-clock. Implemented as a pure function `primaryTabs(role)` in `app.js`,
-returning four screen ids — unit-testable without a DOM.
+*Changed from the first draft*, which had four slots including a role-dependent
+one (Customers for managers, Staff for cashiers). A slot that means different
+things to different people is exactly the kind of thing that has to be learned.
+Time clock and Customers both live on the launcher instead; punching in becomes
+Menu → Time Clock, two taps, twice a day.
 
-### More
+### The launcher
 
-A routed screen (`more`), so Back behaves, presented full-height. It carries
-the launcher grid: colour-chip icon, icon, label — the visual language of the
-screen staff already use. Grouped:
+A routed screen (`menu`), so Back behaves, presented full-height. One flat grid
+of big tiles — colour chip, icon, one plain word — in the visual language of
+the screen staff use today. **No group headings and no nesting.**
 
-- **Money** — Refund, Paid Out, Cash Pick Up, Employee Expense, Open/Close Shift
-- **Stock** — Products, Alerts, Purchases, and the five inventory tools
-  (Reorder worksheet, Stock take, Bulk price, Labels, Aging)
-- **Records** — Customers, Staff & time clock, Reports, Dashboard
-- **System** — Settings, Customer display
+| | | |
+|---|---|---|
+| Refund | Paid Out | Cash Pick Up |
+| Employee Expense | Shift | Time Clock |
+| Customers | Products | Alerts |
+| Purchases | Reports | Dashboard |
+| Settings | | |
 
-Role gating is unchanged: a tile the caller's role cannot use is not rendered.
-The existing `applyRoleTabs()` restriction list (inventory, alerts, customers,
-reports, purchases) governs the grid as well as the bar.
+Thirteen tiles for an admin, against the twelve on the screen staff use now.
+Role gating removes what a role cannot use rather than disabling it, so a
+cashier sees four: Shift, Time Clock, Settings, and Dashboard. The existing
+`applyRoleTabs()` restriction list (inventory, alerts, customers, reports,
+purchases) governs the grid.
+
+Three decisions inside that grid, each made to keep it at roughly the density
+of the screen it replaces:
+
+1. **No product-category tiles.** The screenshot puts seven of them on the home
+   grid, but Sell *is* home now and its category chips are already the first
+   thing on screen. Two ways to do one thing is the opposite of simple. §2
+   makes those chips look like the tiles they replace, so the muscle memory
+   survives even though the control changed.
+2. **The five inventory tools stay behind Products → Tools**, where v1.15.0 put
+   them. They are the one nesting exception: they operate *on* the product list,
+   they are manager-only, and hoisting them would take the grid to eighteen
+   tiles, most of which no cashier may open. This is the only place in the app
+   where anything is two levels deep.
+3. **Customer display moves into Settings.** It is configured once per terminal
+   and never touched again; it does not earn a permanent tile.
 
 ### Desktop (≥1024px)
 
-The sidebar stays and shows every destination, grouped under those same four
-headings. More is hidden there — a More button where the screen has room for
-the real list is hiding things for no reason. The v1.13 rail/expanded toggle
-and its `localStorage` key (`orison:nav`) are unchanged.
+The sidebar stays and lists every destination — flat, in the launcher's order,
+no headings, so the two navigations are the same list in two shapes. Menu is
+hidden there: a button that opens a list, next to the list, is noise. The v1.13
+rail/expanded toggle and its `localStorage` key (`orison:nav`) are unchanged.
 
 ---
 
@@ -131,7 +158,7 @@ and its `localStorage` key (`orison:nav`) are unchanged.
 [ product grid, 2 columns       ]
 [            …                  ]
 [ CART BAR  3 items   $124.00 ▸ ]   ← pinned
-[ Sell  History  Staff  More    ]
+[ Menu     Sell        History  ]
 ```
 
 The cart bar is the substantive change. Today the cart exists only as a sheet
@@ -145,6 +172,13 @@ removes that whole class of doubt. The bar is absent when the cart is empty.
 Grid left, cart pinned right — the v1.13 dual-panel layout, which already
 works. The cart bar is not rendered at these sizes; the panel is always
 visible, so there is nothing to summarise.
+
+### Category chips
+
+The chips above the grid inherit the launcher's visual language — chunky,
+coloured, one plain word — so the "tap the category" habit staff have today
+survives the control changing from a tile on a home screen to a chip on the
+sell screen. They scroll horizontally and the active one is filled.
 
 ### Product tile
 
@@ -194,8 +228,8 @@ Nothing migrates.
   `createCashOut({ kind, counterparty, grandTotal, note, user })`, keeping
   `createPayout` as a thin wrapper so existing callers are not broken mid-work.
 - `kindInfo()` gains `pickup` and `expense` with their own labels and chips.
-- Three tiles in More → Money, each opening the same dialog with its kind and
-  wording fixed.
+- Three tiles on the launcher — Paid Out, Cash Pick Up, Employee Expense —
+  each opening the same dialog with its kind and wording fixed.
 - Dashboard shows one **Cash out** KPI with the three-way split beneath it.
 
 ---
@@ -243,13 +277,16 @@ under the `AGENTS.md` protocol (docs in lockstep, `sw.js` VERSION, tag, push).
 
 ### v1.17.0 — Shell & navigation
 
-App header with live clock, `primaryTabs(role)`, four-tab bar, More screen with
-the grouped launcher grid, grouped desktop sidebar, `components.js` with
-`tile`/`tileGrid`/`appHeader`/`sectionHead`.
+App header with live clock; three-item bottom bar with Menu as the primary
+control; the `menu` launcher screen carrying one flat role-gated tile grid;
+flat desktop sidebar; `components.js` with `tile`/`tileGrid`/`appHeader`;
+Customer display moved into Settings.
 
-*Done when:* every destination reachable in ≤2 taps from any screen; the bar
-never scrolls at 375px; role gating identical to today; no screen internals
-changed beyond removing their duplicated headers.
+*Done when:* every destination is reachable in ≤2 taps from any screen (the
+five inventory tools being the only three-tap items, by design); the bottom bar
+never scrolls at 375px and every target clears 44px; a cashier's launcher shows
+exactly the four tiles their role permits; and no screen's internals change
+beyond dropping its duplicated header.
 
 ### v1.18.0 — Sell & checkout
 
