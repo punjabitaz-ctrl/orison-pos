@@ -60,15 +60,20 @@ lands, bump again (patch release) and refresh the same five docs.
 node tests/backend-sim.mjs        # backend logic (expect PASS n FAIL 0)
 node --check <touched public js>  # syntax on every touched client file
 node tests/pdf-send-smoke.mjs     # receipt PDF/share (PASS 19 / FAIL 0)
+npm run test:client               # client unit tests (money/sync/db/alerts/ui)
 ```
 
-- `npm test` == backend sim only. `npm run test:all` adds E2E (skips without a
-  live backend) and the pdf smoke.
+- `npm test` == backend sim only. `npm run test:client` runs the pure-Node
+  client unit suites via `node:test` + `fake-indexeddb`. `npm run test:all`
+  adds E2E (skips without a live backend) and the pdf smoke.
 - The sim's `LockService` **always grants the lock** — concurrency bugs are NOT
   caught there; review read-modify-write paths manually.
 - The sim exercises the reports DTO and export against the *server's own
   format*; never relax a failing export/GP assertion to match new server code
   without confirming the fix is real.
+- Client unit tests need `--import ./tests/helpers/setup-globals.mjs` (browser
+  globals shim + fetch mock harness). Never import a client module in a test
+  without that shim loaded first.
 - Git push output on Windows PowerShell renders as red "errors" — harmless;
   pushes succeed (verify `main -> main` and new tags).
 

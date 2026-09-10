@@ -18,6 +18,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Customer statements** (v1.9.0): a printable / CSV-exportable statement of account — every transaction a customer touched as chronological debit/credit lines with a running balance, from the Customers → ledger → *Statement* button.
 - **Inventory aging** (v1.10.0): Products → *Aging* shows 0–30 / 31–60 / 61–90 / 90+ day buckets (units + value at cost) so dead stock is visible before it becomes a write-off.
 - **Hardened offline sync** (v1.11.0): a failed (VOIDED) push is re-evaluated — never answered with a false "already synced" — and its retry rewrites the failure in place with the same transaction id; gross profit uses the cost captured at sale time; reports and Drive export bucket by the store's local time zone day.
+- **Client unit tests** (v1.12.0): 154 `node:test` checks for the register-side money engine, sync outbox, IndexedDB layer, and alert classifier — money math, refund/payout builders, offline/VOIDED paths, CRUD + indexes all automated (`npm run test:client`).
 - **Role-gated dashboard**: admin/manager see store KPIs, a 14-day revenue chart, top sellers, low-stock alerts, open conflicts, recent shift closes, and one-tap Drive export; cashiers get their own daily numbers.
 - **Admin tools** (in-app): create products and users, adjust non-serialized stock, add serials, manage suppliers and purchase orders, release login lockouts, review conflicts, and revoke a stolen terminal's sessions.
 - **POS lock**: staff sign in with a PIN pad; five wrong PINs lock that account for 15 minutes.
@@ -158,7 +159,8 @@ public/js/receipt-send.js  Receipt PDF / share transport (thermal, clipboard, We
 public/js/screens/*.js   login, register, checkout, history, customers, reports, purchases, inventory, settings, dashboard, alerts
 public/css/style.css     Full UI + @media print receipt mode
 public/sw.js             Service worker — VERSION bumped every release; precaches the shell
-tests/backend-sim.mjs    Backend logic tests vs an in-memory Apps Script mock (303 cases)
+tests/backend-sim.mjs    Backend logic tests vs an in-memory Apps Script mock (359 cases)
+tests/client-*.mjs       Client unit tests (money/sync/db/alerts/ui) via node:test + fake-indexeddb (154 cases)
 tests/e2e.mjs            Headless-browser E2E (needs a freshly-seeded live backend)
 tests/pdf-send-smoke.mjs Receipt PDF/share headless-browser smoke test
 ```

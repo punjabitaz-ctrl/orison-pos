@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.11.0** — offline sync hardening (`2026-09-09`) |
-| Validation bar | `backend-sim` **PASS 359 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.12.0** — client test harness (`2026-09-09`) |
+| Validation bar | `backend-sim` **PASS 359 / FAIL 0** · client units **PASS 154 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~3,340 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell |
 | Node | ≥ 20 (dev/test only) |
@@ -95,6 +95,20 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   half-away-from-zero; `uuid_()` dead code removed; payouts/payments/refunds
   attribute to the authenticated cashier; first-run seed is crash-safe against
   a partial seed.
+- **v1.12.0** Client unit test harness: **154 `node:test` checks** for the
+  register-side layer — `money.js` (rounding/drift, discounts/tax, refund +
+  payout builders), `sync.js` (enqueue→push→SYNCED, offline short-circuit,
+  rejected→VOIDED + local stock restore, unique clientTxIds, outboxStats/
+  getSyncState, SYNC_EVENT), `db.js` (CRUD, bulkPut + keyFn, by_upc/by_sku/
+  by_category indexes, meta upsert, open() singleton), `alerts.js` (available,
+  reorderThreshold, inventoryAlerts severity sort + aging suppression,
+  agingBucket, bucketLabel), `ui.js` (fmt, fmtQty, esc, debounce). Loaded via a
+  browser-globals shim (`tests/helpers/setup-globals.mjs`: fake-indexeddb,
+  window/navigator/document stubs, event-recording dispatchEvent, fetch-mock
+  harness shaped like the api.js envelope). `npm run test:client` wired into
+  `test:all`; the only new dependency is `fake-indexeddb`. Documents two
+  float-drift facts of the client `round2` (`±1.005 → ±1`) that the
+  sign-safe backend `round2_` does not share — a future money alignment target.
 - **v1.7.1** Post-review hardening: **refunds now admin/manager-only**;
   role changes revoke sessions immediately; Drive export no longer counts
   purchase receipts as SALES and nets collections as money-in (`COLLECTIONS`
@@ -119,14 +133,19 @@ admin/manager.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. 303 checks: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. 359 checks: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates.
+- `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
+  `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
+  154 checks: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  refund/payout builders against an IDB-backed mock, outbox enqueue/push/
+  VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
+  ui `fmt`/`esc`/`debounce`.
 - `tests/pdf-send-smoke.mjs` — real headless browser, receipt PDF/share.
 - `tests/e2e.mjs` — online happy path only; **skips without a live backend**;
   offline toggle, queue-then-reconnect sync, refunds, customers, reports, and
-  purchases are NOT e2e-tested. Biggest test gap.
-- **Client unit tests: none.** `money.js`/`sync.js`/`db.js` have no suite.
+  purchases are NOT e2e-tested. Biggest remaining test gap.
 - Sim `LockService` always grants the lock → concurrency bugs invisible to CI.
 
 ## 7. Security posture (posture = good, with documented gaps)
@@ -200,13 +219,27 @@ Status of every finding class:
    - ~~**Deferred hardening list**~~ — **all shipped in v1.11.0** (lock-scope
      races, VOIDED re-push idempotency, same-batch refunds/duplicates, GP
      cost-at-sale, discounts in breakdowns, store-TZ day windows).
-2. **Deploy current version** — re-deploy `backend/Code.gs` as the Apps Script
-   Web App (no new tabs; run `setup` only if you want to re-seed, it backs up
-   to Drive first) and make sure Cloudflare Pages is serving `public/` (no
-   build, output dir `public`). Hardware terminals will pick up the v1.11.0
-   shell automatically on next load.
-3. Next candidate ideas: client test harness for `money.js`/`sync.js` (biggest
-   test gap); re-run the full code review against v1.11.0.
+   - ~~**Client test harness for `money.js`/`sync.js`**~~ — shipped in
+     **v1.12.0** (154 unit checks across money/sync/db/alerts/ui).
+2. **Deploy current version** — v1.12.0 changes **no runtime files** (tests +
+   scripts + docs only), so no backend redeploy and Cloudflare Pages serves the
+   same shell. If you want the new `test:client` locally: `npm install` then
+   `npm run test:client`.
+3. **Visual roadmap (user-approved order):**
+   - ~~v1.12.0~~ **done** — client test harness.
+   - **v1.13.0** — theme polish + responsive infrastructure: typography/
+     spacing scales, softer shadows, refined transitions (same navy/gold);
+     **toggleable desktop sidebar** (collapsed icon rail ↔ expanded) replacing
+     the bottom tabbar at ≥1024px; **dual-panel register** (product grid left,
+     cart right on desktop); side-sheet checkout on wide screens; `app.js`
+     responsive state (`mobile`/`tablet`/`desktop`) via `matchMedia`.
+   - **v1.14.0** — screen refresh + enhanced dashboard + staff tools: trend
+     KPIs, hourly chart, top-seller table, shift summary; new staff screen
+     (time clock, shift history, per-cashier performance); consistent spacing,
+     empty states, loading skeletons, 44px touch targets across every screen.
+   - **v1.15.0** — customer display + inventory tools: BroadcastChannel mirror
+     mode with a **second-screen-only option**; bulk price update, stock-take
+     mode, barcode label printing, low-stock reorder worksheet.
 
 ## 10. Session context / reconstructability
 

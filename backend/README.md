@@ -84,7 +84,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `Code.gs` is exercised locally by `tests/backend-sim.mjs` — an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`) running `Code.gs` through `node:vm`. No network or Google account needed:
 
 ```bash
-npm run test:backend   # 303 cases: auth, throttle, FCW, refunds, payouts, shifts,
+npm run test:backend   # 359 cases: auth, throttle, FCW, refunds, payouts, shifts,
                        # customers/aging, reports, purchase orders, exports
 ```
 

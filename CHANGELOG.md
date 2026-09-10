@@ -5,6 +5,42 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] — 2026-09-09
+
+Client unit test harness. The register-side money engine, sync queue, IndexedDB
+layer, alert classifier, and UI formatters finally have an automated suite —
+previously only the backend was covered (the biggest known test gap).
+
+### Added
+
+- **`tests/client-*.mjs`** — pure-Node unit suites run via `node:test`
+  (built-in, zero new framework):
+  - `client-money.mjs` — `round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`
+    edge cases (float drift, discount + tax boundaries, taxable-only) and the
+    `createRefund`/`createPayout` builders against a mocked sync + fake IDB.
+  - `client-sync.mjs` — outbox lifecycle: enqueue→push→SYNCED round-trip,
+    offline short-circuit, rejected→VOIDED with local stock restore, unique
+    `clientTxId`s, `outboxStats`/`getSyncState` counts, `SYNC_EVENT` name.
+  - `client-db.mjs` — `idb` CRUD, `bulkPut` + keyFn, `allByIndex` across the
+    `by_upc`/`by_sku`/`by_category` indexes, meta upsert, `open()` singleton.
+  - `client-alerts.mjs` — `available`, `reorderThreshold`,
+    `inventoryAlerts` (severity sort, aging suppression, defaults),
+    `agingBucket`, `bucketLabel`.
+  - `client-ui.mjs` — `fmt` (currency rounding), `fmtQty`, `esc` (XSS
+    escaping), `debounce` (single-fire + argument passing).
+  - `tests/helpers/setup-globals.mjs` — browser-globals shim (`fake-indexeddb`,
+    window/navigator/document stubs, `dispatchEvent` recording, fetch mock
+    harness) required before importing any client module in Node.
+- **`npm run test:client`** and wiring into `test:all`; new `devDependency`
+  `fake-indexeddb` (the only addition — `node:test` is built into Node 20+).
+- Suites document two float-drift facts about the client `round2`: `round2(±1.005)`
+  resolves toward 0 (`±1`) because it is a plain `Math.round`; the *backend*
+  `round2_` is sign-safe (half-away-from-zero). A future money-layer alignment
+  should flip the client to match.
+
+**Validation:** backend-sim **PASS 359 / FAIL 0** · client units **PASS 154 / FAIL 0** ·
+pdf-smoke **PASS 19 / FAIL 0**.
+
 ## [1.11.0] — 2026-09-09
 
 Hardening pass: the offline sync path can no longer lie, race, or mis-bucket.

@@ -7,44 +7,51 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.11.0 — offline sync hardening
+## Latest: v1.12.0 — client test harness
 
-**2026-09-09.** The sync path can no longer lie, race, or mis-bucket.
+**2026-09-09.** The register-side money engine, sync queue, IndexedDB layer,
+alert classifier, and UI formatters now have an automated suite. The backend
+had 359 checks; the client had **zero**. That gap is closed.
 
 **What shipped**
 
-- **VOIDED re-pushes are re-evaluated.** A failed sale (locked product, claimed
-  serial) is retried fresh on every re-push; when the blocker clears, success
-  **rewrites the failure in place** — same transaction id, never a second row.
-- **Same-batch `clientTxId` duplicates** resolve like re-pushes
-  (`ALREADY_SYNCED` / `DUPLICATE_CLIENT`) without double-applying.
-- **Refunds see the same batch**: a sale + its refund in one request (offline
-  void) finds the original in-batch, and same-batch refunds count toward the
-  refundable balance.
-- **GP uses cost-at-sale** (captured `unitCost`), not today's edited cost;
-  category/product breakdowns now apply line + order discounts.
-- **Store-time-zone day windows**: reports and the Drive export bucket by the
-  store's local calendar day (`tzOffsetMin`, via `adminStore_`).
-- **Lock-scope fixes** across PO receiving, suppliers, products/serials, and
-  shift open/close; sign-safe `round2_`; removal of the dead `uuid_()` helper;
-  first-run seeding is crash-safe against a partial seed.
+- `node:test` unit suites (154 checks, pure-Node, no new framework):
+  - **`money.js`** — rounding/drift edge cases, discount + tax math, and the
+    refund/payout builders against a mocked sync + fake IndexedDB.
+  - **`sync.js`** — outbox enqueue→push→SYNCED round-trip, offline
+    short-circuit, rejected→VOIDED with local stock restore.
+  - **`db.js`** — CRUD, `bulkPut`, and the `by_upc`/`by_sku`/`by_category`
+    indexes against a real in-memory IndexedDB (`fake-indexeddb`).
+  - **`alerts.js`** — severity classification, sort order, aging buckets.
+  - **`ui.js`** — currency formatting, HTML escaping, debounce.
+- `tests/helpers/setup-globals.mjs` — the browser-globals shim that makes
+  client ESM importable in Node, with an event-recording `dispatchEvent` and a
+  fetch-mock harness shaped like `api.js`'s envelope.
+- `npm run test:client` wired into `test:all`.
 
-**Validation:** backend-sim **PASS 359 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** ·
-`node --check` clean.
+**Validation:** backend-sim **PASS 359 / FAIL 0** · client units **PASS 154 / FAIL 0** ·
+pdf-smoke **PASS 19 / FAIL 0**.
 
 ### Deploying
 
-1. Redeploy `backend/Code.gs` as the Apps Script Web App. No new tabs.
-2. Cloudflare Pages keeps serving `public/` — the new shell rolls out on next
-   load.
-3. One hard reload if anything looks stale on an installed terminal.
+1. No backend change — `backend/Code.gs` is untouched this release.
+2. Cloudflare Pages keeps serving `public/` unchanged (`sw.js` version bump is
+   cosmetic; the shell is otherwise identical).
+3. No redeploy needed unless you want the new `test:client` script locally:
+
+```bash
+npm install      # pulls fake-indexeddb
+npm run test:client
+```
 
 ---
 
-## The road here (1.10.0 → 1.11.0)
+## The road here (1.11.0 → 1.12.0)
 
 | Version | What shipped |
 | --- | --- |
+| **v1.12.0** | **Client test harness** — 154 unit checks for money math, sync outbox/IPC, IndexedDB CRUD + indexes, alert classification, and UI formatters via `node:test` + `fake-indexeddb` (browser-globals shim in `tests/helpers`); `test:client` wired into `test:all`. |
+| **v1.11.0** | Offline sync hardening — VOIDED re-pushes re-evaluated and rewritten in place, same-batch dup `clientTxId`s resolve without double-applying, refunds see the same batch, GP uses captured cost-at-sale, category/product breakdowns apply discounts, store-TZ day windows, lock-scope fixes across PO/suppliers/products/serials/shifts, sign-safe `round2_`. |
 | **v1.10.0** | Inventory aging — how long on-hand stock has been sitting, in 0–30 / 31–60 / 61–90 / 90+ day buckets with units and value at cost (clock starts at creation, re-sets on PO receipts); read-only view from Products → Aging. |
 | **v1.9.0** | Customer statements — chronological debit/credit statement of account with a running balance (sales on account debit; store-credit refunds and collections credit), printable and CSV-exportable from the ledger. |
 | **v1.8.0** | Price history & tracking — per-product audit of every cost/retail change (create baseline, manual patch, PO weighted-cost receipt with the order number) browsable from the Products screen. |
