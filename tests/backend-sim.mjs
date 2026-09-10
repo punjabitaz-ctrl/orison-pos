@@ -1586,6 +1586,120 @@ section('discounts & tax');
   void shAdm;
 }
 
+{
+  section('reports & analytics');
+
+  const rAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const rMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const rDiego = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const rUsers = req('/api/admin/users/list', {}, { session: rAdm }).data.users;
+  const diegoId = rUsers.find((u) => u.email === 'diego@example.com').id;
+  const tariqId = rUsers.find((u) => u.email === 'tariq@example.com').id;
+  const wdg = req('/api/admin/products', {
+    name: 'Rep Widget', sku: 'RP-WDG-01', upc: '0000000000111', category: 'Accessories',
+    costPrice: 20, retailPrice: 50, isSerialized: false, onHand: 60,
+  }, { session: rAdm });
+
+  const pushRep = (session, userId, clientTxId, kind, amount, tenders, extra) => req('/api/sync/push', {
+    deviceId: 'dev-rep-1',
+    batch: [{
+      clientTxId, userId, kind, grandTotal: amount, createdAt: new Date().toISOString(),
+      tenders, items: extra.items || [],
+      originalClientTx: extra.originalClientTx || '',
+      customerId: extra.customerId || '',
+    }],
+  }, { session });
+  const wdgItem = (qty) => [{ productId: wdg.data.id, quantity: qty, unitPrice: 50 }];
+
+  const s1 = pushRep(rDiego, diegoId, 'tx-rp-a', 'sale', 50, [{ type: 'cash', amount: 53.63 }], { items: wdgItem(1) });
+  const s2 = pushRep(rDiego, diegoId, 'tx-rp-b', 'sale', 50, [{ type: 'cash', amount: 53.63 }], { items: wdgItem(1) });
+  const netCust = req('/api/admin/customers', { name: 'Rep Net30' }, { session: rAdm });
+  const s3 = pushRep(rDiego, diegoId, 'tx-rp-c', 'sale', 50, [{ type: 'net30', amount: 53.63 }], { items: wdgItem(1), customerId: netCust.data.customer.id });
+  check('three report-window sales accepted', s1.data.results[0].accepted && s2.data.results[0].accepted && s3.data.results[0].accepted);
+  check('cashier can’t read reports', req('/api/reports', {}, { session: rDiego }).status === 403);
+
+  const rf = pushRep(rDiego, diegoId, 'tx-rp-rf', 'refund', 20, [{ type: 'cash', amount: 20 }], { originalClientTx: 'tx-rp-a' });
+  const po = pushRep(rAdm, tariqId, 'tx-rp-po', 'payout', 30, [], {});
+  const clCust = req('/api/admin/customers', { name: 'Rep Cashier' }, { session: rAdm });
+  const cl = pushRep(rAdm, tariqId, 'tx-rp-cl', 'payment', 15, [{ type: 'transfer', amount: 15 }], { customerId: clCust.data.customer.id });
+  check('refund / payout / collection accepted in window', rf.data.results[0].accepted && po.data.results[0].accepted && cl.data.results[0].accepted);
+
+  const tKey = new Date().toISOString().slice(0, 10);
+  const dto = req('/api/transactions', {}, { params: { limit: '500' }, session: rMgr }).data.transactions;
+  const w = dto.filter((t) => String(t.createdAt || '').slice(0, 10) === tKey);
+  const pick = (id) => w.find((t) => t.clientTxId === id);
+  const ga = pick('tx-rp-a').grandTotal;
+  const gb = pick('tx-rp-b').grandTotal;
+  const gc = pick('tx-rp-c').grandTotal;
+  const expGross = ga + gb + gc;
+
+  const rep = req('/api/reports', {}, { session: rMgr, params: { from: tKey, to: tKey } }).data;
+  const sum = rep.summary;
+  const near = (a, b) => Math.abs(a - b) < 0.01;
+
+  const wdgId = String(wdg.data.id);
+  const wdgCost = 20;
+  const e = { gross: 0, refunds: 0, payouts: 0, cols: 0, tax: 0, count: 0, units: 0, gp: 0 };
+  const eDiego = { sales: 0, count: 0 };
+  const eTender = {};
+  for (const t of w) {
+    const k = t.kind || 'sale';
+    const costTotal = (t.items || []).reduce((s, it) => s + (it.quantity || 1) * (String(it.productId) === wdgId ? wdgCost : (it.unitCost || 0)), 0);
+    for (const tn of (t.tenders || [])) {
+      if (k === 'payout') break;
+      const ty = String(tn.type || 'cash');
+      eTender[ty] = eTender[ty] || { amount: 0, count: 0 };
+      if (k === 'refund') eTender[ty].amount -= tn.amount; else eTender[ty].amount += tn.amount;
+      eTender[ty].count += 1;
+    }
+    if (k === 'sale') {
+      e.gross += t.grandTotal; e.tax += t.taxAmount || 0; e.count += 1;
+      e.units += (t.items || []).reduce((s, it) => s + (it.quantity || 1), 0);
+      e.gp += (t.subtotal || 0) - Math.round((t.subtotal || 0) * (t.discountPct || 0) / 100) - costTotal;
+      if (String(t.user_id) === diegoId) { eDiego.sales += t.grandTotal; eDiego.count += 1; }
+    } else if (k === 'refund') {
+      e.refunds += t.grandTotal; e.gp -= costTotal;
+      if (String(t.user_id) === diegoId) eDiego.sales -= t.grandTotal;
+    } else if (k === 'payout') {
+      e.payouts += t.grandTotal;
+      eTender.cash = eTender.cash || { amount: 0, count: 0 };
+      eTender.cash.amount -= t.grandTotal;
+      if (String(t.user_id) === diegoId) eDiego.sales -= t.grandTotal;
+    } else if (k === 'payment') {
+      e.cols += t.grandTotal;
+      if (String(t.user_id) === diegoId) eDiego.sales += t.grandTotal;
+    }
+  }
+
+  check('summary gross reconciles to DTO', near(sum.grossSales, e.gross), JSON.stringify(sum));
+  check('summary sales count reconciles', sum.salesCount === e.count);
+  check('summary units reconciles', sum.units === e.units);
+  check('summary tax reconciles to DTO', near(sum.tax, e.tax));
+  check('refund/payout/collection reconcile to DTO', near(sum.refunds, e.refunds) && near(sum.payouts, e.payouts) && near(sum.collections, e.cols));
+  check('net revenue nets gross - refunds - payouts', near(sum.netRevenue, e.gross - e.refunds - e.payouts));
+  check('gross profit reconciles to DTO + live cost', near(sum.grossProfit, e.gp));
+
+  const byTender = rep.byTender;
+  const tenderTypes = Object.keys(eTender);
+  check('every tender type nets to DTO math', tenderTypes.every((ty) => {
+    const row = byTender.find((t) => t.type === ty);
+    const exp = eTender[ty];
+    return row && near(row.amount, exp.amount) && row.count === exp.count;
+  }), JSON.stringify(byTender));
+  const knownLabels = { cash: 'Cash', transfer: 'Transfer', store_credit: 'Store credit', net30: 'On account', account: 'On account' };
+  check('tender labels known or fall back to key', byTender.every((t) => t.label === (knownLabels[t.type] || t.type)), JSON.stringify(byTender));
+
+  check('byDay calendar-locked to window', rep.byDay.length === 1 && rep.byDay[0].date === tKey && near(rep.byDay[0].sales, e.gross));
+  const wdgCat = rep.byCategory.find((c) => c.category === 'Accessories');
+  check('byCategory aggregates units + sales', wdgCat && wdgCat.units >= 3 && wdgCat.sales >= expGross, JSON.stringify(rep.byCategory));
+  const wdgCash = rep.byCashier.find((c) => c.userName === 'Diego Ramirez');
+  check('byCashier nets sales/refunds/payouts', wdgCash && near(wdgCash.sales, eDiego.sales) && wdgCash.count === eDiego.count, JSON.stringify(rep.byCashier));
+  const wdgTop = rep.topProducts.find((p) => p.name === 'Rep Widget');
+  check('topProducts ranked by revenue', wdgTop && near(wdgTop.sales, expGross) && wdgTop.units === 3);
+  const wdgCust = rep.topCustomers.find((c) => c.name === 'Rep Net30');
+  check('topCustomers carry period spend + live balance', wdgCust && near(wdgCust.spent, gc) && wdgCust.count === 1, JSON.stringify(rep.topCustomers));
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

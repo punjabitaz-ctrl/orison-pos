@@ -68,6 +68,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/customers':       return customers_(session, payload, params);
     case '/api/customers/ledger': return customerLedger_(session, params);
     case '/api/customers/receivables': return receivables_(session);
+    case '/api/reports':         return reports_(session, params);
     case '/api/shifts':          return shifts_(session, params);
     case '/api/shifts/open':     return shiftOpen_(session, payload);
     case '/api/shifts/close':    return shiftClose_(session, payload);
@@ -1912,6 +1913,200 @@ function agingBuckets_(txRows) {
     if (!oldestDays) oldestDays = days;
   }
   return { current: b.current, d30: b.d30, d60: b.d60, d90: b.d90, oldestDays: oldestDays };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Reports: one store-wide analytics snapshot for a date window.
+ *
+ *  Manager/admin only. Everything is recomputed live from the ledger rows
+ *  (never from client-cached state) using the same money model as the API:
+ *  gross-profit = subtotal − round(subtotal·discount%) − cost, refunds as a
+ *  negative line, payouts as cash out. byTender nets sales + payments up and
+ *  refunds + payouts down per method, so a manager can see *where* cash lives.
+ * ------------------------------------------------------------------ */
+
+var REPORT_DENOM_LABELS = { cash: 'Cash', transfer: 'Transfer', store_credit: 'Store credit', net30: 'On account', account: 'On account' };
+
+function reports_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var from = String((params && params.from) || '');
+  var to = String((params && params.to) || '');
+  var nowMs = Date.now();
+  if (!from || !to) {
+    from = new Date(nowMs - 29 * 86400000).toISOString();
+    to = new Date(nowMs + 86400000).toISOString();
+  }
+  var fromIso = from.indexOf('T') >= 0 ? from : from + 'T00:00:00.000Z';
+  var toIso = to.indexOf('T') >= 0 ? to : to + 'T23:59:59.999Z';
+  if (fromIso > toIso) { var tmp = fromIso; fromIso = toIso; toIso = tmp; }
+
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var prodById = {};
+  for (var pi = 0; pi < prodRows.length; pi++) prodById[String(prodRows[pi].id)] = prodRows[pi];
+
+  var txRows = readRows_('Transactions', TX_HEADERS).filter(function (t) {
+    return String(t.status) === 'COMPLETED'
+      && String(t.created_at || '') >= fromIso
+      && String(t.created_at || '') <= toIso;
+  });
+
+  var userRows = readRows_('Users', USER_HEADERS);
+  var userName = {};
+  for (var ui = 0; ui < userRows.length; ui++) {
+    var u = userRows[ui];
+    userName[String(u.id)] = String(u.first_name || '') + ' ' + String(u.last_name || '');
+  }
+
+  var byDay = {};
+  var byCat = {};
+  var byCash = {};
+  var byTender = {};
+  var byProduct = {};
+  var byCustomerTx = {};
+  var summary = { grossSales: 0, refunds: 0, payouts: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0 };
+
+  function costOf_(t) {
+    var items = itobjs_(t.items_json);
+    var cost = 0;
+    for (var i = 0; i < items.length; i++) {
+      var prod = prodById[String(items[i].productId || '')];
+      cost += (items[i].quantity || 1) * (prod ? num_(prod.cost_price) : 0);
+    }
+    return cost;
+  }
+  function gpOf_(t, costTotal) {
+    if (String(t.subtotal || '') === '') return 0;
+    return num_(t.subtotal) - Math.round(num_(t.subtotal) * num_(t.discount_pct) / 100) - costTotal;
+  }
+  function tendersOf_(t) {
+    var out = [];
+    try { out = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
+    return out;
+  }
+  function dayKeyOf_(iso) { return String(iso || '').slice(0, 10); }
+
+  for (var r = 0; r < txRows.length; r++) {
+    var t = txRows[r];
+    var kind = String(t.kind || 'sale');
+    var tenders = tendersOf_(t);
+    var items = itobjs_(t.items_json);
+    var costTotal = costOf_(t);
+    var day = dayKeyOf_(t.created_at);
+    var d = byDay[day] || (byDay[day] = { sales: 0, count: 0, gp: 0 });
+    var c = byCash[String(t.user_id || '')] || (byCash[String(t.user_id || '')] = { sales: 0, count: 0, units: 0, gp: 0 });
+
+    if (kind === 'sale') {
+      var g1 = num_(t.grand_total);
+      summary.grossSales += g1;
+      summary.salesCount += 1;
+      summary.units += items.reduce(function (s, it) { return s + (it.quantity || 1); }, 0);
+      summary.tax += num_(t.tax_amount);
+      var gp = gpOf_(t, costTotal);
+      summary.grossProfit += gp;
+      d.sales += g1; d.count += 1; d.gp += gp;
+      c.sales += g1; c.count += 1; c.gp += gp;
+      c.units += items.reduce(function (s, it) { return s + (it.quantity || 1); }, 0);
+
+      for (var ti = 0; ti < tenders.length; ti++) {
+        var tc = tenders[ti];
+        var ty = String(tc.type || 'cash');
+        var e = byTender[ty] || (byTender[ty] = { amount: 0, count: 0 });
+        e.amount += num_(tc.amount);
+        e.count += 1;
+      }
+      for (var it1 = 0; it1 < items.length; it1++) {
+        var it = items[it1];
+        var prod = prodById[String(it.productId || '')];
+        var cat = prod ? String(prod.category || 'Uncategorized') : 'Uncategorized';
+        var ce = byCat[cat] || (byCat[cat] = { units: 0, sales: 0, gp: 0 });
+        ce.units += it.quantity || 1;
+        ce.sales += (it.unitPrice || 0) * (it.quantity || 1);
+        ce.gp += ((it.unitPrice || 0) - (prod ? num_(prod.cost_price) : 0)) * (it.quantity || 1);
+        var pe = byProduct[String(it.productId || '')] || (byProduct[String(it.productId || '')] = { name: prod ? String(prod.name || 'Item') : 'Item', sku: prod ? String(prod.sku || '') : '', units: 0, sales: 0, gp: 0 });
+        pe.units += it.quantity || 1;
+        pe.sales += (it.unitPrice || 0) * (it.quantity || 1);
+        pe.gp += ((it.unitPrice || 0) - (prod ? num_(prod.cost_price) : 0)) * (it.quantity || 1);
+      }
+      var custId = String(t.customer_id || '');
+      if (custId) {
+        var ce2 = byCustomerTx[custId] || (byCustomerTx[custId] = { spent: 0, count: 0 });
+        ce2.spent += g1;
+        ce2.count += 1;
+      }
+    } else if (kind === 'refund') {
+      summary.refunds += num_(t.grand_total);
+      summary.grossProfit -= costTotal;
+      c.sales -= num_(t.grand_total); c.gp -= costTotal;
+      for (var ri = 0; ri < tenders.length; ri++) {
+        var re = byTender[String(tenders[ri].type || 'cash')] || (byTender[String(tenders[ri].type || 'cash')] = { amount: 0, count: 0 });
+        re.amount -= num_(tenders[ri].amount);
+        re.count += 1;
+      }
+    } else if (kind === 'payout') {
+      summary.payouts += num_(t.grand_total);
+      c.sales -= num_(t.grand_total);
+      var pe2 = byTender['cash'] || (byTender['cash'] = { amount: 0, count: 0 });
+      pe2.amount -= num_(t.grand_total);
+    } else if (kind === 'payment') {
+      summary.collections += num_(t.grand_total);
+      c.sales += num_(t.grand_total); c.count += 0;
+      for (var pi2 = 0; pi2 < tenders.length; pi2++) {
+        var pe3 = byTender[String(tenders[pi2].type || 'cash')] || (byTender[String(tenders[pi2].type || 'cash')] = { amount: 0, count: 0 });
+        pe3.amount += num_(tenders[pi2].amount);
+        pe3.count += 1;
+      }
+    }
+  }
+
+  var custRows = readRows_('Customers', CUSTOMERS_HEADERS);
+  var custName = {};
+  for (var ci = 0; ci < custRows.length; ci++) {
+    custName[String(custRows[ci].id)] = String(custRows[ci].name || 'Customer');
+  }
+  var balanceById = {};
+  try { var rec = receivables_(session).customers || []; for (var bc = 0; bc < rec.length; bc++) balanceById[String(rec[bc].id)] = rec[bc].balance; } catch (_) {}
+
+  var byDayOut = Object.keys(byDay).sort().map(function (k) {
+    return { date: k, sales: num_(byDay[k].sales), count: byDay[k].count, gp: num_(byDay[k].gp) };
+  });
+  var byCatOut = Object.keys(byCat).map(function (k) {
+    return { category: k, units: byCat[k].units, sales: num_(byCat[k].sales), gp: num_(byCat[k].gp) };
+  }).sort(function (a, b) { return b.sales - a.sales; });
+  var byCashOut = Object.keys(byCash).map(function (k) {
+    return { userName: userName[k] || '—', sales: num_(byCash[k].sales), count: byCash[k].count, units: byCash[k].units, gp: num_(byCash[k].gp) };
+  }).sort(function (a, b) { return b.sales - a.sales; });
+  var byTenderOut = Object.keys(byTender).map(function (k) {
+    return { type: k, label: REPORT_DENOM_LABELS[k] || k, amount: num_(byTender[k].amount), count: byTender[k].count };
+  }).sort(function (a, b) { return b.amount - a.amount; });
+  var byProductOut = Object.keys(byProduct).map(function (k) {
+    var e = byProduct[k];
+    return { name: e.name, sku: e.sku, units: e.units, sales: num_(e.sales), gp: num_(e.gp) };
+  }).sort(function (a, b) { return b.sales - a.sales; }).slice(0, 10);
+  var topCust = Object.keys(byCustomerTx).map(function (k) {
+    return { name: custName[k] || 'Customer', id: k, spent: num_(byCustomerTx[k].spent), count: byCustomerTx[k].count, balance: balanceById[k] == null ? null : num_(balanceById[k]) };
+  }).sort(function (a, b) { return b.spent - a.spent; }).slice(0, 10);
+
+  return {
+    period: { from: fromIso, to: toIso, days: byDayOut.length },
+    summary: {
+      grossSales: summary.grossSales,
+      refunds: summary.refunds,
+      payouts: summary.payouts,
+      collections: summary.collections,
+      netRevenue: summary.grossSales - summary.refunds - summary.payouts,
+      salesCount: summary.salesCount,
+      units: summary.units,
+      tax: summary.tax,
+      grossProfit: summary.grossProfit,
+      avgTicket: summary.salesCount ? summary.grossSales / summary.salesCount : 0,
+    },
+    byDay: byDayOut,
+    byCategory: byCatOut,
+    byCashier: byCashOut,
+    byTender: byTenderOut,
+    topProducts: byProductOut,
+    topCustomers: topCust,
+  };
 }
 
 /* ------------------------------------------------------------------ *

@@ -12,12 +12,13 @@ import { screen as register } from './screens/register.js';
 import { screen as checkout } from './screens/checkout.js';
 import { screen as history } from './screens/history.js';
 import { screen as customers } from './screens/customers.js';
+import { screen as reports } from './screens/reports.js';
 import { screen as inventory } from './screens/inventory.js';
 import { screen as settings } from './screens/settings.js';
 import { screen as dashboard } from './screens/dashboard.js';
 import { screen as alerts } from './screens/alerts.js';
 
-const SCREENS = { dashboard, login, register, checkout, history, customers, inventory, settings, alerts };
+const SCREENS = { dashboard, login, register, checkout, history, customers, reports, inventory, settings, alerts };
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -79,7 +80,7 @@ function applyRoleTabs() {
   const role = (state.user || {}).role || 'cashier';
   const canManage = role === 'admin' || role === 'manager';
   document.querySelectorAll('[data-tab]').forEach((t) => {
-    const restricted = (t.dataset.tab === 'inventory' || t.dataset.tab === 'alerts' || t.dataset.tab === 'customers') && !canManage;
+    const restricted = (t.dataset.tab === 'inventory' || t.dataset.tab === 'alerts' || t.dataset.tab === 'customers' || t.dataset.tab === 'reports') && !canManage;
     t.classList.toggle('hidden', restricted);
   });
 }

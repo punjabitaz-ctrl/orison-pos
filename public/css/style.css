@@ -809,3 +809,19 @@ button:disabled { cursor: default; }
 .den-qty { text-align: right; }
 .den-total { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 14px; }
 .den-total strong { font-size: 18px; color: #0b3d66; }
+
+.rep-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 16px 8px; }
+.rep-chip { border: 1px solid var(--line); background: #fff; color: #3a4b5e; border-radius: 999px; padding: 7px 14px; font-size: 13px; font-weight: 600; }
+.rep-chip.on { background: #0b3d66; border-color: #0b3d66; color: #fff; }
+.rep-dates { display: flex; align-items: center; gap: 6px; margin-left: 4px; }
+.rep-dates .field { width: 138px; margin: 0; }
+.rep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; padding: 0 16px; }
+@media (max-width: 560px) { .rep-grid { grid-template-columns: 1fr; } }
+.rep-list { display: flex; flex-direction: column; gap: 12px; }
+.rep-item { }
+.rep-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 14px; }
+.rep-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rep-bar { height: 4px; background: #eef2f7; border-radius: 999px; margin-top: 5px; overflow: hidden; }
+.rep-fill { height: 100%; background: #1c5d99; border-radius: 999px; }
+.rep-sub { font-size: 12px; margin-top: 4px; }
+.rep-sub .gp { font-weight: 700; }

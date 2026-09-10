@@ -5,6 +5,28 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-09-09
+
+Every number in the business, on one screen, recomputed from the ledger the
+moment you open it — no nightly batch, no cached sheets.
+
+### Added
+
+- **Reports.** `/api/reports` (manager / admin only) answers "what happened in
+  this window?" from live transaction rows: gross sales, refunds, payouts,
+  collections, net revenue, sales count, units, tax, gross profit, and average
+  ticket, filtered to a date range (defaults to the last 30 days).
+- **Breakdowns.** Sales by day, by category, by cashier, and by tender — the
+  tender view nets refunds back out and treats payouts as cash out, so every
+  row agrees with the cash drawer.
+- **Rankings.** Top products and top customers by period revenue, with the
+  customer's live on-account balance attached.
+- **Gross profit.** Line-cost margin recomputed at report time from current
+  product costs — so a cost-of-goods correction retroactively fixes history.
+- **Reports screen.** A new manager tab with Today / This week / This month /
+  Last 30 days / Custom presets, a KPI row, a sales-by-day bar chart, and
+  one-click CSV export of everything on screen.
+
 ## [1.5.0] — 2026-09-09
 
 Till reconciliation without the spreadsheet gymnastics: open a shift with the
