@@ -48,7 +48,7 @@ export function navButton({ id, label, primary } = {}) {
     <button class="tab${primary ? ' tab-primary' : ''}" data-tab="${esc(id)}" aria-label="${esc(label)}" title="${esc(label)}">
       ${icon(id)}
       <span>${esc(label)}</span>
-      ${id === 'alerts' ? '<span class="tab-badge hidden"></span>' : ''}
+      ${id === 'alerts' || id === 'menu' ? '<span class="tab-badge hidden"></span>' : ''}
     </button>`;
 }
 
