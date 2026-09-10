@@ -39,7 +39,8 @@ and syncs every doc and asset to the latest version.
   `reports.js`, `purchases.js` — installed terminals pinned to the stale
   v1.2.0 cache will finally upgrade instead of serving an ever-older shell.
 - `package.json` version synced to the release line (was 0.2.1) and now wires
-  `test:pdf` into `test:all`.
+  `test:pdf` into `test:all`. `package-lock.json` follows the same release
+  number (root + `packages.""` entries).
 - **Docs in lockstep with the code**: README, DEPLOY, SECURITY, the backend
   guide, and this changelog all reflect v1.7.x. `AGENTS.md` encodes the
   release protocol so future revisions keep them current automatically.

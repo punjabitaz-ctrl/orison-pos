@@ -28,7 +28,7 @@ public/sw.js             Service worker (VERSION must be bumped every release)
 tests/backend-sim.mjs    Backend logic suite against an in-memory Apps Script mock
 tests/e2e.mjs            Headless E2E (needs a freshly-seeded live backend)
 tests/pdf-send-smoke.mjs Receipt PDF/share smoke test
-README.md  DEPLOY.md  SECURITY.md  CHANGELOG.md  AGENTS.md  HANDOVER.md
+README.md  DEPLOY.md  SECURITY.md  CHANGELOG.md  RELEASE_NOTES.md  AGENTS.md  HANDOVER.md
 ```
 
 ## Release protocol (MANDATORY — one feature = one version)
@@ -41,6 +41,8 @@ Every feature/change ships as its own **tagged revision** on `main`:
    - `public/sw.js` `VERSION` → `orison-pos-vX.Y.Z`
    - `package.json` `version` → `X.Y.Z`
    - `CHANGELOG.md` → new `## [X.Y.Z]` section (Keep a Changelog style)
+   - `RELEASE_NOTES.md` → move the latest-release section to the top with the
+     new version, headline, and deploy notes
    - `README.md`, `DEPLOY.md`, `SECURITY.md`, `backend/README.md` → re-read and
      update anything they say that your change affects
    - `HANDOVER.md` → refresh state: version, features, sim count, standing
