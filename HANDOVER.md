@@ -13,10 +13,10 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.14.0** — screen refresh + dashboard context + staff tools (`2026-09-10`) |
-| Validation bar | `backend-sim` **PASS 374 / FAIL 0** · client units **PASS 190 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
-| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~3,870 lines) |
-| Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell |
+| Current version | **v1.15.0** — customer display + inventory tools (`2026-09-10`) |
+| Validation bar | `backend-sim` **PASS 413 / FAIL 0** · client units **PASS 228 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
+| Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
 
 ## 2. Mission & context
@@ -126,6 +126,28 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.15.0** Customer display + inventory tools: **`display.html`** mirrors
+  the cart / checkout / thank-you on a shopper-facing second screen over a
+  same-origin `BroadcastChannel` (`customer-display.js` publishes; the display
+  is publish-only, holds no session and calls no API — cost, margin, customer
+  and till figures are absent from the frame by construction). Settings →
+  *Customer display* toggles mirroring per terminal and opens the window on a
+  second screen via the Window Management API where granted. **Products →
+  Tools** menu adds: **bulk price update** (`/api/admin/products/bulk-price` —
+  the client sends a *rule*, the server recomputes under the lock; `preview`
+  writes nothing; changes recorded as source `bulk`), **stock take**
+  (`/api/admin/stock-take` → new **`StockTakes`** sheet, read+write in one
+  lock, serialized/service refused, one bad line rolls back the count),
+  **barcode labels** (`labels.js` Code 128-B encoder — no third-party script;
+  25 unit checks verify the pattern table symbol by symbol), and the
+  **reorder worksheet** (`/api/inventory/reorder` — velocity net of refunds,
+  days of cover, suggested qty, last supplier; print or CSV).
+  `print-sheet.js` prints sheets in their own window so the 80mm receipt page
+  geometry is untouched. **Security:** shared `csvCell()`/`csvRows()` in
+  `ui.js` now formula-guard **and** quote every client CSV (closed
+  acknowledged weakness #4; the statement export had the opposite bug —
+  guarded but unquoted, so a comma shifted columns), and the service worker no
+  longer falls an offline `display.html` back to the register app.
 - **v1.14.0** Screen refresh + dashboard context + staff tools: new
   **`TimeClock`** sheet with `/api/timeclock` + `/api/timeclock/punch` (own
   clock only, one OPEN entry per account, closed in place with elapsed
@@ -157,7 +179,7 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
 
 `Meta` (kv) · `Users` · `Products` · `Serials` (`AVAILABLE`/`SOLD`/`VOIDED`) ·
 `Transactions` · `Conflicts` · `Devices` · `Customers` · `Shifts` ·
-`Suppliers` · `PurchaseOrders` · `PriceHistory` · `TimeClock`.
+`Suppliers` · `PurchaseOrders` · `PriceHistory` · `TimeClock` · `StockTakes`.
 
 Ledger kinds: `sale` (incl. legacy `''`), `refund`, `payout`, `payment`
 (= collection, money-in), `purchase` (PO receipt — must never count as sales
@@ -168,16 +190,21 @@ admin/manager.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. 374 checks: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. 413 checks: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
-  PO receive math, role gates, and the time clock (punch toggle, 409 guards,
-  cashier-scoped reads, the `?status=all` shift-roster fix).
+  PO receive math, role gates, the time clock (punch toggle, 409 guards,
+  cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
+  inventory tools (reorder velocity/cover/suggestion, bulk-price preview vs
+  apply + validation + price-history trail, stock-take variance/value/rollback).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  190 checks: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  228 checks: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
-  ui `fmt`/`esc`/`debounce`, and (v1.14.0) `stats.js` — day totals by kind,
+  ui `fmt`/`esc`/`debounce`/`csvCell`/`emptyState`/`skeleton`, (v1.15.0)
+  `labels.js` — the Code 128-B pattern table symbol by symbol, the modulo-103
+  check symbol, bar/space alternation, escaping and the label cap — and
+  (v1.14.0) `stats.js` — day totals by kind,
   signed net, trends against a zero/negative baseline, baseline averages that
   exclude their own day, hourly buckets + trading window, top sellers/margin,
   hours from open and closed punches.
@@ -259,14 +286,17 @@ Status of every finding class:
      races, VOIDED re-push idempotency, same-batch refunds/duplicates, GP
      cost-at-sale, discounts in breakdowns, store-TZ day windows).
    - ~~**Client test harness for `money.js`/`sync.js`**~~ — shipped in
-     **v1.12.0** (154 unit checks across money/sync/db/alerts/ui; 190 after
-     v1.14.0 added `stats.js`).
-2. **Deploy current version** — v1.14.0 needs **both halves**: paste
+     **v1.12.0** (154 unit checks across money/sync/db/alerts/ui; 228 after
+     v1.14.0 added `stats.js` and v1.15.0 added `labels.js` + the CSV helpers).
+2. **Deploy current version** — v1.15.0 needs **both halves**: paste
    `backend/Code.gs` into Apps Script and deploy a new Web App version (the
-   time-clock endpoints and the `shifts_` role fix live there; the `TimeClock`
-   tab is created on first use), then push `public/` to Cloudflare Pages as
-   usual. Terminals pick up the v1.14.0 shell on next load. Local smoke:
-   `npm run serve` + a browser at 375px and ≥1024px.
+   v1.14.0 time-clock endpoints and `shifts_` fix, plus the v1.15.0 reorder /
+   bulk-price / stock-take endpoints; the `TimeClock` and `StockTakes` tabs are
+   created on first use), then push `public/` to Cloudflare Pages as usual.
+   Terminals pick up the v1.15.0 shell on next load. Per terminal that wants a
+   customer display: Settings → *Customer display* → mirror + open window
+   (allow pop-ups once). Local smoke: `npm run serve` + a browser at 375px and
+   ≥1024px.
 3. **Visual roadmap (user-approved order):**
    - ~~v1.12.0~~ **done** — client test harness.
    - ~~v1.13.0~~ **done** — theme polish + responsive shell: typography/
@@ -279,9 +309,11 @@ Status of every finding class:
      trend KPIs, hourly chart, top-seller table, shift summary; Staff screen
      (time clock, shift history, per-cashier performance); shared skeletons,
      one empty-state component, 44px touch targets, scrolling tab bar.
-   - **v1.15.0** — customer display + inventory tools: BroadcastChannel mirror
-     mode with a **second-screen-only option**; bulk price update, stock-take
-     mode, barcode label printing, low-stock reorder worksheet.
+   - ~~v1.15.0~~ **done** — customer display + inventory tools:
+     BroadcastChannel mirror with a second-screen option; bulk price update,
+     stock-take mode, barcode label printing, low-stock reorder worksheet.
+   - **The roadmap the user approved is now complete.** Next work is
+     unscheduled: see §11 for the open review findings and what they cost.
 
 ## 10. Session context / reconstructability
 

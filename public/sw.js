@@ -5,7 +5,7 @@
    - /api/*: never cached, network only
 */
 
-const VERSION = 'orison-pos-v1.14.0';
+const VERSION = 'orison-pos-v1.15.0';
 
 const SHELL = [
   './',
@@ -18,6 +18,9 @@ const SHELL = [
   './js/ui.js',
   './js/alerts.js',
   './js/stats.js',
+  './js/labels.js',
+  './js/print-sheet.js',
+  './js/customer-display.js',
   './js/money.js',
   './js/receipt-send.js',
   './js/screens/login.js',
@@ -29,9 +32,13 @@ const SHELL = [
   './js/screens/dashboard.js',
   './js/screens/alerts.js',
   './js/screens/staff.js',
+  './js/screens/inventory-tools.js',
   './js/screens/customers.js',
   './js/screens/reports.js',
   './js/screens/purchases.js',
+  './display.html',
+  './js/display.js',
+  './css/display.css',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -56,11 +63,16 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return; // never cache API
 
+  /* Navigations are network-first with a cached fallback. The app is a single
+     page, but display.html is its own document: falling every navigation back
+     to index.html would hand an offline customer display the register. */
   if (event.request.mode === 'navigate') {
+    const isDisplay = url.pathname.endsWith('/display.html');
+    const shellKey = isDisplay ? './display.html' : './index.html';
     event.respondWith(
       fetch(event.request)
-        .then((res) => { const copy = res.clone(); caches.open(VERSION).then((c) => c.put('./index.html', copy)); return res; })
-        .catch(() => caches.match('./index.html'))
+        .then((res) => { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(shellKey, copy)); return res; })
+        .catch(() => caches.match(shellKey).then((hit) => hit || caches.match('./index.html')))
     );
     return;
   }

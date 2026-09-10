@@ -6,7 +6,7 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
-import { fmt, esc, openModal, closeModal, toast, beep } from '../ui.js';
+import { fmt, esc, openModal, closeModal, toast, beep, csvRows, downloadCsv } from '../ui.js';
 import { createCollection } from '../money.js';
 
 export const screen = {
@@ -216,22 +216,11 @@ export const screen = {
     }
 
     function statementCsv(s) {
-      const csvEsc = (v) => {
-        const t = String(v == null ? '' : v);
-        return /^[=+\-@]/.test(t) ? "'" + t : t;
-      };
       const rows = [['date', 'reference', 'description', 'debit', 'credit', 'balance', 'cashier', 'note']];
       for (const it of s.items) {
         rows.push([it.date, it.reference, it.description, it.debit || '', it.credit || '', it.balance, it.cashier, it.note]);
       }
-      const blob = new Blob([rows.map((r) => r.map(csvEsc).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `orison-statement-${s.customer.id}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      downloadCsv(`orison-statement-${s.customer.id}.csv`, csvRows(rows));
       toast('Statement CSV downloaded', 'ok');
     }
 

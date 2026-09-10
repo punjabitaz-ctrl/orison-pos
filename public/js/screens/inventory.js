@@ -5,7 +5,8 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
-import { fmt, esc, toast, beep, debounce, openModal, closeModal } from '../ui.js';
+import { fmt, esc, toast, beep, debounce, openModal, closeModal, openSheet, closeSheet } from '../ui.js';
+import { bulkPriceModal, stockTakeModal, labelsModal, reorderModal } from './inventory-tools.js';
 import { pull, mergeProductLocal, SYNC_EVENT, getSyncState } from '../sync.js';
 import { reorderThreshold } from '../alerts.js';
 
@@ -46,7 +47,7 @@ export const screen = {
           <h2>Products</h2>
           <p>${this._products.length} items${isAdmin ? ' · admin' : ''}</p>
         </div>
-        ${isAdmin ? `<div class="btn-row"><button class="btn btn-ghost btn-sm" id="agingBtn">Aging</button><button class="btn btn-ghost btn-sm" id="newProdBtn">+ New</button></div>` : ''}
+        ${isAdmin ? `<div class="btn-row"><button class="btn btn-ghost btn-sm" id="toolsBtn">Tools</button><button class="btn btn-ghost btn-sm" id="newProdBtn">+ New</button></div>` : ''}
       </header>
       <div class="search-row">
         <div class="search-box">
@@ -108,7 +109,36 @@ export const screen = {
 
     if (isAdmin) {
       root.querySelector('#newProdBtn').addEventListener('click', newProductModal);
-      root.querySelector('#agingBtn').addEventListener('click', agingModal);
+      root.querySelector('#toolsBtn').addEventListener('click', toolsSheet);
+    }
+
+    /* One menu for the stock-keeping tools rather than five buttons fighting
+       for the header on a phone. */
+    function toolsSheet() {
+      const sheet = openSheet(`
+        <div class="cart-head"><h3>Inventory tools</h3><button class="icon-btn" data-x aria-label="Close">✕</button></div>
+        <div class="tool-menu">
+          <button class="tool-item" data-tool="reorder"><b>Reorder worksheet</b><span>What to buy next, from sales velocity and reorder points</span></button>
+          <button class="tool-item" data-tool="stocktake"><b>Stock take</b><span>Count the shelf and post the variance</span></button>
+          <button class="tool-item" data-tool="bulk"><b>Bulk price update</b><span>Reprice a category or the whole catalog by rule</span></button>
+          <button class="tool-item" data-tool="labels"><b>Print shelf labels</b><span>Code 128 barcodes with name and price</span></button>
+          <button class="tool-item" data-tool="aging"><b>Inventory aging</b><span>How long stock has been sitting, valued at cost</span></button>
+        </div>`);
+      sheet.querySelector('[data-x]').addEventListener('click', closeSheet);
+      sheet.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', async () => {
+        const tool = b.dataset.tool;
+        closeSheet();
+        const refresh = async () => {
+          await pull().catch(() => {});
+          await screen.refreshProducts();
+          renderList();
+        };
+        if (tool === 'aging') agingModal();
+        else if (tool === 'reorder') reorderModal();
+        else if (tool === 'bulk') bulkPriceModal({ products: screen._products, onDone: refresh });
+        else if (tool === 'stocktake') stockTakeModal({ products: screen._products, onDone: refresh });
+        else if (tool === 'labels') labelsModal({ products: screen._products, storeName: (state.store && state.store.name) || '' });
+      }));
     }
 
     function newProductModal() {
@@ -254,7 +284,7 @@ export const screen = {
             ? history.map((h) => `
                 <div class="ph-row">
                   <div class="ph-top">
-                    <span class="k-chip ${h.source === 'po' ? 'k-payout' : h.source === 'create' ? 'k-sale' : 'k-refund'}">${esc(sourceLabel(h.source))}</span>
+                    <span class="k-chip ${h.source === 'po' ? 'k-payout' : h.source === 'create' ? 'k-sale' : h.source === 'bulk' ? 'k-disc' : 'k-refund'}">${esc(sourceLabel(h.source))}</span>
                     <span class="muted">${esc(dt(h.createdAt))}</span>
                     <span class="muted">${esc(h.changedBy || '—')}${h.poNumber ? ` · ${esc(h.poNumber)}` : ''}</span>
                   </div>
@@ -273,6 +303,7 @@ export const screen = {
       function sourceLabel(s) {
         if (s === 'po') return 'Purchase order';
         if (s === 'create') return 'Created';
+        if (s === 'bulk') return 'Bulk update';
         return 'Manual edit';
       }
       function fieldLabel(f) {

@@ -2254,6 +2254,189 @@ check('statement carries the changer/cashier',
     leak.open === leak.shifts.filter((sh) => sh.status === 'OPEN').length);
 }
 
+{
+  section('inventory tools (v1.15.0)');
+
+  const ivAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const ivCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const ivUsers = req('/api/admin/users/list', {}, { session: ivAdm }).data.users;
+  const ivCashId = ivUsers.find((u) => u.email === 'amara@example.com').id;
+
+  const mkProd = (name, sku, extra) => req('/api/admin/products', Object.assign({
+    name, sku, category: 'IV Tools', costPrice: 10, retailPrice: 25, onHand: 0,
+  }, extra || {}), { session: ivAdm }).data.id;
+
+  const fast = mkProd('IV Fast Mover', 'IV-FAST-01', { onHand: 2, reorderPoint: 5 });
+  const slow = mkProd('IV Slow Mover', 'IV-SLOW-01', { onHand: 40, reorderPoint: 2 });
+  const dead = mkProd('IV Dead Stock', 'IV-DEAD-01', { onHand: 0, reorderPoint: 0 });
+  const svc = mkProd('IV Service', 'IV-SVC-01', { itemType: 'service' });
+
+  /* --- reorder worksheet --- */
+  const sellIv = (txId, productId, qty, kind, orig) => req('/api/sync/push', {
+    deviceId: 'dev-iv-1',
+    batch: [{
+      clientTxId: txId, userId: ivCashId, kind: kind || 'sale',
+      originalClientTx: orig || undefined,
+      grandTotal: 25 * qty, createdAt: new Date().toISOString(),
+      tenders: [{ type: 'cash', amount: 25 * qty }],
+      items: [{ productId, quantity: qty, unitPrice: 25 }],
+    }],
+  }, { session: kind === 'refund' ? ivAdm : ivCash });
+
+  sellIv('tx-iv-1', fast, 20);
+  sellIv('tx-iv-2', slow, 1);
+
+  check('reorder worksheet is manager/admin only',
+    req('/api/inventory/reorder', {}, { session: ivCash }).status === 403);
+
+  const ro = req('/api/inventory/reorder', {}, { session: ivAdm, params: { days: 30, cover: 14 } }).data;
+  const roFast = ro.items.find((x) => x.sku === 'IV-FAST-01');
+  check('a fast mover below its reorder point is flagged', !!roFast);
+  check('velocity is units sold over the window', roFast && roFast.soldUnits === 20 && roFast.perDay === Math.round((20 / 30) * 100) / 100);
+  check('suggested quantity tops the shelf up to the target cover',
+    roFast && roFast.suggested === Math.ceil((20 / 30) * 14) - roFast.onHand,
+    JSON.stringify(roFast));
+  check('days of cover reflects on-hand at the current rate',
+    roFast && roFast.daysOfCover === Math.round((roFast.onHand / (20 / 30)) * 10) / 10);
+  check('a well-stocked slow mover is not on the list', !ro.items.some((x) => x.sku === 'IV-SLOW-01'));
+  check('an empty item with no demand is not on the list', !ro.items.some((x) => x.sku === 'IV-DEAD-01'));
+  check('services never appear on a reorder worksheet', !ro.items.some((x) => x.sku === 'IV-SVC-01'));
+  check('the summary totals lines, units and cost at the last-known cost',
+    ro.summary.lines === ro.items.length
+    && ro.summary.units === ro.items.reduce((n, x) => n + x.suggested, 0));
+
+  /* refunded units are not demand: a returned unit is back on the shelf and
+     was never really sold, so it must not pull the reorder up. */
+  const returned = mkProd('IV Returned', 'IV-RET-01', { onHand: 30, reorderPoint: 40 });
+  sellIv('tx-iv-ret-1', returned, 20);
+  const roRetBefore = req('/api/inventory/reorder', {}, { session: ivAdm, params: { days: 30, cover: 14 } })
+    .data.items.find((x) => x.sku === 'IV-RET-01');
+  sellIv('tx-iv-ret-rf', returned, 8, 'refund', 'tx-iv-ret-1');
+  const roRetAfter = req('/api/inventory/reorder', {}, { session: ivAdm, params: { days: 30, cover: 14 } })
+    .data.items.find((x) => x.sku === 'IV-RET-01');
+  check('a refund gives units back to the demand figure',
+    roRetBefore && roRetAfter && roRetBefore.soldUnits === 20 && roRetAfter.soldUnits === 12,
+    JSON.stringify({ before: roRetBefore && roRetBefore.soldUnits, after: roRetAfter && roRetAfter.soldUnits }));
+  check('a restocked return also lifts on-hand, shrinking the suggestion',
+    roRetAfter.onHand > roRetBefore.onHand && roRetAfter.suggested < roRetBefore.suggested);
+  check('a shelf that is stocked past the target cover but under its reorder point still lists',
+    roRetAfter.reorderPoint === 40 && roRetAfter.onHand < 40);
+
+  /* --- bulk reprice --- */
+  const bulkA = mkProd('IV Bulk A', 'IV-BULK-A', { onHand: 5, retailPrice: 100, costPrice: 60 });
+  const bulkB = mkProd('IV Bulk B', 'IV-BULK-B', { onHand: 5, retailPrice: 33.33, costPrice: 20 });
+
+  check('bulk reprice is manager/admin only',
+    req('/api/admin/products/bulk-price', { productIds: [bulkA], mode: 'pct', value: 10 }, { session: ivCash }).status === 403);
+
+  const prev = req('/api/admin/products/bulk-price', {
+    productIds: [bulkA, bulkB], field: 'retail_price', mode: 'pct', value: 10, preview: true,
+  }, { session: ivAdm }).data;
+  check('preview reports the change without writing it',
+    prev.preview === true && prev.changed === 2
+    && prev.changes.find((c) => c.id === bulkA).newValue === 110);
+  const priceAfterPreview = req('/api/products', {}, { session: ivAdm }).data.find((p) => p.sku === 'IV-BULK-A').retailPrice;
+  check('preview really left the catalog alone', priceAfterPreview === 100);
+
+  const applied = req('/api/admin/products/bulk-price', {
+    productIds: [bulkA, bulkB], field: 'retail_price', mode: 'pct', value: 10,
+  }, { session: ivAdm }).data;
+  const catAfter = req('/api/products', {}, { session: ivAdm }).data;
+  check('a percentage run applies to every matched product',
+    applied.changed === 2
+    && catAfter.find((p) => p.sku === 'IV-BULK-A').retailPrice === 110
+    && catAfter.find((p) => p.sku === 'IV-BULK-B').retailPrice === 36.66,
+    JSON.stringify(applied.changes));
+
+  const rounded = req('/api/admin/products/bulk-price', {
+    productIds: [bulkB], field: 'retail_price', mode: 'set', value: 36.66, roundTo: 5,
+  }, { session: ivAdm }).data;
+  check('roundTo snaps the new price to the nearest step',
+    rounded.changed === 1 && rounded.changes[0].newValue === 35);
+
+  const delta = req('/api/admin/products/bulk-price', {
+    productIds: [bulkA], field: 'cost_price', mode: 'delta', value: -10,
+  }, { session: ivAdm }).data;
+  check('a delta run moves cost by an absolute amount',
+    delta.changes[0].oldValue === 60 && delta.changes[0].newValue === 50);
+
+  const noop = req('/api/admin/products/bulk-price', {
+    productIds: [bulkA], field: 'cost_price', mode: 'set', value: 50,
+  }, { session: ivAdm }).data;
+  check('a run that changes nothing writes nothing', noop.matched === 1 && noop.changed === 0);
+
+  const byCat = req('/api/admin/products/bulk-price', {
+    category: 'IV Tools', field: 'retail_price', mode: 'pct', value: 0, preview: true,
+  }, { session: ivAdm }).data;
+  check('a category run matches the whole category and excludes services',
+    byCat.matched >= 5 && !byCat.changes.length);
+
+  check('a price can never be driven negative',
+    req('/api/admin/products/bulk-price', { productIds: [bulkA], mode: 'set', value: -5 }, { session: ivAdm }).status === 400);
+  check('an absurd percentage is refused',
+    req('/api/admin/products/bulk-price', { productIds: [bulkA], mode: 'pct', value: -99 }, { session: ivAdm }).status === 400);
+  check('an unknown field is refused',
+    req('/api/admin/products/bulk-price', { productIds: [bulkA], field: 'name', mode: 'set', value: 1 }, { session: ivAdm }).status === 400);
+  check('an empty match set is refused rather than silently doing nothing',
+    req('/api/admin/products/bulk-price', { category: 'No Such Category', mode: 'pct', value: 5 }, { session: ivAdm }).status === 400);
+
+  const hist = req('/api/price-history', {}, { session: ivAdm, params: { productId: bulkA } }).data.history;
+  check('every applied bulk change lands in price history tagged bulk',
+    hist.some((h) => h.source === 'bulk' && h.field === 'retail_price' && h.newValue === 110)
+    && hist.some((h) => h.source === 'bulk' && h.field === 'cost_price' && h.newValue === 50));
+  check('a previewed change never reaches price history',
+    hist.filter((h) => h.source === 'bulk' && h.field === 'retail_price').length === 1);
+
+  /* --- stock take --- */
+  const stA = mkProd('IV Count A', 'IV-CNT-A', { onHand: 10, costPrice: 12 });
+  const stB = mkProd('IV Count B', 'IV-CNT-B', { onHand: 4, costPrice: 5 });
+  const stSer = mkProd('IV Count Serial', 'IV-CNT-S', { isSerialized: true });
+
+  check('stock-take is manager/admin only',
+    req('/api/admin/stock-take', { counts: [{ productId: stA, counted: 9 }] }, { session: ivCash }).status === 403);
+
+  const take = req('/api/admin/stock-take', {
+    counts: [{ productId: stA, counted: 8 }, { productId: stB, counted: 4 }],
+    note: 'monday count',
+  }, { session: ivAdm }).data;
+  check('variance is counted minus what the book expected',
+    take.lines.find((l) => l.sku === 'IV-CNT-A').variance === -2
+    && take.lines.find((l) => l.sku === 'IV-CNT-B').variance === 0);
+  check('shrinkage is valued at cost',
+    take.summary.valueDelta === -24 && take.summary.unitVariance === -2, JSON.stringify(take.summary));
+  check('only the lines that actually moved are written',
+    take.summary.lines === 2 && take.summary.adjusted === 1);
+  const afterTake = req('/api/products', {}, { session: ivAdm }).data;
+  check('the counted shelf becomes the new on-hand',
+    afterTake.find((p) => p.sku === 'IV-CNT-A').onHand === 8
+    && afterTake.find((p) => p.sku === 'IV-CNT-B').onHand === 4);
+
+  check('serialized stock cannot be counted by quantity',
+    req('/api/admin/stock-take', { counts: [{ productId: stSer, counted: 3 }] }, { session: ivAdm }).status === 400);
+  check('a service cannot be counted',
+    req('/api/admin/stock-take', { counts: [{ productId: svc, counted: 1 }] }, { session: ivAdm }).status === 400);
+  check('a negative count is refused',
+    req('/api/admin/stock-take', { counts: [{ productId: stA, counted: -1 }] }, { session: ivAdm }).status === 400);
+  check('a fractional count is refused',
+    req('/api/admin/stock-take', { counts: [{ productId: stA, counted: 2.5 }] }, { session: ivAdm }).status === 400);
+  check('an unknown product id is refused',
+    req('/api/admin/stock-take', { counts: [{ productId: 'nope', counted: 1 }] }, { session: ivAdm }).status === 404);
+  check('an empty count is refused',
+    req('/api/admin/stock-take', { counts: [] }, { session: ivAdm }).status === 400);
+
+  /* a rejected line must not leave half a count behind */
+  const before = req('/api/products', {}, { session: ivAdm }).data.find((p) => p.sku === 'IV-CNT-A').onHand;
+  req('/api/admin/stock-take', {
+    counts: [{ productId: stA, counted: 99 }, { productId: stSer, counted: 1 }],
+  }, { session: ivAdm });
+  check('one bad line rolls back the whole count',
+    req('/api/products', {}, { session: ivAdm }).data.find((p) => p.sku === 'IV-CNT-A').onHand === before);
+
+  const takeSheet = store.ss._sheets.get('StockTakes');
+  check('every counted line leaves an audit row, variance or not',
+    takeSheet && takeSheet._grid.length === 3, takeSheet ? String(takeSheet._grid.length) : 'no sheet');
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

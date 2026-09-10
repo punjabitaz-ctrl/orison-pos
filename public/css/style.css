@@ -1185,3 +1185,48 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; le
 }
 @media (min-width: 560px) { .dash-kpis { grid-template-columns: repeat(3, 1fr); } }
 @media (min-width: 900px) { .dash-kpis { grid-template-columns: repeat(4, 1fr); } }
+
+/* =========================================================
+   v1.15.0 — inventory tools & customer display controls
+   ========================================================= */
+
+.tool-menu { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 10px; }
+.tool-item {
+  text-align: left;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 3px;
+  min-height: 44px;
+  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.tool-item b { font-size: 15px; font-weight: 700; }
+.tool-item span { font-size: 12px; color: var(--muted); }
+.tool-item:active { transform: translateY(1px); }
+.tool-item:hover { border-color: var(--line-2); }
+
+/* The tool modals carry tables, so they get the width the phone can spare
+   and scroll inside themselves rather than pushing the page around. */
+/* The tool modals carry tables, so the dialog itself widens (browsers without
+   :has() keep the standard 420px dialog and simply scroll their tables). */
+.inv-tool { width: 100%; }
+.modal:has(.inv-tool) { width: min(94vw, 760px); }
+.inv-tool .ph-body { max-height: 46dvh; overflow-y: auto; }
+.st-table input.st-count { width: 5.5em; text-align: right; padding: 6px 8px; min-height: 40px; }
+.lb-quick { padding-bottom: 4px; }
+.lbl-preview { margin-top: 8px; }
+.lbl-preview .lbl-sheet { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+
+/* Labels on screen (the print window carries its own copy of these rules). */
+.lbl-sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
+.lbl {
+  border: 1px dashed var(--line-2); border-radius: 8px;
+  padding: 8px; text-align: center;
+  display: flex; flex-direction: column; gap: 4px;
+  background: #fff;
+}
+.lbl-name { font-size: 11px; font-weight: 700; line-height: 1.2; }
+.lbl-bc { display: block; width: 100%; height: 38px; }
+.lbl-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.lbl-code { font-size: 9px; color: var(--muted); letter-spacing: .3px; }
+.lbl-price { font-size: 14px; font-weight: 800; }
+.lbl-store { font-size: 8px; color: var(--line-2); }

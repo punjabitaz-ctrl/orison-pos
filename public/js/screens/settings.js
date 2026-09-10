@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { esc, toast, beep } from '../ui.js';
 import { openModal, closeModal } from '../ui.js';
 import { getSyncState, syncNow, push, pull, setServerUrl, setAppToken, setSyncInterval, outboxStats } from '../sync.js';
+import { displayEnabled, setDisplayEnabled, openDisplay, publishIdle } from '../customer-display.js';
 
 export const screen = {
   id: 'settings',
@@ -42,6 +43,14 @@ export const screen = {
             <p class="muted">${esc(user ? ((user.email || '') + ' · ' + (user.role || 'cashier')) : '')}</p>
           </div>
         </div>
+      </section>
+
+      <section class="set-card">
+        <h3>Customer display</h3>
+        <p class="muted">Mirror the cart on a second screen facing the shopper. Item names, quantities, prices and the amount due only — never cost, margin or customer records.</p>
+        <label class="check"><input id="cdOn" type="checkbox" ${displayEnabled() ? 'checked' : ''}> Mirror this terminal</label>
+        <div class="row"><button class="btn" id="cdOpen">Open display window</button></div>
+        <p id="cdMsg" class="muted" role="status"></p>
       </section>
 
       <section class="set-card">
@@ -134,6 +143,35 @@ export const screen = {
       </section>
 
       <button class="btn btn-block btn-danger" id="signoutBtn">Sign out</button>`;
+
+    root.querySelector('#cdOn').addEventListener('change', (e) => {
+      setDisplayEnabled(e.target.checked);
+      const msg = root.querySelector('#cdMsg');
+      if (e.target.checked) {
+        publishIdle((state.store && state.store.name) || '');
+        msg.textContent = 'Mirroring on. Open the display window on the customer-facing screen.';
+      } else {
+        msg.textContent = 'Mirroring off — any open display goes back to the welcome screen.';
+      }
+    });
+
+    root.querySelector('#cdOpen').addEventListener('click', async () => {
+      const msg = root.querySelector('#cdMsg');
+      if (!displayEnabled()) {
+        setDisplayEnabled(true);
+        root.querySelector('#cdOn').checked = true;
+      }
+      const res = await openDisplay();
+      if (!res.opened) {
+        msg.textContent = 'The browser blocked the window — allow pop-ups for this site and try again.';
+        toast('Pop-up blocked', 'warn');
+        return;
+      }
+      if (res.secondScreen) msg.textContent = 'Display opened on the second screen.';
+      else if (res.reason === 'single-screen') msg.textContent = 'Only one screen detected — opened here; drag it across if you attach one.';
+      else msg.textContent = 'Display opened. Drag it to the customer-facing screen and full-screen it (F11).';
+      publishIdle((state.store && state.store.name) || '');
+    });
 
     root.querySelector('#syncNowBtn').addEventListener('click', async () => {
       root.querySelector('#syncNowBtn').disabled = true;

@@ -183,6 +183,8 @@ demotion takes effect at the first request after the change (no 12-hour lag).
 | `/api/admin/devices`, `/admin/revoke-device` | admin |
 | `/api/admin/pin` | admin |
 | `/api/admin/customers` | admin, manager |
+| `/api/inventory/reorder` | admin, manager |
+| `/api/admin/products/bulk-price`, `/api/admin/stock-take` | admin, manager |
 | `/api/timeclock` | admin, manager see the roster; a cashier's request is forced to their own punches |
 | `/api/timeclock/punch` | any signed-in user, own clock only |
 | `/api/pin` | any signed-in user, own PIN only |
@@ -196,6 +198,22 @@ other cashier's opening float, expected drawer, declared cash and over/short.
 The parameter is gone: the roster is `isStoreRole_`-gated like every other
 store-scope read, and a cashier's open-shift count is now their own rather than
 the store's. Covered by two sim assertions.
+
+### Customer display (v1.15.0)
+
+The second-screen mirror is a **publish-only, same-origin** channel: the
+register posts a frame on a `BroadcastChannel` and `display.html` renders it.
+The display never reads the catalog, never holds a session token and never
+calls the backend, so a screen facing the shop floor cannot be turned into a
+window onto the till.
+
+Only shopper-facing fields are ever published — line names, quantities, line
+amounts, discounts, the totals breakdown, amount due and change. Cost, margin,
+customer identity or balance, cashier, terminal id and every till figure are
+absent from the frame by construction: what is not published cannot be shown.
+The last frame is cached in `localStorage` (same origin, same device) so a
+display opened mid-sale paints immediately; it is cleared to an idle frame when
+mirroring is switched off.
 
 ## The shared app token
 
@@ -272,9 +290,11 @@ is tracked; none is silent.
 3. **`APP_TOKEN` is shared** by every terminal and lives in each device's
    IndexedDB (see [The shared app token](#the-shared-app-token)). A single
    compromised install yields it; rotation is manual.
-4. **Client-side CSV export** (`reports.js`) quotes cells but does not prefix
-   formula characters (`= + - @`); the server-side `csvCell_` does. Export a
-   server CSV (`/api/drive/export`) for spreadsheet-grade safety.
+4. ~~**Client-side CSV export** does not prefix formula characters.~~ **Fixed
+   in v1.15.0**: `ui.js` `csvCell()` neutralises a leading `= + - @` *and*
+   always quotes (the statement export previously did the opposite — guarded
+   formulas but never quoted, so a comma in a name shifted its columns).
+   Reports, customer statements and the reorder worksheet all use it.
 5. **Client-supplied report keys** (tender type, category) are used as object
    keys in `reports_`; a hostile payload could collide with prototype keys.
    Harmless today (data is single-store, post-auth) but should switch to

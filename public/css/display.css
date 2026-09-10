@@ -1,0 +1,146 @@
+/* =========================================================
+   Orison POS — customer display (second screen)
+   Big type, high contrast, readable across a counter.
+   ========================================================= */
+
+:root {
+  --navy: #0f2a42;
+  --navy-2: #163a5e;
+  --gold: #e8b054;
+  --ink: #f4f7fb;
+  --muted: #9fb3c8;
+  --line: rgba(255, 255, 255, .12);
+  --ok: #4ade80;
+  --danger: #f87171;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  background: radial-gradient(120% 120% at 50% 0%, var(--navy-2) 0%, var(--navy) 62%);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.cd {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(16px, 3vw, 40px);
+  gap: clamp(10px, 1.6vh, 20px);
+}
+
+/* ---- idle ---- */
+.cd-idle, .cd-thanks {
+  margin: auto;
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center;
+  gap: clamp(10px, 2vh, 22px);
+}
+.cd-brand {
+  font-size: clamp(30px, 5.2vw, 76px);
+  font-weight: 800;
+  letter-spacing: -.02em;
+}
+.cd-idle p, .cd-thanks p {
+  font-size: clamp(15px, 1.8vw, 26px);
+  color: var(--muted);
+}
+
+/* ---- header ---- */
+.cd-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 16px;
+  font-size: clamp(14px, 1.5vw, 22px);
+  font-weight: 700;
+  color: var(--gold);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: clamp(8px, 1.4vh, 16px);
+}
+.cd-count { color: var(--muted); font-weight: 600; }
+
+/* ---- lines ---- */
+.cd-lines {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+  gap: clamp(4px, .8vh, 10px);
+}
+.cd-line {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  gap: clamp(8px, 1.4vw, 22px);
+  padding: clamp(6px, 1vh, 12px) 0;
+  border-bottom: 1px solid var(--line);
+  font-size: clamp(16px, 2vw, 30px);
+}
+.cd-line-main { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+.cd-name { font-weight: 600; }
+.cd-serial, .cd-disc {
+  font-size: clamp(11px, 1.1vw, 16px);
+  color: var(--muted);
+}
+.cd-disc { color: var(--gold); font-weight: 700; }
+.cd-qty { color: var(--muted); }
+.cd-amt { font-weight: 700; }
+.cd-empty {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+  font-size: clamp(16px, 2vw, 28px);
+}
+
+/* ---- breakdown + total ---- */
+.cd-break {
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: clamp(14px, 1.5vw, 22px);
+  color: var(--muted);
+}
+.cd-break div { display: flex; justify-content: space-between; gap: 16px; }
+.cd-break b { color: var(--ink); font-weight: 700; }
+.cd-neg { color: var(--danger); }
+
+.cd-foot {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 16px;
+  border-top: 2px solid var(--line);
+  padding-top: clamp(10px, 1.6vh, 20px);
+}
+.cd-foot span { font-size: clamp(15px, 1.8vw, 26px); color: var(--muted); font-weight: 600; }
+.cd-foot strong {
+  font-size: clamp(34px, 6vw, 92px);
+  font-weight: 800;
+  letter-spacing: -.02em;
+}
+.cd-foot.cd-due strong { color: var(--gold); }
+.cd-foot.cd-clear strong { color: var(--ok); }
+
+/* ---- thanks ---- */
+.cd-tick {
+  width: clamp(64px, 8vw, 120px); height: clamp(64px, 8vw, 120px);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(74, 222, 128, .14);
+  color: var(--ok);
+  font-size: clamp(34px, 4.4vw, 68px);
+  font-weight: 800;
+}
+.cd-totals {
+  display: flex; gap: clamp(18px, 4vw, 56px);
+  margin-top: clamp(6px, 1.2vh, 14px);
+}
+.cd-totals div { display: flex; flex-direction: column; gap: 4px; }
+.cd-totals span { font-size: clamp(12px, 1.2vw, 18px); color: var(--muted); text-transform: uppercase; letter-spacing: .5px; font-weight: 700; }
+.cd-totals b { font-size: clamp(24px, 3.4vw, 52px); font-weight: 800; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .cd-tick { animation: cd-pop .34s cubic-bezier(.22, .61, .36, 1); }
+  @keyframes cd-pop { from { transform: scale(.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+}

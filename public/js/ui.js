@@ -189,3 +189,30 @@ export function emptyState({ icon = '·', title = 'Nothing here yet', body = '',
       ${action && actionId ? `<button class="btn btn-sm" id="${esc(actionId)}">${esc(action)}</button>` : ''}
     </div>`;
 }
+
+/* One CSV cell, safe in two ways at once: a leading formula character is
+   neutralised with an apostrophe so a spreadsheet treats the value as text
+   (a "name" of `=HYPERLINK(...)` must not execute in the bookkeeper's Excel),
+   and the value is always quoted with embedded quotes doubled so a comma,
+   quote or newline inside a name cannot shift the columns. Mirrors the
+   server's `csvCell_`. */
+export function csvCell(v) {
+  let t = String(v == null ? '' : v);
+  if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
+  return '"' + t.replace(/"/g, '""') + '"';
+}
+
+export function csvRows(rows) {
+  return (rows || []).map((r) => (r || []).map(csvCell).join(',')).join('\n');
+}
+
+export function downloadCsv(filename, text) {
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}

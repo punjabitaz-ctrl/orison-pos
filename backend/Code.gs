@@ -102,6 +102,9 @@ function dispatch_(action, session, payload, params) {
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
+    case '/api/inventory/reorder': return inventoryReorder_(session, params);
+    case '/api/admin/products/bulk-price': return adminBulkPrice_(session, payload);
+    case '/api/admin/stock-take': return adminStockTake_(session, payload);
     default:
       throw statusError_(404, 'Unknown action: ' + action);
   }
@@ -323,6 +326,7 @@ var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 var SUPPLIER_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'address', 'payment_terms', 'active', 'created_at'];
 var PO_HEADERS = ['id', 'store_id', 'supplier_id', 'po_number', 'order_date', 'expected_date', 'status', 'items_json', 'received_json', 'subtotal', 'discount_pct', 'tax_amount', 'total', 'note', 'created_by', 'created_at', 'updated_at'];
+var STOCKTAKE_HEADERS = ['id', 'store_id', 'session_id', 'product_id', 'product_name', 'sku', 'expected', 'counted', 'variance', 'unit_cost', 'value_delta', 'counted_by', 'note', 'created_at'];
 var TIMECLOCK_HEADERS = ['id', 'store_id', 'user_id', 'device_id', 'clock_in', 'clock_out', 'minutes', 'note', 'status'];
 var PRICE_HISTORY_HEADERS = ['id', 'store_id', 'product_id', 'product_name', 'field', 'old_value', 'new_value', 'source', 'po_id', 'changed_by', 'created_at'];
 
@@ -2473,6 +2477,369 @@ function inventoryAging_(session) {
 
   items.sort(function (a, b) { return b.ageDays - a.ageDays; });
   return { asOf: new Date().toISOString(), items: items, summary: summary };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Inventory tools (v1.15.0): reorder worksheet, bulk repricing,
+ *  stock-take. All manager/admin; every write runs inside the script
+ *  lock with its own audit trail.
+ * ------------------------------------------------------------------ */
+
+/* What to buy next. Velocity comes from actual sold units over a lookback
+ * window (default 30 days, store-local days), so "days of cover" answers how
+ * long the shelf lasts at the current rate. Suggested quantity tops the shelf
+ * back up to the target cover, never below the reorder point, and is only
+ * ever a suggestion — nothing is ordered here. */
+function inventoryReorder_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var days = parseInt(params && params.days, 10);
+  if (isNaN(days) || days < 1) days = 30;
+  days = Math.min(days, 365);
+  var targetDays = parseInt(params && params.cover, 10);
+  if (isNaN(targetDays) || targetDays < 1) targetDays = 14;
+  targetDays = Math.min(targetDays, 180);
+
+  var nowMs = Date.now();
+  var sinceIso = new Date(nowMs - days * 86400000).toISOString();
+
+  /* units sold per product over the window; refunds give units back so a
+     returned phone doesn't inflate the reorder. */
+  var sold = {};
+  var txRows = readRows_('Transactions', TX_HEADERS);
+  for (var t = 0; t < txRows.length; t++) {
+    var tx = txRows[t];
+    if (String(tx.status) !== 'COMPLETED') continue;
+    if (String(tx.created_at || '') < sinceIso) continue;
+    var kind = String(tx.kind || 'sale');
+    if (kind !== 'sale' && kind !== 'refund') continue;
+    var sign = kind === 'refund' ? -1 : 1;
+    var items = itobjs_(tx.items_json);
+    for (var i = 0; i < items.length; i++) {
+      var pid = String(items[i].productId || '');
+      if (!pid) continue;
+      sold[pid] = (sold[pid] || 0) + sign * (num_(items[i].quantity) || 1);
+    }
+  }
+
+  /* the most recent supplier and unit cost that actually delivered this item,
+     so the worksheet says who to call. */
+  var lastSupplier = {};
+  var supplierRows = readRows_('Suppliers', SUPPLIER_HEADERS);
+  var supplierById = poSupplierMap_(supplierRows);
+  var poRows = readRows_('PurchaseOrders', PO_HEADERS);
+  poRows.sort(function (a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
+  for (var po = 0; po < poRows.length; po++) {
+    var lines = itobjs_(poRows[po].items_json);
+    for (var li = 0; li < lines.length; li++) {
+      var lpid = String(lines[li].productId || '');
+      if (!lpid) continue;
+      var sup = supplierById[String(poRows[po].supplier_id)];
+      lastSupplier[lpid] = {
+        supplierId: String(poRows[po].supplier_id || ''),
+        supplierName: sup ? String(sup.name || '') : '',
+        poNumber: String(poRows[po].po_number || ''),
+        unitCost: num_(lines[li].unitCost),
+        orderedAt: String(poRows[po].created_at || ''),
+      };
+    }
+  }
+
+  var serialAvailable = {};
+  var serRows = readRows_('Serials', SERIAL_HEADERS);
+  for (var s = 0; s < serRows.length; s++) {
+    if (String(serRows[s].status) !== 'IN_STOCK') continue;
+    var spid = String(serRows[s].product_id);
+    serialAvailable[spid] = (serialAvailable[spid] || 0) + 1;
+  }
+
+  var items2 = [];
+  var totalCost = 0;
+  var prods = readRows_('Products', PRODUCT_HEADERS);
+  for (var p = 0; p < prods.length; p++) {
+    var prod = prods[p];
+    if (String(prod.item_type) === 'service' || String(prod.active) !== '1') continue;
+    var isSerialized = String(prod.is_serialized) === '1';
+    var onHand = isSerialized ? (serialAvailable[String(prod.id)] || 0) : num_(prod.on_hand);
+    var soldUnits = Math.max(0, sold[String(prod.id)] || 0);
+    var perDay = soldUnits / days;
+    var reorderPoint = prod.reorder_point === '' || prod.reorder_point == null ? 0 : num_(prod.reorder_point);
+    var cover = perDay > 0 ? onHand / perDay : null;
+
+    /* worth listing when the shelf is at/below its reorder point, empty with
+       demand behind it, or short of the target cover at the current rate. */
+    var wantForCover = perDay > 0 ? Math.ceil(perDay * targetDays) : 0;
+    var target = Math.max(wantForCover, reorderPoint);
+    var suggested = Math.max(0, target - onHand);
+    var flagged = (reorderPoint > 0 && onHand <= reorderPoint)
+      || (onHand <= 0 && soldUnits > 0)
+      || (perDay > 0 && cover !== null && cover < targetDays);
+    if (!flagged || suggested <= 0) continue;
+
+    var unitCost = num_(prod.cost_price);
+    var supplier = lastSupplier[String(prod.id)] || null;
+    if (supplier && supplier.unitCost > 0) unitCost = supplier.unitCost;
+    var lineCost = round2_(suggested * unitCost);
+    totalCost += lineCost;
+
+    items2.push({
+      id: String(prod.id),
+      name: String(prod.name || ''),
+      sku: String(prod.sku || ''),
+      category: String(prod.category || ''),
+      isSerialized: isSerialized,
+      onHand: onHand,
+      reorderPoint: reorderPoint,
+      soldUnits: soldUnits,
+      perDay: Math.round(perDay * 100) / 100,
+      daysOfCover: cover === null ? null : Math.round(cover * 10) / 10,
+      suggested: suggested,
+      unitCost: unitCost,
+      lineCost: lineCost,
+      supplierId: supplier ? supplier.supplierId : '',
+      supplierName: supplier ? supplier.supplierName : '',
+      lastPo: supplier ? supplier.poNumber : '',
+    });
+  }
+
+  /* emptiest shelves with the strongest demand first. */
+  items2.sort(function (a, b) {
+    var ca = a.daysOfCover === null ? 9999 : a.daysOfCover;
+    var cb = b.daysOfCover === null ? 9999 : b.daysOfCover;
+    if (ca !== cb) return ca - cb;
+    return b.suggested - a.suggested;
+  });
+
+  return {
+    asOf: new Date().toISOString(),
+    window: { days: days, coverDays: targetDays, since: sinceIso },
+    items: items2,
+    summary: { lines: items2.length, units: items2.reduce(function (n, x) { return n + x.suggested; }, 0), cost: round2_(totalCost) },
+  };
+}
+
+/* Bulk reprice. The client sends a RULE, not prices: the server reads each
+ * product under the lock and computes the new value itself, so a stale catalog
+ * on the terminal can never write a price nobody chose. `preview: true`
+ * returns the same list without writing a thing. Every applied change lands in
+ * PriceHistory with source 'bulk', exactly like a manual edit. */
+function bulkPriceTargets_(prodRows, payload) {
+  var ids = {};
+  var idList = payload && payload.productIds;
+  if (Object.prototype.toString.call(idList) === '[object Array]') {
+    for (var i = 0; i < idList.length; i++) ids[String(idList[i])] = true;
+  }
+  var category = String((payload && payload.category) || '').trim();
+  var out = [];
+  for (var p = 0; p < prodRows.length; p++) {
+    var prod = prodRows[p];
+    if (String(prod.active) !== '1') continue;
+    if (String(prod.item_type) === 'service' && !ids[String(prod.id)]) continue;
+    if (idList && idList.length) {
+      if (!ids[String(prod.id)]) continue;
+    } else if (category && category !== 'All') {
+      if (String(prod.category || '') !== category) continue;
+    }
+    out.push(prod);
+  }
+  return out;
+}
+
+function bulkPriceNext_(current, mode, value, roundTo) {
+  var next;
+  if (mode === 'set') next = value;
+  else if (mode === 'delta') next = current + value;
+  else next = current * (1 + value / 100);   /* 'pct' */
+  if (next < 0) next = 0;
+  next = round2_(next);
+  if (roundTo > 0) {
+    next = Math.round(next / roundTo) * roundTo;
+    next = round2_(next);
+  }
+  return next;
+}
+
+function adminBulkPrice_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  var field = String((payload && payload.field) || 'retail_price');
+  if (field !== 'retail_price' && field !== 'cost_price') {
+    throw statusError_(400, 'field must be retail_price or cost_price');
+  }
+  var mode = String((payload && payload.mode) || 'pct');
+  if (['pct', 'delta', 'set'].indexOf(mode) < 0) {
+    throw statusError_(400, 'mode must be pct, delta or set');
+  }
+  var value = num_(payload && payload.value);
+  if (mode === 'pct' && (value < -90 || value > 900)) {
+    throw statusError_(400, 'percentage change must be between -90 and 900');
+  }
+  if ((mode === 'set' || mode === 'delta') && (value < -1000000 || value > 1000000)) {
+    throw statusError_(400, 'value out of range');
+  }
+  if (mode === 'set' && value < 0) throw statusError_(400, 'a price cannot be negative');
+  var roundTo = num_(payload && payload.roundTo);
+  if (roundTo < 0 || roundTo > 1000) throw statusError_(400, 'roundTo out of range');
+  var preview = !!(payload && payload.preview);
+  var note = String((payload && payload.note) || '').slice(0, 120);
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var prodRows = readRows_('Products', PRODUCT_HEADERS);
+    var targets = bulkPriceTargets_(prodRows, payload);
+    if (!targets.length) throw statusError_(400, 'no products matched');
+    if (targets.length > 500) throw statusError_(400, 'too many products in one run (max 500)');
+
+    var changes = [];
+    var patches = {};
+    var now = new Date().toISOString();
+    for (var i = 0; i < targets.length; i++) {
+      var prod = targets[i];
+      var current = num_(prod[field]);
+      var next = bulkPriceNext_(current, mode, value, roundTo);
+      if (next === current) continue;
+      changes.push({
+        id: String(prod.id),
+        name: String(prod.name || ''),
+        sku: String(prod.sku || ''),
+        field: field,
+        oldValue: current,
+        newValue: next,
+      });
+      if (!preview) {
+        var patch = { updated_at: now };
+        patch[field] = next;
+        patches[String(prod.id)] = patch;
+      }
+    }
+
+    if (!preview && changes.length) {
+      applyPatches_('Products', PRODUCT_HEADERS, 'id', patches);
+      for (var c = 0; c < changes.length; c++) {
+        recordPriceChange_(
+          { id: changes[c].id, name: changes[c].name },
+          field, changes[c].oldValue, changes[c].newValue,
+          'bulk', null, String(session.uid || ''));
+      }
+    }
+
+    return {
+      preview: preview,
+      matched: targets.length,
+      changed: changes.length,
+      field: field,
+      mode: mode,
+      value: value,
+      note: note,
+      changes: changes,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* Stock-take: a counted shelf becomes the truth. Every line records what the
+ * book said, what was counted, the variance and what that variance is worth at
+ * cost, so a shrinkage number survives the recount. Serialized stock is
+ * counted by scanning serials, not by typing a number, so it is refused here.
+ * Read + write happen under the lock: the "expected" a variance is measured
+ * against must be the value that is actually being overwritten. */
+function adminStockTake_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  var counts = payload && payload.counts;
+  if (Object.prototype.toString.call(counts) !== '[object Array]' || !counts.length) {
+    throw statusError_(400, 'counts are required');
+  }
+  if (counts.length > 500) throw statusError_(400, 'too many lines in one count (max 500)');
+  var note = String((payload && payload.note) || '').slice(0, 200);
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var prodRows = readRows_('Products', PRODUCT_HEADERS);
+    var byId = {};
+    for (var i = 0; i < prodRows.length; i++) byId[String(prodRows[i].id)] = prodRows[i];
+
+    var sessionId = Utilities.getUuid();
+    var now = new Date().toISOString();
+    var patches = {};
+    var auditRows = [];
+    var lines = [];
+    var totalVariance = 0;
+    var valueDelta = 0;
+
+    for (var c = 0; c < counts.length; c++) {
+      var line = counts[c] || {};
+      var pid = String(line.productId || '');
+      var prod = byId[pid];
+      if (!prod) throw statusError_(404, 'Product not found: ' + pid);
+      if (String(prod.item_type) === 'service') {
+        throw statusError_(400, 'Services carry no stock to count: ' + String(prod.name || pid));
+      }
+      if (String(prod.is_serialized) === '1') {
+        throw statusError_(400, 'Serialized stock is counted by serial, not by quantity: ' + String(prod.name || pid));
+      }
+      var counted = num_(line.counted);
+      if (!(counted >= 0) || counted !== Math.floor(counted)) {
+        throw statusError_(400, 'counted must be a whole number >= 0');
+      }
+      var expected = num_(prod.on_hand);
+      var variance = counted - expected;
+      var unitCost = num_(prod.cost_price);
+      var delta = round2_(variance * unitCost);
+
+      totalVariance += variance;
+      valueDelta += delta;
+      lines.push({
+        productId: pid,
+        name: String(prod.name || ''),
+        sku: String(prod.sku || ''),
+        expected: expected,
+        counted: counted,
+        variance: variance,
+        unitCost: unitCost,
+        valueDelta: delta,
+      });
+
+      if (variance !== 0) {
+        patches[pid] = { on_hand: counted, updated_at: now };
+      }
+      auditRows.push({
+        id: Utilities.getUuid(),
+        store_id: getStore_().id,
+        session_id: sessionId,
+        product_id: pid,
+        product_name: String(prod.name || ''),
+        sku: String(prod.sku || ''),
+        expected: expected,
+        counted: counted,
+        variance: variance,
+        unit_cost: unitCost,
+        value_delta: delta,
+        counted_by: String(session.uid || ''),
+        note: note,
+        created_at: now,
+      });
+    }
+
+    if (Object.keys(patches).length) {
+      applyPatches_('Products', PRODUCT_HEADERS, 'id', patches);
+    }
+    appendRows_('StockTakes', STOCKTAKE_HEADERS, auditRows);
+
+    return {
+      sessionId: sessionId,
+      countedAt: now,
+      lines: lines,
+      summary: {
+        lines: lines.length,
+        adjusted: Object.keys(patches).length,
+        unitVariance: totalVariance,
+        valueDelta: round2_(valueDelta),
+      },
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /* ------------------------------------------------------------------ *

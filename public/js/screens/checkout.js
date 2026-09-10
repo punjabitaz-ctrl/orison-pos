@@ -7,6 +7,7 @@ import { fmt, esc, toast, beep } from '../ui.js';
 import { enqueueTransaction, pushImmediate } from '../sync.js';
 import { saleTotals, round2 } from '../money.js';
 import { api } from '../api.js';
+import { publishCheckout, publishThanks, publishIdle } from '../customer-display.js';
 
 const TENDERS = [
   { id: 'cash', label: 'Cash' },
@@ -104,6 +105,25 @@ export const screen = {
       const change = amount >= rem && rem > 0 ? round2(amount - rem) : 0;
       const t = sale.totals;
       const lineTotal = (i) => saleTotals([{ unitPrice: i.unitPrice, quantity: i.quantity, discountPct: i.discountPct, taxable: i.taxable }], 0, 0).total;
+
+      /* mirror the shopper-facing figures only: no cost, no margin, no
+         customer record, nothing about the till. */
+      publishCheckout({
+        lines: sale.items.map((i) => ({
+          name: i.name,
+          qty: i.quantity,
+          amount: lineTotal(i),
+          discountPct: i.discountPct || 0,
+          serial: i.serialNumber || '',
+        })),
+        subtotal: t.subtotal,
+        discount: t.discount,
+        tax: t.tax,
+        total: sale.total,
+        due: rem,
+        tendered: tenders.reduce((s, x) => s + x.amount, 0),
+        store: (state.store && state.store.name) || '',
+      });
 
       root.innerHTML = `
         <header class="scr-head">
@@ -318,6 +338,12 @@ export const screen = {
       // and catch up on the online event / periodic window.
       pushImmediate().catch(() => {});
 
+      publishThanks({
+        total: sale.total,
+        change: round2(tenders.reduce((s, x) => s + x.amount, 0) - sale.total),
+        store: (state.store && state.store.name) || '',
+      });
+
       // Clear cart for the next sale.
       state.cart = new Map();
       state.cartVersion++;
@@ -417,6 +443,9 @@ export const screen = {
 
     render();
 
-    return () => root.classList.remove('screen-checkout');
+    return () => {
+      root.classList.remove('screen-checkout');
+      if (!state.cart.size) publishIdle((state.store && state.store.name) || '');
+    };
   },
 };

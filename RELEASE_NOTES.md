@@ -7,7 +7,55 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.14.0 — screen refresh, dashboard context & staff tools
+## Latest: v1.15.0 — customer display & inventory tools
+
+**2026-09-10.** The shopper gets a screen of their own, and the stockroom gets
+the four tools it was missing.
+
+**What shipped**
+
+- **Customer display** — a second-screen mirror of the cart, the checkout
+  breakdown and a thank-you with change due. Driven over a same-origin
+  `BroadcastChannel`, so it works with the shop offline and never shows cost,
+  margin, customer records or anything about the till. Settings → *Customer
+  display* turns it on and opens the window, placing it on a second screen
+  where the browser allows.
+- **Bulk price update** — reprice a category or the whole catalog by rule
+  (percent / amount / set, with optional rounding). Preview first; the server
+  recomputes every price itself and records each change in price history.
+- **Stock take** — scan or search, enter what is on the shelf, commit. Each
+  line records expected, counted, variance and what that variance is worth at
+  cost, into a new `StockTakes` audit tab. One bad line rolls back the count.
+- **Barcode labels** — printable Code 128 shelf labels with name and price,
+  encoded in-app (no third-party script), by UPC where an item has one.
+- **Reorder worksheet** — what to buy next from real sales velocity: units
+  sold, demand per day, days of cover, a suggested quantity, the last supplier
+  who delivered it and the estimated cost. Print or export to CSV.
+- **Security fixes** — the client CSV export now neutralises leading formula
+  characters (closing a documented gap), the customer statement CSV is quoted
+  so a comma in a name can no longer shift its columns, and the service worker
+  no longer falls an offline customer display back to the register app.
+
+**Validation:** backend-sim **PASS 413 / FAIL 0** · client units **PASS 228 / FAIL 0** ·
+pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean on every touched client file.
+Verified in a real browser at 375px and 1280px: labels render and encode, the
+stock-take sheet totals its variance, and a second tab mirrors the cart live.
+
+### Deploying
+
+1. **Backend redeploy required** — `backend/Code.gs` gained
+   `/api/inventory/reorder`, `/api/admin/products/bulk-price` and
+   `/api/admin/stock-take`. Paste it into Apps Script and deploy a new Web App
+   version; the `StockTakes` tab is created on first count.
+2. Push `public/` to Cloudflare Pages as usual (no build step). `display.html`
+   ships alongside `index.html` and is precached.
+3. On each terminal that needs it: Settings → **Customer display** → *Mirror
+   this terminal* → **Open display window**, then drag to the customer-facing
+   screen and full-screen it. Allow pop-ups for the site once.
+
+---
+
+## v1.14.0 — screen refresh, dashboard context & staff tools
 
 **2026-09-10.** The dashboard stops reporting bare figures and starts saying
 whether today is good; the store gets a time clock; and managers get a real

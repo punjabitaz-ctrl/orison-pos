@@ -6,7 +6,7 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
-import { fmt, esc, toast, beep } from '../ui.js';
+import { fmt, esc, toast, beep, csvCell, downloadCsv } from '../ui.js';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -225,7 +225,7 @@ function barChart(days) {
 }
 
 function exportCsv(data, range) {
-  const esc = (s) => `"${String(s == null ? '' : s).replace(/"/g, '""')}"`;
+  const esc = csvCell;
   const money = (v) => Number(v || 0).toFixed(2);
   const s = data.summary;
   const lines = [];
@@ -264,14 +264,7 @@ function exportCsv(data, range) {
   pushList('TOP_CUSTOMERS', ['name', 'spent', 'tx_count', 'balance'], data.topCustomers,
     (r) => [r.name, money(r.spent), String(r.count), r.balance == null ? '' : money(r.balance)]);
 
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `orison-report-${range.from}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  downloadCsv(`orison-report-${range.from}.csv`, lines.join('\n'));
   toast(`Report CSV ${data.byDay.length} days`, 'ok');
   beep('ok');
 }

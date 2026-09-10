@@ -22,7 +22,11 @@ public/js/db.js          IndexedDB layer
 public/js/sync.js        Outbox push/pull + VOIDED handling
 public/js/money.js       Money math
 public/js/stats.js       Shared aggregation (day totals, trends, hourly buckets, top sellers, hours)
-public/js/screens/*.js   login register checkout history customers reports purchases inventory settings dashboard alerts staff
+public/js/labels.js      Code 128-B encoder + shelf-label markup
+public/js/print-sheet.js Full-page printing (labels, worksheets) in its own window
+public/js/customer-display.js  Register side of the second-screen mirror
+public/display.html + public/js/display.js + public/css/display.css   The customer-facing display
+public/js/screens/*.js   login register checkout history customers reports purchases inventory inventory-tools settings dashboard alerts staff
 public/js/receipt-send.js  Receipt PDF/share
 public/css/style.css     UI + @media print receipt mode
 public/sw.js             Service worker (VERSION must be bumped every release)

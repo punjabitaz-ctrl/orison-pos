@@ -10,6 +10,7 @@ import {
 } from '../ui.js';
 import { SYNC_EVENT, getSyncState } from '../sync.js';
 import { saleTotals } from '../money.js';
+import { publishCart } from '../customer-display.js';
 
 function catColor(c) {
   const colors = ['#d97706', '#0ea5e9', '#059669', '#7c3aed', '#e11d48', '#0891b2', '#65a30d', '#c2410c', '#4f46e5', '#0d9488'];
@@ -254,6 +255,18 @@ export const screen = {
 
     function renderCart() {
       const totals = cartTotals();
+      publishCart({
+        lines: [...state.cart.values()].map((line) => ({
+          name: line.product.name,
+          qty: line.qty || 1,
+          amount: lineDiscPrice(line),
+          discountPct: line.discountPct || 0,
+          serial: (line.serials || []).join(', '),
+        })),
+        total: totals.total,
+        count: totals.count,
+        store: (state.store && state.store.name) || '',
+      });
       const onDesktop = document.getElementById('regCartPanel')
         && document.documentElement.dataset.viewport === 'desktop';
       const markup = `

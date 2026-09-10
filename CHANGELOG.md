@@ -5,6 +5,70 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] — 2026-09-10
+
+Customer display and the inventory tools that keep a shelf honest: a
+second-screen mirror for the shopper, bulk repricing by rule, a stock-take
+that records its own variance, printable barcode labels, and a reorder
+worksheet driven by real sales velocity.
+
+### Added
+
+- **Customer display** — `display.html` renders a shopper-facing mirror of the
+  cart, the checkout breakdown and a thank-you with change due, driven by the
+  register over a same-origin `BroadcastChannel` (`public/js/customer-display.js`).
+  No network hop, so the mirror keeps working with the shop offline; a
+  last-frame copy in `localStorage` paints a display opened mid-sale
+  immediately and doubles as the transport where `BroadcastChannel` is
+  missing. Settings → **Customer display** turns mirroring on per terminal and
+  opens the window — on a **second screen** where the Window Management API is
+  granted, otherwise as an ordinary window with an explanation.
+- **Bulk price update** — `/api/admin/products/bulk-price` takes a *rule*
+  (scope: all or one category, or explicit ids; field: retail or cost; mode:
+  percentage / amount / set; optional rounding step) and recomputes each price
+  server-side under the script lock, so a stale catalog on a terminal can never
+  dictate a price. `preview: true` returns the same change list without
+  writing. Every applied change lands in `PriceHistory` with source `bulk`.
+- **Stock take** — `/api/admin/stock-take` takes a count sheet, compares each
+  line to the on-hand it is about to overwrite (read and write inside one
+  lock), writes the counted figure and records expected / counted / variance /
+  value-at-cost to a new **`StockTakes`** sheet. Serialized stock and services
+  are refused — serials are counted by scanning, not by typing a number — and
+  a single bad line rolls the whole count back. The UI counts by scanner
+  (scan-then-Enter increments) or by search.
+- **Barcode labels** — `public/js/labels.js` implements Code 128-B (no
+  third-party script; the CSP forbids one) and renders labels as inline SVG
+  with name, code and price. Items are labelled by UPC where they have one,
+  otherwise by SKU. 25 unit checks in `tests/client-labels.mjs` verify the
+  pattern table symbol by symbol, the modulo-103 check symbol, bar/space
+  alternation, escaping and the per-run label cap.
+- **Reorder worksheet** — `/api/inventory/reorder` computes units sold over a
+  window (refunds give units back), demand per day, days of cover, and a
+  suggested quantity that tops the shelf up to a target cover but never below
+  the reorder point, priced at the last cost that actually delivered and
+  tagged with the supplier and PO that did. Printable, and exportable as CSV.
+- **Products → Tools** — one menu for reorder, stock take, bulk pricing,
+  labels and aging, instead of five buttons fighting for the header.
+- **`public/js/print-sheet.js`** — full-page printing for label sheets and
+  worksheets in their own window, so the app's 80mm receipt page geometry is
+  left untouched and the register never blinks to hidden mid-print.
+
+### Fixed
+
+- **Security — client CSV export could carry a formula.** `reports.js` quoted
+  its cells but did not neutralise a leading `= + - @`, so an item or customer
+  name could execute when the export was opened in a spreadsheet. New shared
+  `csvCell()` / `csvRows()` / `downloadCsv()` in `ui.js` prefix formula
+  characters *and* always quote; reports and customer statements now use them.
+  This closes acknowledged weakness #4 in `SECURITY.md`.
+- **Customer statement CSV could shift its own columns.** `statementCsv()`
+  guarded formulas but never quoted, so a comma in a customer name, note or
+  description broke every column to its right. Now quoted and escaped.
+- **Service worker served the register to the customer display.** Every
+  navigation fell back to `./index.html`, so an offline `display.html` would
+  have shown the till-facing app. Navigations now fall back to their own
+  document.
+
 ## [1.14.0] — 2026-09-10
 
 Screen refresh, an enhanced dashboard, and the staff tools that were missing:
