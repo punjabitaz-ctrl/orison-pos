@@ -7,7 +7,37 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.21.0 — no sale is lost
+## Latest: v1.22.0 — receipt numbers and the audit log
+
+**2026-09-11.** Second of the operational-readiness program.
+
+- **Receipts are numbered `Orison-S000001`**, gap-free. The counter is advanced
+  inside the same lock that writes the sale, so two terminals cannot take the
+  same number.
+- **Allocated at sync, not on the device.** An offline terminal cannot know the
+  next number, so an offline receipt prints its client id and says *"Receipt
+  number pending sync"*, then repaints when the push lands. That is what keeps
+  the series gap-free, and it is stated on the receipt rather than hidden.
+- **Only sales and refunds are numbered.** Paid-outs and cash pick-ups are not
+  customer documents and would put holes in the series; a sale blocked by
+  first-committed-wins never burns a number either.
+- **An append-only audit log**, admin only: who did what, when, in what role.
+  No update or delete path exists in the API — a log that can be edited is not
+  evidence. New Audit screen with filters and CSV export.
+
+**Validation:** backend-sim **PASS 480 / FAIL 0** (18 new) · client units
+**PASS 350 / FAIL 0**.
+
+### Deploying
+
+**Backend redeploy required** — new schema column, new sheet and a new endpoint.
+Paste `backend/Code.gs` into Apps Script and deploy a new version, then push
+`public/`. The `receipt_no` column and `AuditLog` tab are created automatically;
+existing transactions keep an empty receipt number.
+
+---
+
+## v1.21.0 — no sale is lost
 
 **2026-09-11.** First of the operational-readiness program, and the owner's
 first priority.

@@ -20,10 +20,11 @@ import { screen as dashboard } from './screens/dashboard.js';
 import { screen as alerts } from './screens/alerts.js';
 import { screen as staff } from './screens/staff.js';
 import { screen as menu } from './screens/menu.js';
+import { screen as audit } from './screens/audit.js';
 import { primaryTabs, menuTiles, isRestricted } from './nav.js';
 import { navButton, appHeaderHtml } from './components.js';
 
-const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff, menu };
+const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff, menu, audit };
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

@@ -341,8 +341,14 @@ export const screen = {
       });
 
       // Ship the sale immediately when connected; offline terminals queue it
-      // and catch up on the online event / periodic window.
-      pushImmediate().catch(() => {});
+      // and catch up on the online event / periodic window. When the push lands
+      // while the receipt is still on screen, repaint it with the real number.
+      pushImmediate()
+        .then((res) => {
+          const hit = ((res && res.results) || []).find((r) => r.clientTxId === clientTxId);
+          if (hit && hit.receiptNo) showReceipt(clientTxId, hit.receiptNo);
+        })
+        .catch(() => {});
 
       publishThanks({
         total: sale.total,
@@ -356,10 +362,13 @@ export const screen = {
       state.cartVersion++;
       await clearSaved().catch(() => {});
 
-      showReceipt(clientTxId);
+      showReceipt(clientTxId, '');
     }
 
-    function showReceipt(clientTxId) {
+    /* The number is allocated server-side at sync, so an offline sale prints
+       its client id and says so. Once the push lands, the receipt is repainted
+       with the real number. */
+    function showReceipt(clientTxId, receiptNo) {
       const cashier = `${state.user.firstName} ${(state.user.lastName || '').trim()}`.trim();
       root.innerHTML = `
         <div class="receipt-wrap">
@@ -371,7 +380,7 @@ export const screen = {
           <div id="printRoot" class="print-root"></div>
           <div id="receiptSend" class="receipt-send-host"></div>
         </div>`;
-      renderReceiptDoc(cashier, clientTxId);
+      renderReceiptDoc(cashier, clientTxId, receiptNo);
 
       import('../receipt-send.js').then(({ mountSendButtons }) => {
         const sendHost = root.querySelector('#receiptSend');
@@ -389,7 +398,7 @@ export const screen = {
         requestAnimationFrame(() => { window.print(); setTimeout(() => document.body.classList.remove('printing'), 500); });
       });
       root.querySelector('#shareBtn').addEventListener('click', async () => {
-        const text = receiptText(cashier, clientTxId);
+        const text = receiptText(cashier, clientTxId, receiptNo);
         if (navigator.share) {
           try { await navigator.share({ title: 'Orison POS — Receipt', text }); } catch (_) {}
         } else if (navigator.clipboard) {
@@ -399,7 +408,7 @@ export const screen = {
       });
     }
 
-    function receiptHtml(cashier, clientTxId) {
+    function receiptHtml(cashier, clientTxId, receiptNo) {
       const now = new Date();
       const dateStr = now.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
       const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
@@ -428,19 +437,20 @@ export const screen = {
           <div class="r-line"><span>Change</span><b>${fmt(round2(tenders.reduce((s,t)=>s+t.amount,0)-sale.total))}</b></div>
           <div class="r-rule"></div>
           <p class="r-mid">Thank you for shopping at Orison!</p>
-          <p class="r-mid small"># ${clientTxId}</p>
+          <p class="r-mid small">${receiptNo ? esc(receiptNo) : '# ' + esc(clientTxId)}</p>
+          ${receiptNo ? '' : '<p class="r-mid small">Receipt number pending sync</p>'}
         </div>`;
     }
 
-    function receiptText(cashier, clientTxId) {
+    function receiptText(cashier, clientTxId, receiptNo) {
       const el = document.createElement('div');
-      el.innerHTML = receiptHtml(cashier, clientTxId);
+      el.innerHTML = receiptHtml(cashier, clientTxId, receiptNo);
       return (el.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
     }
 
-    function renderReceiptDoc(cashier, clientTxId) {
+    function renderReceiptDoc(cashier, clientTxId, receiptNo) {
       const dst = root.querySelector('#printRoot');
-      dst.innerHTML = receiptHtml(cashier, clientTxId);
+      dst.innerHTML = receiptHtml(cashier, clientTxId, receiptNo);
     }
 
     // Grab store info for the receipt.

@@ -5,6 +5,44 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] — 2026-09-11
+
+Receipt numbers and an audit log — the two things that make the ledger
+answerable after the fact.
+
+### Added
+
+- **Gap-free receipt numbers, `Orison-S000001`.** The counter lives in `Meta`
+  and is read and advanced **inside the same script lock that appends the
+  transaction**, so two terminals syncing at once cannot take the same number.
+  The prefix is a store setting (`receipt_prefix`), defaulting to `Orison-S`.
+- **Numbers are allocated at sync, not on the device.** An offline terminal
+  cannot know what the next one is, so a receipt printed before sync shows its
+  client id and says **"Receipt number pending sync"**; when the push lands the
+  receipt repaints with the real number. This is what makes the series gap-free,
+  and it is visible rather than hidden.
+- **Only customer documents are numbered** — a sale or a refund. Internal cash
+  movements are not documents and would put holes in the series. A sale blocked
+  by first-committed-wins never burns a number.
+- **`AuditLog` sheet and `/api/audit`** — append-only, **admin only**, newest
+  first, capped at 100 per page with a cursor, filterable by actor, action and
+  date. There is no update or delete path in the API by design: a log that can
+  be edited is not evidence.
+- **Audit screen** on the launcher, admin only, with per-action filters and a
+  CSV export.
+- 18 sim checks covering the series, batch allocation, the VOIDED case, role
+  gating and the log's contents.
+
+### Changed
+
+- `receipt_no` added to the Transactions schema and returned by
+  `/api/transactions`; History shows the receipt number in place of the client
+  id, and a shared receipt is named after it.
+- `push()` returns its per-row results so the register can repaint the receipt,
+  and stores `receiptNo` on the local record.
+- Audit entries are written on store-settings changes, bulk repricing, stock
+  takes, staff changes and terminal revocations.
+
 ## [1.21.0] — 2026-09-11
 
 First release of the operational-readiness program

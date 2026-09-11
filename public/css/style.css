@@ -1421,3 +1421,6 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; le
   background: var(--card);
   border-top: 1px solid var(--line);
 }
+
+.i-audit { background: #475569; }
+.mono-no { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 12px; letter-spacing: .02em; }

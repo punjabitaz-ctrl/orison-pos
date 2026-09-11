@@ -43,6 +43,7 @@ export const screen = {
           customer: t.customer,
           items: t.items.map((i) => ({ productId: i.productId, name: i.name, quantity: i.quantity, unitPrice: i.unitPrice, discountPct: i.discountPct, serialNumber: i.serialNumber, unitCost: i.unitCost })),
           clientTxId: t.clientTxId,
+          receiptNo: t.receiptNo || '',
         }));
         loaded = true;
       } catch (_) {
@@ -116,7 +117,7 @@ export const screen = {
           ${t.originalClientTx ? `<p class="muted">refund of ${esc(t.originalClientTx)}</p>` : ''}
           ${t.counterparty ? `<p class="muted">${esc(t.counterparty)}</p>` : ''}
           ${t.customer ? `<p class="muted">Customer: ${esc(t.customer)}</p>` : ''}
-          ${t.clientTxId ? `<p class="muted">${esc(t.clientTxId)}</p>` : ''}
+          ${t.receiptNo ? `<p class="muted mono-no">${esc(t.receiptNo)}</p>` : (t.clientTxId ? `<p class="muted">${esc(t.clientTxId)}</p>` : '')}
           <div class="tx-items">
             ${(t.items || []).map((i) => `
               <div class="tx-item-row">
@@ -154,7 +155,7 @@ export const screen = {
           mountSendButtons(host, {
             lines: txReceiptLines(t),
             title: 'Orison POS — Receipt',
-            filename: 'orison-receipt-' + (t.clientTxId || t.id),
+            filename: 'orison-receipt-' + (t.receiptNo || t.clientTxId || t.id),
           });
         });
       }
@@ -183,7 +184,7 @@ export const screen = {
         <div class="tx-detail refund-modal">
           <button class="icon-btn abs-close" data-x>✕</button>
           <h3>Refund</h3>
-          <p class="muted">${esc(humanDate(t.createdAt))} · ${esc(t.clientTxId || t.id)}</p>
+          <p class="muted">${esc(humanDate(t.createdAt))} · ${esc(t.receiptNo || t.clientTxId || t.id)}</p>
           <div class="refund-lines">
             ${groups.map((g, gi) => `
               ${g.serialized ? `

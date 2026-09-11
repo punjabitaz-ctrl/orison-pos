@@ -6,6 +6,7 @@
    destination is one line here rather than two buttons in two navs. */
 
 const MANAGER = ['admin', 'manager'];
+const ADMIN = ['admin'];
 
 export const DESTINATIONS = [
   { id: 'refund', label: 'Refund', screen: 'history', roles: MANAGER },
@@ -19,6 +20,7 @@ export const DESTINATIONS = [
   { id: 'purchases', label: 'Purchases', screen: 'purchases', roles: MANAGER },
   { id: 'reports', label: 'Reports', screen: 'reports', roles: MANAGER },
   { id: 'dashboard', label: 'Dashboard', screen: 'dashboard', roles: null },
+  { id: 'audit', label: 'Audit Log', screen: 'audit', roles: ADMIN },
   { id: 'settings', label: 'Settings', screen: 'settings', roles: null },
 ];
 

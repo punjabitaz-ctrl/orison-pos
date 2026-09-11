@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.21.0** — no sale is lost (`2026-09-11`) |
-| Validation bar | `backend-sim` **PASS 462 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.22.0** — receipt numbers + audit log (`2026-09-11`) |
+| Validation bar | `backend-sim` **PASS 480 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,14 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.22.0** Receipt numbers + audit log. Gap-free `Orison-S000001` series:
+  counter in `Meta`, advanced **inside the same lock that appends the
+  transaction**, allocated **at sync** (an offline terminal cannot know the next
+  number, so its receipt says "pending sync" and repaints when the push lands).
+  Only sales and refunds are numbered — internal cash movements and VOIDED rows
+  never take one, which is what keeps the series gap-free. New **`AuditLog`**
+  sheet + `/api/audit` (**admin only**, append-only, 100/page with cursor) and an
+  Audit screen with filters and CSV export. 18 new sim checks.
 - **v1.21.0** No sale is lost — first of the operational-readiness program.
   New **`public/js/cart.js`** owns the cart: availability is **derived**
   (`serverOnHand − quantityInCart`) instead of mutating the catalog mirror, and

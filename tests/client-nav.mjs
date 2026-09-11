@@ -39,8 +39,12 @@ test('menuTiles()', async (t) => {
       assert.ok(ids.includes(id), `manager is missing ${id}`);
     }
   });
-  await t.test('an admin sees the same set as a manager', () => {
-    assert.deepEqual(menuTiles('admin').map((x) => x.id), menuTiles('manager').map((x) => x.id));
+  await t.test('an admin sees everything a manager sees, plus the admin-only ones', () => {
+    const admin = menuTiles('admin').map((x) => x.id);
+    const manager = menuTiles('manager').map((x) => x.id);
+    for (const id of manager) assert.ok(admin.includes(id), `admin is missing ${id}`);
+    assert.ok(admin.includes('audit'), 'the audit log is an admin destination');
+    assert.ok(!manager.includes('audit'), 'a manager must not see the audit log');
   });
   await t.test('a cashier sees only what their role may open', () => {
     assert.deepEqual(menuTiles('cashier').map((x) => x.id), ['staff', 'dashboard', 'settings']);

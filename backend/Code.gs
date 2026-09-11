@@ -102,6 +102,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
+    case '/api/audit':           return auditLog_(session, params);
     case '/api/inventory/reorder': return inventoryReorder_(session, params);
     case '/api/admin/products/bulk-price': return adminBulkPrice_(session, payload);
     case '/api/admin/stock-take': return adminStockTake_(session, payload);
@@ -328,12 +329,13 @@ var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pi
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
-var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id'];
+var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 var SUPPLIER_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'address', 'payment_terms', 'active', 'created_at'];
 var PO_HEADERS = ['id', 'store_id', 'supplier_id', 'po_number', 'order_date', 'expected_date', 'status', 'items_json', 'received_json', 'subtotal', 'discount_pct', 'tax_amount', 'total', 'note', 'created_by', 'created_at', 'updated_at'];
+var AUDIT_HEADERS = ['id', 'store_id', 'at', 'user_id', 'user_name', 'role', 'action', 'target_type', 'target_id', 'summary', 'device_id'];
 var STOCKTAKE_HEADERS = ['id', 'store_id', 'session_id', 'product_id', 'product_name', 'sku', 'expected', 'counted', 'variance', 'unit_cost', 'value_delta', 'counted_by', 'note', 'created_at'];
 var TIMECLOCK_HEADERS = ['id', 'store_id', 'user_id', 'device_id', 'clock_in', 'clock_out', 'minutes', 'note', 'status'];
 var PRICE_HISTORY_HEADERS = ['id', 'store_id', 'product_id', 'product_name', 'field', 'old_value', 'new_value', 'source', 'po_id', 'changed_by', 'created_at'];
@@ -595,6 +597,146 @@ function storeDenoms_(k) {
   try { saved = normaliseDenoms_(JSON.parse(String(k.store_denoms || 'null'))); } catch (_) { saved = null; }
   if (saved) return saved;
   return currencyDenoms_(isCurrencyCode_(k.store_currency) ? k.store_currency : DEFAULT_CURRENCY);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Receipt numbers and the audit log
+ * ------------------------------------------------------------------ */
+
+/* A gap-free document series. The counter lives in Meta and is only ever read
+ * and advanced inside the script lock that also appends the transaction, so two
+ * terminals syncing at once cannot take the same number.
+ *
+ * Numbers are allocated at SYNC, not on the device: an offline terminal cannot
+ * know what the next one is. A receipt printed before sync therefore shows its
+ * client id and says the number is pending - which is the honest behaviour, and
+ * is why the series has no gaps.
+ *
+ * Only customer documents are numbered (a sale or a refund). Internal cash
+ * movements are not documents and would put holes in the series. */
+var RECEIPT_PREFIX_DEFAULT = 'Orison-S';
+var RECEIPT_PAD = 6;
+
+function receiptPrefix_() {
+  var k = kv_();
+  return String(k.receipt_prefix == null || k.receipt_prefix === '' ? RECEIPT_PREFIX_DEFAULT : k.receipt_prefix);
+}
+
+function formatReceiptNo_(n) {
+  var digits = String(Math.max(0, Math.floor(num_(n))));
+  while (digits.length < RECEIPT_PAD) digits = '0' + digits;
+  return receiptPrefix_() + digits;
+}
+
+function isDocumentKind_(kind) {
+  var k = String(kind || 'sale');
+  return k === 'sale' || k === 'refund';
+}
+
+/* Reserve `count` numbers in one read/write. Caller must already hold the lock. */
+function reserveReceiptNumbers_(count) {
+  if (!(count > 0)) return [];
+  var k = kv_();
+  var last = num_(k.receipt_seq);
+  if (!(last >= 0)) last = 0;
+  var out = [];
+  for (var i = 1; i <= count; i++) out.push(formatReceiptNo_(last + i));
+  setKv_('receipt_seq', last + count);
+  return out;
+}
+
+/* Stamp every customer document in this batch that does not already carry a
+ * number. Rewrites (a VOIDED row retried and now accepted) are included. */
+function assignReceiptNumbers_(newTxRows, txRewrites) {
+  var pending = [];
+  var i;
+  for (i = 0; i < newTxRows.length; i++) {
+    var r = newTxRows[i];
+    if (String(r.status) === 'COMPLETED' && isDocumentKind_(r.kind) && !String(r.receipt_no || '')) pending.push(r);
+  }
+  var ids = Object.keys(txRewrites || {});
+  for (i = 0; i < ids.length; i++) {
+    var w = txRewrites[ids[i]];
+    if (String(w.status) === 'COMPLETED' && isDocumentKind_(w.kind) && !String(w.receipt_no || '')) pending.push(w);
+  }
+  if (!pending.length) return;
+  var numbers = reserveReceiptNumbers_(pending.length);
+  for (i = 0; i < pending.length; i++) pending[i].receipt_no = numbers[i];
+}
+
+/* Append-only record of who did what. There is no update or delete path in the
+ * API by design: a log that can be edited is not evidence. Logging must never
+ * fail the action it describes, so every call is wrapped. */
+function logAudit_(session, action, targetType, targetId, summary, deviceId) {
+  try {
+    var uid = session ? String(session.uid || '') : '';
+    var name = '';
+    if (uid) {
+      var users = readRows_('Users', USER_HEADERS);
+      for (var i = 0; i < users.length; i++) {
+        if (String(users[i].id) === uid) {
+          name = (String(users[i].first_name || '') + ' ' + String(users[i].last_name || '')).trim();
+          break;
+        }
+      }
+    }
+    appendRows_('AuditLog', AUDIT_HEADERS, [{
+      id: Utilities.getUuid(),
+      store_id: getStore_().id,
+      at: new Date().toISOString(),
+      user_id: uid,
+      user_name: name,
+      role: session ? String(session.role || '') : '',
+      action: String(action || ''),
+      target_type: String(targetType || ''),
+      target_id: String(targetId || ''),
+      summary: String(summary == null ? '' : summary).slice(0, 500),
+      device_id: String(deviceId || ''),
+    }]);
+  } catch (_) { /* never fail the action being logged */ }
+}
+
+function auditLog_(session, params) {
+  requireRole_(session, ['admin']);
+  var limit = parseInt(params && params.limit, 10);
+  if (isNaN(limit) || limit < 1) limit = 100;
+  limit = Math.min(limit, 100);
+  var actor = String((params && params.userId) || '');
+  var action = String((params && params.action) || '');
+  var from = String((params && params.from) || '');
+  var to = String((params && params.to) || '');
+  var cursor = String((params && params.cursor) || '');
+
+  var rows = readRows_('AuditLog', AUDIT_HEADERS).filter(function (r) {
+    if (actor && String(r.user_id) !== actor) return false;
+    if (action && String(r.action) !== action) return false;
+    if (from && String(r.at || '') < from) return false;
+    if (to && String(r.at || '') > to) return false;
+    return true;
+  });
+  rows.sort(function (a, b) { return String(b.at).localeCompare(String(a.at)); });
+  if (cursor) rows = rows.filter(function (r) { return String(r.at) < cursor; });
+
+  var page = rows.slice(0, limit);
+  var entries = page.map(function (r) {
+    return {
+      id: String(r.id || ''),
+      at: String(r.at || ''),
+      userId: String(r.user_id || ''),
+      userName: String(r.user_name || ''),
+      role: String(r.role || ''),
+      action: String(r.action || ''),
+      targetType: String(r.target_type || ''),
+      targetId: String(r.target_id || ''),
+      summary: String(r.summary || ''),
+      deviceId: String(r.device_id || ''),
+    };
+  });
+  return {
+    entries: entries,
+    nextCursor: rows.length > limit ? String(page[page.length - 1].at) : null,
+    total: rows.length,
+  };
 }
 
 /* ------------------------------------------------------------------ *
@@ -1465,6 +1607,8 @@ function syncPush_(session, payload) {
       if (!reuseId && !hasErrors) batchSeen[clientKey] = rowObj;
     }
 
+    assignReceiptNumbers_(newTxRows, txRewrites);
+    backfillReceiptResults_(results, newTxRows, txRewrites);
     appendRows_('Transactions', TX_HEADERS, newTxRows);
     if (Object.keys(txRewrites).length) applyPatches_('Transactions', TX_HEADERS, 'id', txRewrites);
     if (newConflictRows.length) appendRows_('Conflicts', CONFLICT_HEADERS, newConflictRows);
@@ -1586,6 +1730,26 @@ function dateOnlyToIso_(dateStr, tzMin, endOfDay) {
   if (!m) return String(dateStr);
   var base = Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
   return new Date((endOfDay ? base + 86399999 : base) - (tzMin || 0) * 60000).toISOString();
+}
+
+/* The numbers are allocated after the push loop has already built its results,
+   so copy them back onto the matching entries - a terminal that syncs online
+   then knows its receipt number without a second round trip. */
+function backfillReceiptResults_(results, newTxRows, txRewrites) {
+  var byClient = {};
+  var i;
+  for (i = 0; i < newTxRows.length; i++) {
+    if (newTxRows[i].receipt_no) byClient[String(newTxRows[i].client_tx_id)] = String(newTxRows[i].receipt_no);
+  }
+  var ids = Object.keys(txRewrites || {});
+  for (i = 0; i < ids.length; i++) {
+    var w = txRewrites[ids[i]];
+    if (w && w.receipt_no) byClient[String(w.client_tx_id)] = String(w.receipt_no);
+  }
+  for (i = 0; i < results.length; i++) {
+    var hit = byClient[String(results[i].clientTxId)];
+    if (hit) results[i].receiptNo = hit;
+  }
 }
 
 function pushResult_(results, tx, outcome) {
@@ -1952,6 +2116,7 @@ function transactions_(session, params) {
       user_id: String(t.user_id),
       deviceId: String(t.device_id),
       clientTxId: String(t.client_tx_id || ''),
+      receiptNo: String(t.receipt_no || ''),
       kind: kindName,
       originalClientTx: String(t.original_client_tx || ''),
       counterparty: String(t.counterparty || ''),
@@ -2868,6 +3033,8 @@ function adminBulkPrice_(session, payload) {
           field, changes[c].oldValue, changes[c].newValue,
           'bulk', null, String(session.uid || ''));
       }
+      logAudit_(session, 'price.bulk', 'catalog', field,
+        changes.length + ' prices changed (' + mode + ' ' + value + ')', '');
     }
 
     return {
@@ -2973,6 +3140,8 @@ function adminStockTake_(session, payload) {
       applyPatches_('Products', PRODUCT_HEADERS, 'id', patches);
     }
     appendRows_('StockTakes', STOCKTAKE_HEADERS, auditRows);
+    logAudit_(session, 'stock.take', 'session', sessionId,
+      lines.length + ' lines counted, ' + Object.keys(patches).length + ' adjusted', '');
 
     return {
       sessionId: sessionId,
@@ -3907,6 +4076,7 @@ function adminUserPatch_(session, payload) {
   if (patch.active === 0) { revokeTokensForUser_(id); markAllDevicesRevoked_(id); }
   else if (patch.role && patch.role !== String(found.role)) { revokeTokensForUser_(id); }
   Logger.log('[orison-pos] user ' + id + ' patched ' + JSON.stringify(patch) + ' by ' + session.uid);
+  logAudit_(session, 'user.patch', 'user', id, JSON.stringify(patch), '');
   return { ok: true, changed: true };
 }
 
@@ -3984,6 +4154,7 @@ function adminRevokeDevice_(session, payload) {
   setDeviceRevoked_(found.id, deviceId, true);
   revokeDeviceTokens_(found.id, deviceId);
   Logger.log('[orison-pos] device revoked for ' + email + ' by ' + session.uid);
+  logAudit_(session, 'device.revoke', 'device', String(deviceId), 'Revoked terminal for ' + email, '');
   return { ok: true };
 }
 
@@ -4206,6 +4377,7 @@ function adminStore_(session, payload) {
     if (countryUpd !== undefined) setKv_('store_country', countryUpd);
     if (currencyUpd !== undefined) setKv_('store_currency', currencyUpd);
     if (denomsUpd !== undefined) setKv_('store_denoms', JSON.stringify(denomsUpd));
+    logAudit_(session, 'store.settings', 'store', getStore_().id, 'Store settings updated', '');
     return getStore_();
   } finally {
     lock.releaseLock();

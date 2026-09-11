@@ -2688,6 +2688,128 @@ check('statement carries the changer/cashier',
     byClient('tx-co-payout').kind === 'payout');
 }
 
+{
+  section('receipt numbers + audit log (v1.22.0)');
+
+  const rnAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const rnCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const rnMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const rnUsers = req('/api/admin/users/list', {}, { session: rnAdm }).data.users;
+  const rnCashId = rnUsers.find((u) => u.email === 'amara@example.com').id;
+
+  const rnProd = req('/api/admin/products', {
+    name: 'RN Widget', sku: 'RN-1', category: 'RN', costPrice: 4, retailPrice: 10, onHand: 500,
+  }, { session: rnAdm }).data.id;
+
+  const rnSell = (clientTxId, amount, kind, orig) => req('/api/sync/push', {
+    deviceId: 'dev-rn-1',
+    batch: [{
+      clientTxId, userId: rnCashId, kind: kind || 'sale', originalClientTx: orig || undefined,
+      grandTotal: amount, createdAt: new Date().toISOString(),
+      tenders: [{ type: 'cash', amount }],
+      items: [{ productId: rnProd, quantity: 1, unitPrice: amount }],
+    }],
+  }, { session: kind === 'refund' ? rnAdm : rnCash });
+
+  /* --- the series --- */
+  const r1 = rnSell('tx-rn-1', 10);
+  const r2 = rnSell('tx-rn-2', 10);
+  check('a sale comes back with its receipt number on the push result',
+    /^Orison-S\d{6}$/.test(r1.data.results[0].receiptNo || ''), JSON.stringify(r1.data.results[0]));
+  check('numbers are sequential across pushes',
+    seqOf(r2.data.results[0].receiptNo) === seqOf(r1.data.results[0].receiptNo) + 1,
+    JSON.stringify({ a: r1.data.results[0].receiptNo, b: r2.data.results[0].receiptNo }));
+
+  const r34 = req('/api/sync/push', {
+    deviceId: 'dev-rn-2',
+    batch: [
+      { clientTxId: 'tx-rn-3', userId: rnCashId, grandTotal: 10, createdAt: new Date().toISOString(),
+        tenders: [{ type: 'cash', amount: 10 }], items: [{ productId: rnProd, quantity: 1, unitPrice: 10 }] },
+      { clientTxId: 'tx-rn-4', userId: rnCashId, grandTotal: 10, createdAt: new Date().toISOString(),
+        tenders: [{ type: 'cash', amount: 10 }], items: [{ productId: rnProd, quantity: 1, unitPrice: 10 }] },
+    ],
+  }, { session: rnCash });
+  const batchNos = r34.data.results.map((x) => seqOf(x.receiptNo)).sort((a, b) => a - b);
+  check('two sales in one batch take two different numbers',
+    batchNos[0] + 1 === batchNos[1], JSON.stringify(batchNos));
+  check('the batch continues the same series',
+    batchNos[0] === seqOf(r2.data.results[0].receiptNo) + 1);
+
+  /* --- the number is on the ledger, not just the response --- */
+  const rnLedger = req('/api/transactions', {}, { session: rnAdm, params: { limit: 500 } }).data.transactions;
+  const rnByClient = (id) => rnLedger.find((t) => t.clientTxId === id);
+  check('the receipt number is stored on the transaction',
+    rnByClient('tx-rn-1').receiptNo === r1.data.results[0].receiptNo);
+
+  /* --- refunds are documents, internal cash movements are not --- */
+  const rnRef = rnSell('tx-rn-ref', 10, 'refund', 'tx-rn-1');
+  check('a refund is a customer document and gets a number',
+    /^Orison-S\d{6}$/.test(rnRef.data.results[0].receiptNo || ''), JSON.stringify(rnRef.data.results[0]));
+
+  req('/api/sync/push', {
+    deviceId: 'dev-rn-1',
+    batch: [{ clientTxId: 'tx-rn-payout', kind: 'payout', userId: rnCashId, grandTotal: 25,
+      counterparty: 'Vendor', tenders: [{ type: 'cash', amount: 25 }],
+      createdAt: new Date().toISOString(), items: [] }],
+  }, { session: rnAdm });
+  check('an internal cash movement takes no number, so the series has no holes',
+    !rnByClientFresh('tx-rn-payout').receiptNo);
+
+  function rnByClientFresh(id) {
+    return req('/api/transactions', {}, { session: rnAdm, params: { limit: 500 } })
+      .data.transactions.find((t) => t.clientTxId === id) || {};
+  }
+  function seqOf(no) {
+    return parseInt(String(no || '').replace(/\D/g, ''), 10);
+  }
+
+  /* --- a blocked sale must not burn a number --- */
+  const rnSerProd = req('/api/admin/products', {
+    name: 'RN Phone', sku: 'RN-PH-1', category: 'RN', costPrice: 100, retailPrice: 200, isSerialized: true,
+  }, { session: rnAdm }).data.id;
+  req('/api/admin/serials', { productId: rnSerProd, serialNumbers: ['RN-SN-1'] }, { session: rnAdm });
+  const beforeBlocked = seqOf(rnByClientFresh('tx-rn-4').receiptNo || 'Orison-S000000');
+  req('/api/sync/push', {
+    deviceId: 'dev-rn-a',
+    batch: [{ clientTxId: 'tx-rn-claim-a', userId: rnCashId, grandTotal: 200, createdAt: new Date().toISOString(),
+      tenders: [{ type: 'cash', amount: 200 }],
+      items: [{ productId: rnSerProd, quantity: 1, unitPrice: 200, serialNumber: 'RN-SN-1' }] }],
+  }, { session: rnCash });
+  const blocked = req('/api/sync/push', {
+    deviceId: 'dev-rn-b',
+    batch: [{ clientTxId: 'tx-rn-claim-b', userId: rnCashId, grandTotal: 200, createdAt: new Date().toISOString(),
+      tenders: [{ type: 'cash', amount: 200 }],
+      items: [{ productId: rnSerProd, quantity: 1, unitPrice: 200, serialNumber: 'RN-SN-1' }] }],
+  }, { session: rnCash });
+  check('a sale blocked by first-committed-wins is refused',
+    blocked.data.results[0].accepted === false);
+  check('a VOIDED sale never takes a receipt number',
+    !blocked.data.results[0].receiptNo, JSON.stringify(blocked.data.results[0]));
+
+  /* --- audit log --- */
+  req('/api/admin/store', { taxRate: 7 }, { session: rnAdm });
+  req('/api/admin/products/bulk-price', { productIds: [rnProd], mode: 'pct', value: 5 }, { session: rnAdm });
+
+  check('the audit log is admin only', req('/api/audit', {}, { session: rnMgr }).status === 403);
+  check('a cashier cannot read it either', req('/api/audit', {}, { session: rnCash }).status === 403);
+
+  const audit = req('/api/audit', {}, { session: rnAdm }).data;
+  check('privileged actions are recorded', audit.entries.length >= 2, String(audit.entries.length));
+  check('the store settings change is in the log',
+    audit.entries.some((e) => e.action === 'store.settings'));
+  check('the bulk reprice is in the log with what it did',
+    audit.entries.some((e) => e.action === 'price.bulk' && /prices changed/.test(e.summary)));
+  check('every entry carries who, when and their role',
+    audit.entries.every((e) => e.at && e.userName && e.role), JSON.stringify(audit.entries[0]));
+  check('the log reads newest first',
+    audit.entries.length < 2 || audit.entries[0].at >= audit.entries[1].at);
+  check('the log never returns more than 100 at once',
+    req('/api/audit', {}, { session: rnAdm, params: { limit: 500 } }).data.entries.length <= 100);
+  check('it can be filtered to one action',
+    req('/api/audit', {}, { session: rnAdm, params: { action: 'store.settings' } })
+      .data.entries.every((e) => e.action === 'store.settings'));
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

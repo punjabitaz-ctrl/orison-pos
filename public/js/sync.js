@@ -139,8 +139,8 @@ export async function push() {
         .map((c) => c.conflictId ? c.reason : null)
         .filter(Boolean);
       if (flags.length) flagged += 1;
-      await idb.put('outbox', { ...entry, status: 'SYNCED', serverId: r.transactionId, flags }, entry.clientTxId);
-      await markTransaction(entry.clientTxId, { status: 'SYNCED', serverId: r.transactionId, flags });
+      await idb.put('outbox', { ...entry, status: 'SYNCED', serverId: r.transactionId, receiptNo: r.receiptNo || '', flags }, entry.clientTxId);
+      await markTransaction(entry.clientTxId, { status: 'SYNCED', serverId: r.transactionId, receiptNo: r.receiptNo || '', flags });
     } else {
       voided += 1;
       await rollbackLocal(entry.payload);
@@ -157,7 +157,7 @@ export async function push() {
   await touchMeta();
   if (flagged > 0) emit({ kind: 'conflict', flagged });
   emit({ kind: 'push', pushed: results.filter((r) => r.accepted).length, voided });
-  return { pushed: results.filter((r) => r.accepted).length, voided, flagged };
+  return { pushed: results.filter((r) => r.accepted).length, voided, flagged, results };
 }
 
 async function touchMeta() {
