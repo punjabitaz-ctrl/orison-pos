@@ -3448,6 +3448,58 @@ check('statement carries the changer/cashier',
     rpDet.parts.length === 0 && rpDet.labour.length === 0);
   check('an unknown ticket is a 404',
     req('/api/repairs/detail', {}, { session: rpCash, params: { id: 'nope' } }).status === 404);
+
+  const rpPart = req('/api/admin/products', {
+    name: 'iPhone 13 Screen', sku: 'RP-SCR', category: 'Parts',
+    costPrice: 40, retailPrice: 120, onHand: 5,
+  }, { session: rpAdm }).data.id;
+  const rpBat = req('/api/admin/products', {
+    name: 'Battery Cell', sku: 'RP-BAT', category: 'Parts',
+    costPrice: 10, retailPrice: 35, isSerialized: true,
+  }, { session: rpAdm }).data.id;
+  req('/api/admin/serials', { productId: rpBat, serialNumbers: ['BAT-A', 'BAT-B'] }, { session: rpAdm });
+
+  const onHandOf = (sku) => req('/api/products', {}, { session: rpAdm })
+    .data.find((x) => x.sku === sku).onHand;
+
+  const fit = req('/api/repairs/parts', {
+    id: made.data.id, add: [{ productId: rpPart, quantity: 1, unitPrice: 120 }],
+  }, { session: rpCash });
+  check('a part can be fitted to a ticket', fit.ok === true, JSON.stringify(fit));
+  check('fitting a part takes it off the shelf immediately',
+    onHandOf('RP-SCR') === 4, String(onHandOf('RP-SCR')));
+  check('the ticket total reflects the part', fit.data.partsTotal === 120, String(fit.data.partsTotal));
+
+  const fitSer = req('/api/repairs/parts', {
+    id: made.data.id, add: [{ productId: rpBat, quantity: 1, unitPrice: 35, serialNumber: 'BAT-A' }],
+  }, { session: rpCash });
+  check('a serialized part can be fitted', fitSer.ok === true, JSON.stringify(fitSer));
+  check('the serial is consumed', onHandOf('RP-BAT') === 1, String(onHandOf('RP-BAT')));
+
+  const rpClash = req('/api/sync/push', {
+    deviceId: 'dev-rp',
+    batch: [{ clientTxId: 'tx-rp-clash', userId: rpCashId, grandTotal: 35,
+      createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 35 }],
+      items: [{ productId: rpBat, quantity: 1, unitPrice: 35, serialNumber: 'BAT-A' }] }],
+  }, { session: rpCash });
+  check('the register cannot sell a serial the bench has fitted',
+    rpClash.data.results[0].accepted === false, JSON.stringify(rpClash.data.results[0]));
+
+  check('the same serial cannot be fitted twice',
+    req('/api/repairs/parts', { id: made.data.id, add: [{ productId: rpBat, quantity: 1, unitPrice: 35, serialNumber: 'BAT-A' }] }, { session: rpCash }).status === 409);
+  check('a serialized part cannot be fitted without saying which one',
+    req('/api/repairs/parts', { id: made.data.id, add: [{ productId: rpBat, quantity: 1, unitPrice: 35 }] }, { session: rpCash }).status === 400);
+  check('more of a part than exists is refused',
+    req('/api/repairs/parts', { id: made.data.id, add: [{ productId: rpPart, quantity: 99, unitPrice: 120 }] }, { session: rpCash }).status === 409);
+
+  const rpBefore = onHandOf('RP-SCR');
+  const rpRem = req('/api/repairs/parts', { id: made.data.id, removeIndex: 0 }, { session: rpCash });
+  check('removing a part returns it to stock',
+    onHandOf('RP-SCR') === rpBefore + 1, String(onHandOf('RP-SCR')));
+  check('and drops it off the ticket', rpRem.data.parts.length === 1, String(rpRem.data.parts.length));
+
+  check('fitting a part is audited',
+    req('/api/audit', {}, { session: rpAdm, params: { action: 'repair.part' } }).data.entries.length >= 1);
 }
 
 

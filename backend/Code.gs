@@ -101,6 +101,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/purchase-orders/cancel': return purchaseOrderCancel_(session, payload);
     case '/api/repairs':         return repairs_(session, payload, params);
     case '/api/repairs/detail':  return repairDetail_(session, params);
+    case '/api/repairs/parts':   return repairParts_(session, payload);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
@@ -4214,6 +4215,112 @@ function repairDetail_(session, params) {
   dto.parts = itobjs_(row.parts_json);
   dto.labour = itobjs_(row.labour_json);
   return dto;
+}
+
+/* Fit a part, or take one back off.
+ *
+ * Both move real stock, under the lock, against the same rows the register
+ * uses - so a screen cannot be both sold at the counter and fitted at the
+ * bench. This is the whole reason the feature exists: on-hand has to keep
+ * describing what is physically in the building. */
+function repairParts_(session, payload) {
+  requireRole_(session, REPAIR_ROLES_ANY);
+  var id = String((payload || {}).id || '');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = repairFind_(id);
+    if (!row) throw statusError_(404, 'Repair not found');
+    if (REPAIR_TERMINAL[String(row.status)]) throw statusError_(409, 'This ticket is closed');
+
+    var parts = itobjs_(row.parts_json);
+    var prodRows = readRows_('Products', PRODUCT_HEADERS);
+    var prodById = {};
+    for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
+    var serialRows = readRows_('Serials', SERIAL_HEADERS);
+    var stamp = new Date().toISOString();
+    var productPatches = {};
+    var serialPatches = {};
+    var summary = '';
+
+    if (payload.removeIndex !== undefined && payload.removeIndex !== null) {
+      var idx = Math.floor(num_(payload.removeIndex));
+      if (!(idx >= 0 && idx < parts.length)) throw statusError_(400, 'No such line on this ticket');
+      var gone = parts[idx];
+      var back = prodById[String(gone.productId)];
+      if (back && String(back.item_type) !== 'service') {
+        if (gone.serialNumber) {
+          for (var s = 0; s < serialRows.length; s++) {
+            if (String(serialRows[s].serial_number) === String(gone.serialNumber)
+              && String(serialRows[s].product_id) === String(gone.productId)) {
+              serialPatches[String(serialRows[s].id)] = { status: 'IN_STOCK', tx_id: '', updated_at: stamp };
+              break;
+            }
+          }
+        }
+        productPatches[String(back.id)] = { on_hand: num_(back.on_hand) + num_(gone.quantity), updated_at: stamp };
+      }
+      summary = 'Removed ' + String(gone.name || '') + ' from ' + String(row.ticket_no || '');
+      parts.splice(idx, 1);
+    } else {
+      var add = Array.isArray(payload.add) ? payload.add : [];
+      if (!add.length) throw statusError_(400, 'Nothing to fit');
+      var added = [];
+      for (var a = 0; a < add.length; a++) {
+        var ln = add[a];
+        var prod = prodById[String(ln.productId || '')];
+        if (!prod || String(prod.active) !== '1') throw statusError_(400, 'Product is unknown or inactive');
+        var qty = Math.max(1, Math.floor(num_(ln.quantity) || 1));
+        var price = Math.max(0, num_(ln.unitPrice));
+        var serial = String(ln.serialNumber || '').trim();
+        var isService = String(prod.item_type) === 'service';
+
+        if (String(prod.is_serialized) === '1') {
+          if (!serial) throw statusError_(400, 'This part is tracked by serial - which one?');
+          var found = null;
+          for (var s2 = 0; s2 < serialRows.length; s2++) {
+            if (String(serialRows[s2].serial_number) === serial
+              && String(serialRows[s2].product_id) === String(prod.id)) { found = serialRows[s2]; break; }
+          }
+          if (!found) throw statusError_(404, 'Serial not found: ' + serial);
+          if (String(found.status) !== 'IN_STOCK') throw statusError_(409, 'Already gone: ' + serial);
+          serialPatches[String(found.id)] = { status: 'SOLD', tx_id: 'repair:' + id, updated_at: stamp };
+          found.status = 'SOLD';
+          productPatches[String(prod.id)] = { on_hand: Math.max(0, num_(prod.on_hand) - qty), updated_at: stamp };
+          prod.on_hand = Math.max(0, num_(prod.on_hand) - qty);
+        } else if (!isService) {
+          var have = num_(prod.on_hand);
+          if (qty > have) throw statusError_(409, 'Only ' + have + ' of ' + String(prod.name) + ' left');
+          productPatches[String(prod.id)] = { on_hand: have - qty, updated_at: stamp };
+          prod.on_hand = have - qty;
+        }
+
+        var line = {
+          productId: String(prod.id), name: String(prod.name || ''), sku: String(prod.sku || ''),
+          quantity: qty, unitPrice: round2_(price), unitCost: num_(prod.cost_price),
+          serialNumber: serial, fittedAt: stamp, fittedBy: String(session.uid || ''),
+        };
+        parts.push(line);
+        added.push(line.name + (serial ? ' (' + serial + ')' : '') + ' x' + qty);
+      }
+      summary = 'Fitted ' + added.join(', ') + ' to ' + String(row.ticket_no || '');
+    }
+
+    applyPatches_('Repairs', REPAIR_HEADERS, 'id', {
+      [id]: { parts_json: JSON.stringify(parts), updated_at: stamp },
+    });
+    if (Object.keys(productPatches).length) applyPatches_('Products', PRODUCT_HEADERS, 'id', productPatches);
+    if (Object.keys(serialPatches).length) applyPatches_('Serials', SERIAL_HEADERS, 'id', serialPatches);
+
+    logAudit_(session, 'repair.part', 'repair', id, summary, '');
+
+    row.parts_json = JSON.stringify(parts);
+    var t = repairTotals_(row);
+    return { id: id, parts: parts, partsTotal: t.parts, labourTotal: t.labour, total: t.total };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /* ------------------------------------------------------------------ *
