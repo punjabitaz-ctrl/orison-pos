@@ -308,3 +308,27 @@ describe('createPayout()', () => {
 
   clearFetchMock();
 });
+
+describe('cash-out kinds (v1.19.0)', async () => {
+  const { kindInfo, CASH_OUT_KINDS } = await import('../public/js/money.js');
+
+  it('names all three reasons distinctly', () => {
+    assert.equal(kindInfo('payout').label, 'Paid out');
+    assert.equal(kindInfo('pickup').label, 'Cash pick-up');
+    assert.equal(kindInfo('expense').label, 'Staff expense');
+  });
+
+  it('treats all three as money leaving the drawer', () => {
+    for (const k of CASH_OUT_KINDS) {
+      assert.equal(kindInfo(k).sign, -1, `${k} must be negative`);
+    }
+  });
+
+  it('lists exactly the three reasons', () => {
+    assert.deepEqual([...CASH_OUT_KINDS].sort(), ['expense', 'payout', 'pickup']);
+  });
+
+  it('still falls back to a sale for an unknown kind', () => {
+    assert.equal(kindInfo('nonsense').label, 'Sale');
+  });
+});

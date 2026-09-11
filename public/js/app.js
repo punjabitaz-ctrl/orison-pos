@@ -115,8 +115,8 @@ function renderNav() {
   document.querySelectorAll('[data-tab]').forEach((tab) => {
     tab.addEventListener('click', () => {
       const hit = tiles.find((d) => d.id === tab.dataset.tab);
-      if (hit && hit.dialog === 'payout') {
-        import('./money-dialogs.js').then((m) => m.openPayoutDialog(ctx));
+      if (hit && hit.dialog) {
+        import('./money-dialogs.js').then((m) => m.openCashOutDialog(ctx, hit.dialog));
         return;
       }
       router.show(hit ? hit.screen : tab.dataset.tab);

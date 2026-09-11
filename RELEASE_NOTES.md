@@ -7,7 +7,42 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.18.0 — Sell & checkout
+## Latest: v1.19.0 — three money-out kinds
+
+**2026-09-10.** The last of the three interface-v2 releases. Cash leaving the
+drawer is now attributable by reason.
+
+**What shipped**
+
+- **Paid Out, Cash Pick Up and Staff Expense are three separate things** — three
+  transaction kinds (`payout`, `pickup`, `expense`), three launcher tiles, three
+  dialogs that ask for the counterparty in the words that fit the reason. All
+  three are cash out and all three keep the admin/manager guard.
+- **Reports split them** — `summary.pickups`, `summary.expenses`, and a
+  `cashOut` total; net revenue subtracts all three.
+- **The Drive export gains CASH PICK-UP and STAFF EXPENSE lines**, and NET CASH
+  subtracts all three.
+- **The drawer loses the cash for all three** at shift close.
+- The dashboard's "Paid out" KPI became **Cash out**, with the split beneath it.
+
+**Compatibility:** existing `payout` rows are untouched and keep meaning *paid
+out*. Nothing migrates, and an older shell can still only send `payout`, which
+the server accepts exactly as before.
+
+**Validation:** backend-sim **PASS 462 / FAIL 0** · client units
+**PASS 301 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean.
+
+### Deploying
+
+1. **Backend redeploy required** — `backend/Code.gs` gained the two kinds.
+   Paste it into Apps Script and deploy a new Web App version.
+2. Push `public/` to Cloudflare Pages as usual.
+3. Deploy the backend **first**: a terminal on the new shell can send `pickup`
+   and `expense`, which an older backend would reject.
+
+---
+
+## v1.18.0 — Sell & checkout
 
 **2026-09-10.** Second of the three interface-v2 releases. The running total
 stops disappearing, and the charge screen leads with the number that matters.

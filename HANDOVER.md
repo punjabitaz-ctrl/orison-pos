@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.18.0** — Sell & checkout (`2026-09-10`) |
-| Validation bar | `backend-sim` **PASS 446 / FAIL 0** · client units **PASS 287 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.19.0** — three money-out kinds (`2026-09-10`) |
+| Validation bar | `backend-sim` **PASS 462 / FAIL 0** · client units **PASS 301 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,21 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.19.0** Three money-out kinds — last of the interface-v2 releases.
+  **`pickup`** (cash pick-up) and **`expense`** (staff expense) join `payout`;
+  `processPayout_` generalised to `processCashOut_(…, kind)` behind a new
+  `isCashOutKind_()`, which `shiftClose_`, `transactions_` GP and the ledger
+  labels now ask instead of testing for `payout` by name. `reports_` gains
+  `pickups`/`expenses`/`cashOut` and nets all three out of `netRevenue`; the
+  Drive export gains **CASH PICK-UP** and **STAFF EXPENSE** lines and NET CASH
+  subtracts all three. Client: `createCashOut({kind,…})` (with `createPayout`
+  kept as a wrapper), `kindInfo` entries, three launcher tiles each with its own
+  icon and dialog wording, `dayTotals()` splitting the reasons, and the
+  dashboard's **Cash out** KPI with the three-way split.
+  **Compatibility:** legacy `payout` rows are untouched and nothing migrates;
+  an older shell can only send `payout`, which still works.
+  ⚠️ **Deploy the backend first** — a new shell can send kinds an old backend
+  would reject.
 - **v1.18.0** Sell & checkout — second of the three interface-v2 releases.
   **Pinned cart bar** on phones/tablets (count, running total, Charge) so the
   total is never out of sight; adding an item no longer opens a sheet over the

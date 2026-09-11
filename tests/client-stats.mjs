@@ -247,3 +247,30 @@ test('fmtDuration()', () => {
   assert.equal(fmtDuration(2.25), '2h 15m');
   assert.equal(fmtDuration(-3), '0m', 'a negative span reads as nothing worked');
 });
+
+test('dayTotals() splits cash out by reason (v1.19.0)', async (t) => {
+  const today = shiftDayKey(0);
+  const txs = [
+    sale(200),
+    { kind: 'payout', grandTotal: 30, createdAt: localIso(0), items: [] },
+    { kind: 'pickup', grandTotal: 50, createdAt: localIso(0), items: [] },
+    { kind: 'expense', grandTotal: 20, createdAt: localIso(0), items: [] },
+  ];
+  const d = dayTotals(txs, today);
+
+  await t.test('each reason lands on its own figure', () => {
+    assert.equal(d.payouts, 30);
+    assert.equal(d.pickups, 50);
+    assert.equal(d.expenses, 20);
+  });
+  await t.test('cashOut totals the three', () => {
+    assert.equal(d.cashOut, 100);
+  });
+  await t.test('net loses every reason, not just paid-out', () => {
+    assert.equal(d.net, 100);
+  });
+  await t.test('a pick-up and an expense are money out, like a payout', () => {
+    assert.equal(signedNet({ kind: 'pickup', grandTotal: 50 }), -50);
+    assert.equal(signedNet({ kind: 'expense', grandTotal: 20 }), -20);
+  });
+});

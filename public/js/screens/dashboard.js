@@ -119,7 +119,10 @@ export const screen = {
           <div class="dash-kpi"><span>Units today</span><strong>${d0.units}</strong></div>
           ${isManager ? `
           <div class="dash-kpi warn"><span>Refunds</span><strong>−${money(d0.refunds)}</strong></div>
-          <div class="dash-kpi warn"><span>Paid out</span><strong>−${money(d0.payouts)}</strong></div>
+          <div class="dash-kpi warn">
+            <span>Cash out</span><strong>−${money(d0.cashOut)}</strong>
+            <em class="kpi-split">${money(d0.payouts)} paid · ${money(d0.pickups)} picked up · ${money(d0.expenses)} staff</em>
+          </div>
           <div class="dash-kpi"><span>Collected</span><strong>${money(d0.collections)}</strong></div>
           <div class="dash-kpi dash-gp">
             <span>Gross profit today</span><strong>${money(d0.gp)}</strong>

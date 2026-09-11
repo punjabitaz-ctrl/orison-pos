@@ -2598,6 +2598,96 @@ check('statement carries the changer/cashier',
     req('/api/config', {}, { session: locCash }).data.store.locale === 'en-US');
 }
 
+{
+  section('three money-out kinds (v1.19.0)');
+
+  const coAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const coCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const coUsers = req('/api/admin/users/list', {}, { session: coAdm }).data.users;
+  const coAdmId = coUsers.find((u) => u.email === 'tariq@example.com').id;
+
+  const cashOut = (clientTxId, kind, amount, session) => req('/api/sync/push', {
+    deviceId: 'dev-co-1',
+    batch: [{
+      clientTxId, kind, userId: coAdmId, grandTotal: amount,
+      counterparty: kind === 'expense' ? 'Amara' : 'Vendor',
+      tenders: [{ type: 'cash', amount }], note: kind + ' note',
+      createdAt: new Date().toISOString(), items: [],
+    }],
+  }, { session: session || coAdm });
+
+  /* --- all three are accepted and keep their own kind --- */
+  const outP = cashOut('tx-co-payout', 'payout', 100);
+  const outU = cashOut('tx-co-pickup', 'pickup', 250);
+  const outE = cashOut('tx-co-expense', 'expense', 40);
+  check('a paid-out is accepted', outP.data.results[0].accepted === true);
+  check('a cash pick-up is accepted', outU.data.results[0].accepted === true);
+  check('a staff expense is accepted', outE.data.results[0].accepted === true);
+
+  const coLedger = req('/api/transactions', {}, { session: coAdm, params: { limit: 500 } }).data.transactions;
+  const byClient = (id) => coLedger.find((t) => t.clientTxId === id);
+  check('each row keeps its own kind rather than collapsing to payout',
+    byClient('tx-co-payout').kind === 'payout'
+    && byClient('tx-co-pickup').kind === 'pickup'
+    && byClient('tx-co-expense').kind === 'expense');
+  check('cash out never carries gross profit',
+    [byClient('tx-co-payout'), byClient('tx-co-pickup'), byClient('tx-co-expense')]
+      .every((t) => t.grossProfit === 0));
+
+  /* --- the guard is the same for all three --- */
+  check('a cashier cannot record a cash pick-up',
+    cashOut('tx-co-cash-pickup', 'pickup', 10, coCash).data.results[0].accepted === false);
+  check('a cashier cannot record a staff expense',
+    cashOut('tx-co-cash-expense', 'expense', 10, coCash).data.results[0].accepted === false);
+  check('a zero pick-up is refused like a zero payout',
+    cashOut('tx-co-zero', 'pickup', 0).data.results[0].accepted === false);
+
+  /* --- reports split them, and net revenue loses all three --- */
+  const coRep = req('/api/reports', {}, { session: coAdm }).data;
+  check('reports report each reason on its own line',
+    coRep.summary.payouts >= 100 && coRep.summary.pickups >= 250 && coRep.summary.expenses >= 40,
+    JSON.stringify({ p: coRep.summary.payouts, u: coRep.summary.pickups, e: coRep.summary.expenses }));
+  check('cashOut totals the three reasons',
+    Math.abs(coRep.summary.cashOut - (coRep.summary.payouts + coRep.summary.pickups + coRep.summary.expenses)) < 0.005);
+  check('net revenue subtracts every reason, not just paid-out',
+    Math.abs(coRep.summary.netRevenue
+      - (coRep.summary.grossSales - coRep.summary.refunds - coRep.summary.cashOut)) < 0.005,
+    JSON.stringify(coRep.summary));
+
+  /* --- the drawer loses the cash for all three --- */
+  const shiftOpen = req('/api/shifts/open', { openingFloat: 1000 }, { session: coAdm });
+  const coShiftId = shiftOpen.data.shift.id;
+  cashOut('tx-co-shift-p', 'payout', 10);
+  cashOut('tx-co-shift-u', 'pickup', 20);
+  cashOut('tx-co-shift-e', 'expense', 30);
+  const coClose = req('/api/shifts/close', { shiftId: coShiftId, denoms: {} }, { session: coAdm }).data.shift;
+  check('shift close subtracts all three reasons from the expected drawer',
+    coClose.expectedCash === 1000 - 60, JSON.stringify({ expected: coClose.expectedCash }));
+
+  /* --- the export gives each reason its own line --- */
+  const coDay = new Date().toISOString().slice(0, 10);
+  const coExp = req('/api/drive/export', { date: coDay }, { session: coAdm });
+  const coFile = driveFiles.find((f) => f.id === (coExp.data || {}).fileId);
+  const coCsv = (coFile && coFile.content) || '';
+  const coLine = (label) => {
+    const row = coCsv.split(String.fromCharCode(10)).find((l) => l.indexOf(',,' + label + ',,') === 0);
+    return row ? Number(row.split(',')[4]) : null;
+  };
+  check('the export carries a line per reason',
+    coCsv.indexOf('PAID OUT') >= 0 && coCsv.indexOf('CASH PICK-UP') >= 0 && coCsv.indexOf('STAFF EXPENSE') >= 0,
+    coExp.ok ? 'csv missing lines' : JSON.stringify(coExp));
+  check('the exported detail rows name the new kinds',
+    coCsv.indexOf('pickup') >= 0 && coCsv.indexOf('expense') >= 0);
+  check('NET CASH subtracts every cash-out reason',
+    Math.abs(coLine('NET CASH')
+      - (coLine('SALES') - coLine('REFUNDS') - coLine('PAID OUT') - coLine('CASH PICK-UP') - coLine('STAFF EXPENSE') + coLine('COLLECTIONS'))) < 0.01,
+    JSON.stringify({ net: coLine('NET CASH'), pickup: coLine('CASH PICK-UP'), expense: coLine('STAFF EXPENSE') }));
+
+  /* --- legacy rows keep working --- */
+  check('a legacy payout row still reads as Paid out in the customer ledger labels',
+    byClient('tx-co-payout').kind === 'payout');
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

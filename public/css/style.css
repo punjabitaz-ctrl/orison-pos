@@ -1401,3 +1401,9 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; le
 .co-remain span { font-size: 14px; font-weight: 700; color: var(--muted); }
 .co-remain strong { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 .co-remain.co-clear strong { color: var(--ok); }
+
+.i-pickup  { background: #b45309; }
+.i-expense { background: #9333ea; }
+
+.kpi-split { font-style: normal; font-size: 10px; font-weight: 600; color: var(--muted); line-height: 1.3; }
+.dash-kpi .kpi-split { text-transform: none; letter-spacing: 0; }

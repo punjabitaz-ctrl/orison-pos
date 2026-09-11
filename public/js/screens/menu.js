@@ -7,7 +7,7 @@
 import { esc } from '../ui.js';
 import { menuTiles } from '../nav.js';
 import { tileGrid } from '../components.js';
-import { openPayoutDialog } from '../money-dialogs.js';
+import { openCashOutDialog } from '../money-dialogs.js';
 
 export const screen = {
   id: 'menu',
@@ -34,8 +34,8 @@ export const screen = {
       if (!btn) return;
       const hit = tiles.find((x) => x.id === btn.dataset.go);
       if (!hit) return;
-      if (hit.dialog === 'payout') {
-        openPayoutDialog(ctx);
+      if (hit.dialog) {
+        openCashOutDialog(ctx, hit.dialog);
         return;
       }
       router.show(hit.screen);

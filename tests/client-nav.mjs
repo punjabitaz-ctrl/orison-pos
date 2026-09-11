@@ -236,3 +236,30 @@ test('cartBar()', async (t) => {
     assert.equal(cartBar({ count: 0, total: 0, fmt: money }), '');
   });
 });
+
+test('the three money-out reasons are separate destinations (v1.19.0)', async (t) => {
+  await t.test('a manager sees all three, each opening its own dialog', () => {
+    const tiles = menuTiles('manager');
+    for (const id of ['payout', 'pickup', 'expense']) {
+      const hit = tiles.find((x) => x.id === id);
+      assert.ok(hit, `manager is missing ${id}`);
+      assert.equal(hit.dialog, id, `${id} must open its own dialog, not another reason's`);
+    }
+  });
+  await t.test('a cashier sees none of them', () => {
+    const ids = menuTiles('cashier').map((x) => x.id);
+    for (const id of ['payout', 'pickup', 'expense']) {
+      assert.ok(!ids.includes(id), `cashier must not see ${id}`);
+    }
+  });
+  await t.test('each has its own icon, so the tiles are not three identical squares', () => {
+    assert.notEqual(icon('payout'), icon('pickup'));
+    assert.notEqual(icon('pickup'), icon('expense'));
+  });
+  await t.test('their labels are plain words that fit a tile', () => {
+    for (const id of ['payout', 'pickup', 'expense']) {
+      const hit = menuTiles('admin').find((x) => x.id === id);
+      assert.ok(hit.label.length <= 16, `${id} label too long`);
+    }
+  });
+});

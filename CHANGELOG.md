@@ -5,6 +5,52 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] — 2026-09-10
+
+Last of the three interface-v2 releases. Cash leaving the drawer is now
+attributable by reason — the question "how much went out as staff expense this
+month?" is answerable from the ledger instead of by reading every note.
+
+### Added
+
+- **Two new transaction kinds, `pickup` and `expense`**, beside the existing
+  `payout`. All three are cash out, all three carry the same admin/manager
+  guard, and they differ only in the reason recorded:
+  - `payout` — Paid out (a supplier or a bill)
+  - `pickup` — Cash pick-up (to the bank, the safe, or the owner)
+  - `expense` — Staff expense (cash reimbursed to a member of staff)
+- **Three launcher tiles**, each with its own icon and its own dialog wording
+  — who the money went to is asked differently for a vendor, a bank run and a
+  staff reimbursement.
+- `reports_` gains `summary.pickups`, `summary.expenses` and `summary.cashOut`;
+  `netRevenue` now subtracts all three reasons.
+- The Drive export gains **CASH PICK-UP** and **STAFF EXPENSE** lines beside
+  PAID OUT, and NET CASH subtracts all three.
+- `createCashOut({ kind, ... })` in `money.js` (with `createPayout` kept as a
+  thin wrapper), `CASH_OUT_KINDS`, and `kindInfo` entries for both new kinds.
+- `dayTotals()` splits `payouts` / `pickups` / `expenses` and totals `cashOut`;
+  `signedNet()` treats all three as money out.
+- The dashboard's "Paid out" KPI becomes **Cash out**, with the three-way split
+  beneath it.
+- 16 new sim checks and 9 new client checks: each kind keeping its own identity
+  rather than collapsing to `payout`, the role guard applying equally, zero
+  amounts refused, reports splitting correctly, the drawer losing the cash for
+  all three at shift close, and NET CASH reconciling against its own lines.
+
+### Changed
+
+- `processPayout_` generalised to `processCashOut_(…, kind)`, dispatched via a
+  new `isCashOutKind_()`; `CASH_OUT_KINDS` on the server carries the labels the
+  customer ledger prints.
+- `shiftClose_`, `transactions_` gross profit, and the ledger labels all ask
+  `isCashOutKind_()` instead of testing for `payout` by name.
+
+### Compatibility
+
+Existing `kind: 'payout'` rows are untouched and keep meaning *paid out*.
+Nothing migrates, and a terminal still running an older shell can only ever
+send `payout`, which the server continues to accept exactly as before.
+
 ## [1.18.0] — 2026-09-10
 
 Second of the three interface-v2 releases: the Sell screen and the charge

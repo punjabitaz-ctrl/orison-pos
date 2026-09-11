@@ -1284,8 +1284,8 @@ function syncPush_(session, payload) {
       var reuseId = (existing && String(existing.status) === 'VOIDED') ? String(existing.id) : '';
 
       var kind = String(tx.kind || 'sale');
-      if (kind === 'payout') {
-        pushResult_(results, tx, processPayout_(session, store, newTxRows, tx, deviceId, userRows));
+      if (isCashOutKind_(kind)) {
+        pushResult_(results, tx, processCashOut_(session, store, newTxRows, tx, deviceId, userRows, kind));
         indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows);
         continue;
       }
@@ -1616,7 +1616,17 @@ function indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows) {
 
 /* Cash payout ("money out"): vendor payment, cash pick-up, or expense. Only
    admin/manager. Recorded like any transaction for the cash audit trail. */
-function processPayout_(session, store, newTxRows, tx, deviceId, userRows) {
+/* The three ways cash leaves the drawer. They behave identically - same guard,
+ * same maths, same cash tender - and differ only in the reason recorded, which
+ * is the whole point: an owner can ask "how much went out as staff expense?"
+ * without reading every note by hand. */
+var CASH_OUT_KINDS = { payout: 'Paid out', pickup: 'Cash pick-up', expense: 'Staff expense' };
+
+function isCashOutKind_(kind) {
+  return Object.prototype.hasOwnProperty.call(CASH_OUT_KINDS, String(kind));
+}
+
+function processCashOut_(session, store, newTxRows, tx, deviceId, userRows, kind) {
   var role = session ? String(session.role || '') : '';
   if (role !== 'admin' && role !== 'manager') {
     return { errors: [{ reason: 'unauthorized_role' }] };
@@ -1633,7 +1643,7 @@ function processPayout_(session, store, newTxRows, tx, deviceId, userRows) {
     user_id: userIds[String(tx.userId || '')] ? String(tx.userId) : fallbackUserId_(userRows, session),
     device_id: deviceId,
     client_tx_id: String(tx.clientTxId || ''),
-    kind: 'payout',
+    kind: isCashOutKind_(kind) ? String(kind) : 'payout',
     original_client_tx: '',
     counterparty: String(tx.counterparty || ''),
     grand_total: amount,
@@ -1931,7 +1941,7 @@ function transactions_(session, params) {
     var hasMoney = t.subtotal !== '' && t.subtotal != null && num_(t.subtotal) > 0;
     var grossProfit = null;
     if (kindName === 'refund') grossProfit = -costTotal;
-    else if (kindName === 'payout') grossProfit = 0;
+    else if (isCashOutKind_(kindName)) grossProfit = 0;
     else if (hasMoney) {
       /* net revenue = line subtotal − order discount; margin = that − cost. */
       grossProfit = num_(t.subtotal) - Math.round(num_(t.subtotal) * num_(t.discount_pct) / 100) - costTotal;
@@ -2145,7 +2155,7 @@ function customerStatement_(session, params) {
     var label = kind === 'sale' ? 'Sale'
       : kind === 'refund' ? 'Refund'
       : kind === 'payment' ? 'Payment received'
-      : kind === 'payout' ? 'Paid out'
+      : isCashOutKind_(kind) ? CASH_OUT_KINDS[String(kind)]
       : String(kind || 'sale');
     var detail = itemNames.slice(0, 3).join(', ');
     if (itemNames.length > 3) detail += ' +' + (itemNames.length - 3) + ' more';
@@ -2341,7 +2351,7 @@ function reports_(session, params) {
   var byTender = Object.create(null);
   var byProduct = Object.create(null);
   var byCustomerTx = Object.create(null);
-  var summary = { grossSales: 0, refunds: 0, payouts: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0 };
+  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0 };
 
   function costOf_(t) {
     var items = itobjs_(t.items_json);
@@ -2436,11 +2446,14 @@ function reports_(session, params) {
         re.amount -= num_(tenders[ri].amount);
         re.count += 1;
       }
-    } else if (kind === 'payout') {
-      summary.payouts += num_(t.grand_total);
-      c.sales -= num_(t.grand_total);
+    } else if (isCashOutKind_(kind)) {
+      var outAmt = num_(t.grand_total);
+      if (kind === 'pickup') summary.pickups += outAmt;
+      else if (kind === 'expense') summary.expenses += outAmt;
+      else summary.payouts += outAmt;
+      c.sales -= outAmt;
       var pe2 = byTender['cash'] || (byTender['cash'] = { amount: 0, count: 0 });
-      pe2.amount -= num_(t.grand_total);
+      pe2.amount -= outAmt;
     } else if (kind === 'payment') {
       summary.collections += num_(t.grand_total);
       c.sales += num_(t.grand_total); c.count += 0;
@@ -2486,8 +2499,11 @@ function reports_(session, params) {
       grossSales: summary.grossSales,
       refunds: summary.refunds,
       payouts: summary.payouts,
+      pickups: summary.pickups,
+      expenses: summary.expenses,
+      cashOut: summary.payouts + summary.pickups + summary.expenses,
       collections: summary.collections,
-      netRevenue: summary.grossSales - summary.refunds - summary.payouts,
+      netRevenue: summary.grossSales - summary.refunds - summary.payouts - summary.pickups - summary.expenses,
       salesCount: summary.salesCount,
       units: summary.units,
       tax: summary.tax,
@@ -3447,7 +3463,7 @@ function shiftClose_(session, payload) {
         for (var k = 0; k < tenders.length; k++) {
           if (String(tenders[k].type || '') === 'cash') expected += num_(tenders[k].amount);
         }
-      } else if (kind === 'payout') {
+      } else if (isCashOutKind_(kind)) {
         expected -= num_(tr.grand_total);
       } else if (kind === 'refund') {
         for (var m = 0; m < tenders.length; m++) {
@@ -4266,13 +4282,15 @@ function driveExport_(session, payload, params) {
   }
 
   var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note' + (isStore ? ',cost,gross_profit' : '') + '\n';
-  var sales = 0, refunds = 0, payouts = 0, collections = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
+  var sales = 0, refunds = 0, payouts = 0, pickups = 0, expenses = 0, collections = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
     var k = String(t.kind || 'sale');
     var v = num_(t.grand_total);
     if (k === 'refund') refunds += v;
     else if (k === 'payout') payouts += v;
+    else if (k === 'pickup') pickups += v;
+    else if (k === 'expense') expenses += v;
     else if (k === 'payment') collections += v;
     else if (k !== 'purchase') sales += v;
     if (String(t.tax_amount || '') !== '') taxTotal += num_(t.tax_amount);
@@ -4301,7 +4319,7 @@ function driveExport_(session, payload, params) {
     if (isStore) {
       var gp = null;
       if (k === 'refund') gp = -costTotal;
-      else if (k === 'payout') gp = 0;
+      else if (isCashOutKind_(k)) gp = 0;
       else if (String(t.subtotal || '') !== '') gp = num_(t.subtotal) - Math.round(num_(t.subtotal) * num_(t.discount_pct) / 100) - costTotal;
       if (gp != null) gpDay += gp;
       row.push(String(costTotal));
@@ -4312,13 +4330,15 @@ function driveExport_(session, payload, params) {
 
   /* Cash summary block appended after the detail rows so managers/admins
      can reconcile drawer cash in one glance. */
-  var net = sales - refunds - payouts + collections;
+  var net = sales - refunds - payouts - pickups - expenses + collections;
   csv += '\n';
   csv += ',,SUMMARY,,,,\n';
   csv += ',,SALES,,' + String(sales) + ',\n';
   csv += ',,TAX COLLECTED,,' + String(taxTotal) + ',\n';
   csv += ',,REFUNDS,,' + String(refunds) + ',\n';
   csv += ',,PAID OUT,,' + String(payouts) + ',\n';
+  csv += ',,CASH PICK-UP,,' + String(pickups) + ',\n';
+  csv += ',,STAFF EXPENSE,,' + String(expenses) + ',\n';
   csv += ',,COLLECTIONS,,' + String(collections) + ',\n';
   csv += ',,NET CASH,,' + String(net) + ',\n';
   if (isStore) {

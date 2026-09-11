@@ -52,6 +52,8 @@ export function kindInfo(kind) {
     sale: { label: 'Sale', cls: 'k-sale', sign: 1 },
     refund: { label: 'Refund', cls: 'k-refund', sign: -1 },
     payout: { label: 'Paid out', cls: 'k-payout', sign: -1 },
+    pickup: { label: 'Cash pick-up', cls: 'k-payout', sign: -1 },
+    expense: { label: 'Staff expense', cls: 'k-payout', sign: -1 },
     payment: { label: 'Payment', cls: 'k-sale', sign: 1 },
   };
   return map[kind || 'sale'] || map.sale;
@@ -100,6 +102,28 @@ export async function createRefund({ original, items, method, note, user }) {
     tenders: [{ type: method, amount: grandTotal }],
     note: note || '',
     items,
+    userId: user.id,
+    cashier: user.name,
+  });
+  pushImmediate().catch(() => {});
+  return clientTxId;
+}
+
+export const CASH_OUT_KINDS = ['payout', 'pickup', 'expense'];
+
+/* The three ways cash leaves the drawer. Identical maths and the same
+   admin/manager guard - only the reason differs, which is what makes cash-out
+   answerable by reason instead of by reading notes. */
+export async function createCashOut({ kind, counterparty, grandTotal, note, user }) {
+  const k = CASH_OUT_KINDS.includes(kind) ? kind : 'payout';
+  const amount = round2(grandTotal);
+  const clientTxId = await enqueueTransaction({
+    kind: k,
+    counterparty: counterparty || '',
+    grandTotal: amount,
+    tenders: [{ type: 'cash', amount }],
+    note: note || '',
+    items: [],
     userId: user.id,
     cashier: user.name,
   });
