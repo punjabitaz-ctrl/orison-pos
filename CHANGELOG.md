@@ -5,6 +5,56 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.0] — 2026-09-12
+
+Repairs. The largest remaining hole in the stock figure: a screen fitted to a
+customer's phone left the building but stayed on the shelf in the system.
+
+### Added
+
+- **Repair tickets.** Device intake (make, model, IMEI, reported fault, visible
+  condition, accessories left), a guarded status flow, and a bench book that is
+  searchable by ticket number, customer, phone or IMEI. Ticket numbers are
+  `Orison-R000001`, sequential and gap-free, reusing the v1.24.0 machinery.
+- **Parts leave stock when they are fitted**, not when the job is invoiced, so
+  on-hand keeps describing what is physically in the building. Fitting runs the
+  same code path a sale does, under the same lock: **the register cannot sell a
+  serial the bench has fitted, and the bench cannot fit one the register has
+  sold.** Removing a part, cancelling a job or marking it unrepairable returns
+  every part — serials included.
+- **Labour lines**, either a service product the shop already prices or one-off
+  work typed at the bench.
+- **Admin void** for a ticket that should never have existed (a duplicate, a
+  mis-entry). Distinct from a cancel, which is a real customer changing their
+  mind. Needs a reason, returns the parts, and stays on the sheet for the audit
+  trail while dropping out of the working list.
+- Every ticket mutation is audited (v1.22.0).
+
+### Deliberately not in this release
+
+- **Money.** Deposits, the collection invoice and the deposits-held liability
+  are v1.32.0. `collected` is therefore unreachable, and the server refuses it:
+  a repair is collected by invoicing it, not by picking a status, or a job could
+  be closed as collected with no money taken. A client unit test pins that the
+  UI never offers it either.
+- **Offline.** Repairs are online-only, like purchase orders and customers. A
+  ticket is a numbered document handed to a customer at the counter, and an
+  offline terminal cannot know the next number without risking a collision.
+  Selling offline is unaffected.
+- **No passcode field.** The backing store is a Sheet copied nightly into Drive.
+  A plaintext customer credential there is a liability with no offsetting
+  benefit; the bench asks verbally.
+
+### Fixed
+
+- `HANDOVER.md` §5 described serial statuses as `AVAILABLE`/`SOLD`/`VOIDED`.
+  The code has always used `IN_STOCK`.
+
+### Tests
+
+58 new sim checks and 9 new client units. Backend **641 / 0**, client
+**359 / 0**.
+
 ## [1.30.0] — 2026-09-11
 
 The four remaining items from `HANDOVER.md` §10, and the last release of the

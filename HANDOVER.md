@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.30.0** — the remaining open items (`2026-09-11`) |
-| Validation bar | `backend-sim` **PASS 583 / FAIL 0** · client units **PASS 350 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.31.0** — repair tickets (`2026-09-12`) |
+| Validation bar | `backend-sim` **PASS 641 / FAIL 0** · client units **PASS 359 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~5,110 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,17 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.31.0** Repair tickets. Device intake (make/model/IMEI/fault/condition/
+  accessories, **no passcode field** - the Sheet is copied nightly to Drive),
+  `Orison-R000001` sequential ticket numbers, a guarded status flow, and a
+  bench book searchable by ticket/customer/phone/IMEI and capped at 100 rows.
+  **Parts leave stock when fitted**, through the same locked path a sale uses,
+  so the register and the bench contend for the same unit; cancelling,
+  marking unrepairable, removing a line or voiding returns every part, serials
+  included. Labour lines. Admin-only void with a reason. Every mutation
+  audited. **Money is v1.32.0**: `collected` is unreachable and the server
+  refuses it, so no job can be closed as collected without an invoice.
+  Online-only, like purchase orders. 58 new sim checks, 9 new client units.
 - **v1.30.0** The remaining `HANDOVER` §10 items, and the end of the
   operational-readiness program. **Fixed:** `/api/config` handed the staff
   roster to every role (with the account lockout, one cashier could lock out the
@@ -341,9 +352,9 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
 
 ## 5. Data model — Sheets tabs
 
-`Meta` (kv) · `Users` · `Products` · `Serials` (`AVAILABLE`/`SOLD`/`VOIDED`) ·
+`Meta` (kv) · `Users` · `Products` · `Serials` (`IN_STOCK`/`SOLD`/`VOIDED`) ·
 `Transactions` · `Conflicts` · `Devices` · `Customers` · `Shifts` ·
-`Suppliers` · `PurchaseOrders` · `PriceHistory` · `TimeClock` · `StockTakes`.
+`Suppliers` · `PurchaseOrders` · `PriceHistory` · `TimeClock` · `StockTakes` · `Repairs`.
 
 Ledger kinds: `sale` (incl. legacy `''`), `refund`, `payout`, `payment`
 (= collection, money-in), `purchase` (PO receipt — must never count as sales
@@ -354,7 +365,7 @@ admin/manager.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **583 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **641 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -364,7 +375,7 @@ admin/manager.
   the guards that now read under the lock).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  **350 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  **359 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
   ui `fmt`/`esc`/`debounce`/`csvCell`/`emptyState`/`skeleton`, (v1.15.0)
@@ -455,22 +466,30 @@ The approved roadmap (v1.8–v1.16), the interface-v2 rebuild (v1.17–v1.20) an
 the operational-readiness program (v1.21–v1.30) are all complete. What is left
 is below, in the order it should be picked up.
 
-1. **Deploy v1.30.0 — both halves.** The backend has changed in nearly every
+1. **Deploy v1.31.0 — both halves.** The backend has changed in nearly every
    release since v1.16.0, so a frontend-only push ships a client that calls
    endpoints the server does not have.
    - Paste `backend/Code.gs` into Apps Script and **deploy a new Web App
-     version**. New tabs (`TimeClock`, `StockTakes`, `Audit`) are created on
+     version**. New tabs (`TimeClock`, `StockTakes`, `Audit`, `Repairs`) are created on
      first use.
    - Run **`installBackupTrigger()`** once — nightly Drive backups into the
      `POS Backup` folder do not start until it is installed.
    - Run **`installReportTriggers()`** once, then set recipients in
      Settings → *Scheduled reports*. **Every cadence ships off**; nobody
      starts receiving mail because a release landed.
-   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.30.0 shell
+   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.31.0 shell
      on next load (`sw.js` VERSION is bumped).
    - Sign in as an admin once and complete the store setup dialog (language,
      country, currency) if this is a fresh deployment.
-2. **Cash drawer + thermal printer — v1.28.0, parked.** Held at the owner's
+2. **v1.32.0 — repair deposits and collection.** Designed and specced
+   (`docs/superpowers/specs/2026-09-12-repairs-design.md`), not built. A deposit
+   is cash in the drawer that is **not earned revenue**, so it gets the card-
+   tender treatment from v1.29.0: a `deposit` ledger kind that counts toward the
+   drawer but never toward sales, a `deposit` **tender** applied at collection
+   so the same pound never touches the drawer twice, an admin/manager-gated
+   `deposit_refund`, and a deposits-held liability figure in reports and the
+   export. v1.31.0's `collected` guard stays until this lands.
+3. **Cash drawer + thermal printer — v1.28.0, parked.** Held at the owner's
    request until they speak to the business owners. **The version number is
    deliberately left unused** so the release can land under it. It is blocked
    on one decision, not on effort: **USB, network or Bluetooth** are
@@ -479,8 +498,8 @@ is below, in the order it should be picked up.
    terminal). Picking wrong means rewriting rather than configuring, which is
    why it was not guessed at. See D1 in
    `docs/superpowers/plans/2026-09-11-operational-readiness-program.md`.
-3. **Re-run `pdf-smoke`** somewhere Edge will launch headless — see §6.
-4. **Translation — needs a decision from the owner.** The one open review
+4. **Re-run `pdf-smoke`** somewhere Edge will launch headless — see §6.
+5. **Translation — needs a decision from the owner.** The one open review
    finding; see §10.
 
 ## 10. Review findings — status (reviewed 2026-09-10, closed out 2026-09-11)

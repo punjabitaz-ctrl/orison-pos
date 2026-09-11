@@ -7,7 +7,40 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.30.0 — the remaining open items
+## Latest: v1.31.0 — repair tickets
+
+**2026-09-12.** The shop takes repairs in every day and the POS never knew
+about them. That was the largest remaining hole in the stock figure.
+
+- **Book a device in** — make, model, IMEI, what is wrong with it, what
+  condition it arrived in, what was left with it. Ticket numbers run
+  `Orison-R000001`, sequential and gap-free.
+- **Fitting a part takes it off the shelf there and then.** Same code path as a
+  sale, same lock: the counter cannot sell a serial the bench has fitted, and
+  the bench cannot fit one the counter has sold. Cancel a job and every part
+  comes back.
+- **A bench book you can search** by ticket number, customer, phone or IMEI,
+  capped at 100 rows a page like the ledger.
+- **Admin void** for a ticket entered in error, with a reason, kept on the sheet
+  for the audit trail.
+
+**Not in this release, on purpose:** deposits and the collection invoice are
+v1.32.0, so `collected` is unreachable and the server refuses it — a repair is
+collected by invoicing it, never by setting a status. Repairs are online-only;
+selling offline is unaffected.
+
+**Validation:** backend-sim **PASS 641 / FAIL 0** (58 new) · client units
+**PASS 359 / FAIL 0** (9 new). Screen verified in-browser: renders, filters,
+paginates, degrades to a visible empty state when the backend is unreachable,
+zero console errors.
+
+### Deploying
+
+**Backend redeploy required.** The `Repairs` tab is created on first use.
+
+---
+
+## v1.30.0 — the remaining open items
 
 **2026-09-11.** Last of the operational-readiness program.
 
