@@ -99,6 +99,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/purchase-orders/detail': return purchaseOrderDetail_(session, params);
     case '/api/purchase-orders/receive': return purchaseOrderReceive_(session, payload);
     case '/api/purchase-orders/cancel': return purchaseOrderCancel_(session, payload);
+    case '/api/repairs':         return repairs_(session, payload, params);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
@@ -4027,6 +4028,81 @@ function purchaseOrderCancel_(session, payload) {
   try {
     applyPatches_('PurchaseOrders', PO_HEADERS, 'id', { [id]: { status: 'CANCELLED', updated_at: new Date().toISOString() } });
     return { id: id, status: 'CANCELLED' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Repairs
+ *
+ *  A ticket is an open document, like a purchase order: a status plus two
+ *  JSON payloads, resolving into a ledger transaction when it closes.
+ *  Parts leave stock the moment they are fitted, so on-hand always
+ *  describes what is physically in the building.
+ *
+ *  Online-only, like purchase orders and customers. A ticket is a numbered
+ *  document handed to a customer standing at the counter, and an offline
+ *  terminal cannot know the next number without risking a collision.
+ * ------------------------------------------------------------------ */
+
+var REPAIR_ROLES_ANY = ['admin', 'manager', 'cashier'];
+
+function repairs_(session, payload, params) {
+  if (payload && Object.keys(payload).length) return repairCreate_(session, payload);
+  return repairList_(session, params);
+}
+
+function repairCreate_(session, payload) {
+  requireRole_(session, REPAIR_ROLES_ANY);
+
+  var make = String(payload.deviceMake || '').trim().slice(0, 60);
+  var model = String(payload.deviceModel || '').trim().slice(0, 60);
+  var fault = String(payload.reportedFault || '').trim().slice(0, 500);
+  if (!make && !model) throw statusError_(400, 'Which device is it? Give at least a make or a model.');
+  if (!fault) throw statusError_(400, 'What is wrong with it? The reported fault is required.');
+
+  var name = String(payload.customerName || '').trim().slice(0, 120);
+  var phone = String(payload.customerPhone || '').trim().slice(0, 40);
+  if (!name && !phone) throw statusError_(400, 'A name or a phone number is needed to give the device back.');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var now = new Date().toISOString();
+    var id = Utilities.getUuid();
+    var ticketNo = reserveTicketNumber_();
+    appendRows_('Repairs', REPAIR_HEADERS, [{
+      id: id,
+      store_id: getStore_().id,
+      ticket_no: ticketNo,
+      customer_id: String(payload.customerId || ''),
+      customer_name: name,
+      customer_phone: phone,
+      device_make: make,
+      device_model: model,
+      device_serial: String(payload.deviceSerial || '').trim().slice(0, 60),
+      reported_fault: fault,
+      condition_note: String(payload.conditionNote || '').trim().slice(0, 500),
+      accessories: String(payload.accessories || '').trim().slice(0, 200),
+      status: 'intake',
+      parts_json: '[]',
+      labour_json: '[]',
+      estimate_total: num_(payload.estimateTotal) > 0 ? round2_(num_(payload.estimateTotal)) : 0,
+      deposit_total: 0,
+      final_total: 0,
+      assigned_to: String(payload.assignedTo || ''),
+      note: String(payload.note || '').trim().slice(0, 500),
+      created_by: String(session.uid || ''),
+      created_at: now,
+      updated_at: now,
+      promised_at: String(payload.promisedAt || '').slice(0, 10),
+      closed_at: '',
+      invoice_tx_id: '',
+    }]);
+    logAudit_(session, 'repair.created', 'repair', id,
+      ticketNo + ' - ' + (make + ' ' + model).trim() + ' - ' + fault.slice(0, 80), '');
+    return { id: id, ticketNo: ticketNo, status: 'intake' };
   } finally {
     lock.releaseLock();
   }

@@ -3393,6 +3393,34 @@ check('statement carries the changer/cashier',
     && sandbox.REPAIR_TERMINAL.voided === 1
     && !sandbox.REPAIR_TERMINAL.ready,
     JSON.stringify(sandbox.REPAIR_TERMINAL));
+
+  const rpAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const rpCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const rpCashId = req('/api/admin/users/list', {}, { session: rpAdm }).data.users
+    .find((u) => u.email === 'amara@example.com').id;
+
+  const made = req('/api/repairs', {
+    customerName: 'Priya Sharma', customerPhone: '07700 900123',
+    deviceMake: 'Apple', deviceModel: 'iPhone 13', deviceSerial: '356789104523901',
+    reportedFault: 'Screen cracked, touch dead bottom third',
+    conditionNote: 'Deep scratch on back glass, corner dented',
+    accessories: 'Case, no SIM tray tool',
+  }, { session: rpCash });
+
+  check('a cashier can take a repair in', made.ok === true, JSON.stringify(made.data));
+  check('it comes back with a ticket number',
+    /^Orison-R[0-9]{6}$/.test(made.data.ticketNo), made.data.ticketNo);
+  check('a new ticket starts at intake', made.data.status === 'intake', made.data.status);
+
+  check('a device is required',
+    req('/api/repairs', { customerName: 'X', reportedFault: 'broken' }, { session: rpCash }).status === 400);
+  check('a reported fault is required',
+    req('/api/repairs', { customerName: 'X', deviceMake: 'Apple' }, { session: rpCash }).status === 400);
+  check('some way to reach the customer is required',
+    req('/api/repairs', { deviceMake: 'Apple', reportedFault: 'broken' }, { session: rpCash }).status === 400);
+
+  check('taking a repair in is audited',
+    req('/api/audit', {}, { session: rpAdm, params: { action: 'repair.created' } }).data.entries.length === 1);
 }
 
 
