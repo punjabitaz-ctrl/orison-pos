@@ -229,6 +229,44 @@
     .close { padding: 32px 26px; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  /* ---------- print ---------- */
+  @page { size: A4; margin: 14mm 12mm; }
+  @media print {
+    :root {
+      --paper: #ffffff; --card: #ffffff; --sunk: #f2f5f8;
+      --ink: #10202f; --muted: #4d5d6e; --faint: #7c8b9b;
+      --line: #d5dde5; --line-2: #c2ccd6;
+      --gold: #966c14; --ok: #0c6644; --alert: #9d1f26;
+      --shadow: none; --shadow-lift: none;
+    }
+    /* keep the palette: without this Chromium drops every background fill
+       and the receipt, tiles and closing panel print as empty outlines. */
+    *, *::before, *::after { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { background: #fff; font-size: 10.5pt; line-height: 1.5; }
+    .wrap { max-width: none; padding: 0; }
+    .mast { border-bottom: 1px solid var(--line); }
+    .mast-in { padding: 0 0 10px; }
+    .hero { padding: 18px 0 14px; }
+    .hero h1 { font-size: 30pt; }
+    .lede { font-size: 11pt; }
+    section { padding: 18px 0; break-inside: auto; }
+    .sec-head { margin-bottom: 14px; }
+    .sec-head h2 { font-size: 17pt; }
+    .close { margin: 20px 0 10px; padding: 24px 26px; background: #10202f !important; color: #eef3f8 !important; }
+    .close h2 { color: #fff !important; }
+    .close p, .close .fact span { color: #b6c6d6 !important; }
+    .close .fact b { color: #fff !important; }
+    .receipt { box-shadow: none; border: 1px solid var(--line); max-width: 300px; }
+    .r-tag { background: #10202f !important; color: #fff !important; }
+    .tile i { color: #fff !important; }
+    /* nothing that reads as one object may be split down the middle */
+    .panel, .slip, .tile, .step, .receipt, .close, .tbl-wrap, .fact { break-inside: avoid; }
+    section, .sec-head, h2, h3 { break-after: avoid-page; }
+    tr { break-inside: avoid; }
+    footer { break-inside: avoid; }
+    a { text-decoration: none; }
+  }
 </style>
 
 <header class="mast">
