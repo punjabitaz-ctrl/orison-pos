@@ -3421,6 +3421,33 @@ check('statement carries the changer/cashier',
 
   check('taking a repair in is audited',
     req('/api/audit', {}, { session: rpAdm, params: { action: 'repair.created' } }).data.entries.length === 1);
+
+  const rpList = req('/api/repairs', {}, { session: rpCash }).data;
+  check('the list comes back', rpList.repairs.length === 1, String(rpList.repairs.length));
+  check('a row carries the device as one readable string',
+    rpList.repairs[0].device === 'Apple iPhone 13', rpList.repairs[0].device);
+
+  check('a ticket is findable by its number',
+    req('/api/repairs', {}, { session: rpCash, params: { q: made.data.ticketNo } }).data.repairs.length === 1);
+  check('a ticket is findable by the customer',
+    req('/api/repairs', {}, { session: rpCash, params: { q: 'priya' } }).data.repairs.length === 1);
+  check('a ticket is findable by the device serial',
+    req('/api/repairs', {}, { session: rpCash, params: { q: '356789104523901' } }).data.repairs.length === 1);
+  check('a search that matches nothing returns nothing, not everything',
+    req('/api/repairs', {}, { session: rpCash, params: { q: 'zzzznope' } }).data.repairs.length === 0);
+
+  check('the list can be filtered by status',
+    req('/api/repairs', {}, { session: rpCash, params: { status: 'intake' } }).data.repairs.length === 1
+    && req('/api/repairs', {}, { session: rpCash, params: { status: 'ready' } }).data.repairs.length === 0);
+
+  const rpDet = req('/api/repairs/detail', {}, { session: rpCash, params: { id: made.data.id } }).data;
+  check('the detail carries the fault and the condition note',
+    rpDet.reportedFault.indexOf('Screen cracked') === 0
+    && rpDet.conditionNote.indexOf('Deep scratch') === 0, JSON.stringify(rpDet));
+  check('the detail carries empty parts and labour to begin with',
+    rpDet.parts.length === 0 && rpDet.labour.length === 0);
+  check('an unknown ticket is a 404',
+    req('/api/repairs/detail', {}, { session: rpCash, params: { id: 'nope' } }).status === 404);
 }
 
 

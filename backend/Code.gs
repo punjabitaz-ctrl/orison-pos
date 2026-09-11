@@ -100,6 +100,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/purchase-orders/receive': return purchaseOrderReceive_(session, payload);
     case '/api/purchase-orders/cancel': return purchaseOrderCancel_(session, payload);
     case '/api/repairs':         return repairs_(session, payload, params);
+    case '/api/repairs/detail':  return repairDetail_(session, params);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
@@ -4106,6 +4107,113 @@ function repairCreate_(session, payload) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/* The ledger caps at 100 a page (v1.25.0) and so does this: a bench with 400
+ * open jobs still only ever ships 100 rows to a phone. */
+var REPAIR_PAGE_MAX = 100;
+
+function repairTotals_(row) {
+  var parts = itobjs_(row.parts_json);
+  var labour = itobjs_(row.labour_json);
+  var p = 0, l = 0, i;
+  for (i = 0; i < parts.length; i++) p += num_(parts[i].unitPrice) * num_(parts[i].quantity);
+  for (i = 0; i < labour.length; i++) l += num_(labour[i].amount);
+  return { parts: round2_(p), labour: round2_(l), total: round2_(p + l) };
+}
+
+function repairRow_(row) {
+  var t = repairTotals_(row);
+  return {
+    id: String(row.id),
+    ticketNo: String(row.ticket_no || ''),
+    customerId: String(row.customer_id || ''),
+    customerName: String(row.customer_name || ''),
+    customerPhone: String(row.customer_phone || ''),
+    device: (String(row.device_make || '') + ' ' + String(row.device_model || '')).trim(),
+    deviceSerial: String(row.device_serial || ''),
+    reportedFault: String(row.reported_fault || ''),
+    status: String(row.status || 'intake'),
+    partsTotal: t.parts,
+    labourTotal: t.labour,
+    total: t.total,
+    estimateTotal: num_(row.estimate_total),
+    createdAt: String(row.created_at || ''),
+    updatedAt: String(row.updated_at || ''),
+    promisedAt: String(row.promised_at || ''),
+  };
+}
+
+/* Everything somebody might have written on the counter: the ticket number on
+ * the slip, the customer's name or number, the IMEI on the back of the box. */
+function repairMatchesQuery_(row, q) {
+  if (!q) return true;
+  var hay = [row.ticket_no, row.customer_name, row.customer_phone, row.device_make,
+    row.device_model, row.device_serial, row.reported_fault, row.note]
+    .join(' ').toLowerCase();
+  return hay.indexOf(q) >= 0;
+}
+
+function repairList_(session, params) {
+  requireRole_(session, REPAIR_ROLES_ANY);
+  var p = params || {};
+  var q = String(p.q || '').trim().toLowerCase();
+  var wantStatus = String(p.status || '').trim();
+  var cursor = String(p.cursor || '');
+  var limit = Math.min(REPAIR_PAGE_MAX, Math.max(1, num_(p.limit) || REPAIR_PAGE_MAX));
+
+  var rows = readRows_('Repairs', REPAIR_HEADERS);
+  rows.sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); });
+
+  var out = [];
+  var matched = 0;
+  var more = false;
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    /* A voided ticket is one that should not exist. It stays on the sheet for
+       the audit trail, but it is not part of the day's work. */
+    if (!wantStatus && String(r.status) === 'voided') continue;
+    if (wantStatus && String(r.status) !== wantStatus) continue;
+    if (!repairMatchesQuery_(r, q)) continue;
+    matched++;
+    if (cursor && String(r.created_at).localeCompare(cursor) >= 0) continue;
+    if (out.length >= limit) { more = true; continue; }
+    out.push(repairRow_(r));
+  }
+
+  return {
+    repairs: out,
+    matched: matched,
+    nextCursor: more && out.length ? out[out.length - 1].createdAt : '',
+    query: q,
+    status: wantStatus,
+  };
+}
+
+function repairFind_(id) {
+  var rows = readRows_('Repairs', REPAIR_HEADERS);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].id) === String(id)) return rows[i];
+  }
+  return null;
+}
+
+function repairDetail_(session, params) {
+  requireRole_(session, REPAIR_ROLES_ANY);
+  var row = repairFind_(String((params || {}).id || ''));
+  if (!row) throw statusError_(404, 'Repair not found');
+  var dto = repairRow_(row);
+  dto.conditionNote = String(row.condition_note || '');
+  dto.accessories = String(row.accessories || '');
+  dto.note = String(row.note || '');
+  dto.assignedTo = String(row.assigned_to || '');
+  dto.closedAt = String(row.closed_at || '');
+  dto.invoiceTxId = String(row.invoice_tx_id || '');
+  dto.depositTotal = num_(row.deposit_total);
+  dto.finalTotal = num_(row.final_total);
+  dto.parts = itobjs_(row.parts_json);
+  dto.labour = itobjs_(row.labour_json);
+  return dto;
 }
 
 /* ------------------------------------------------------------------ *
