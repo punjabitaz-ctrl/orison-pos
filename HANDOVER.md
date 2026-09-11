@@ -14,8 +14,8 @@ record of truth; every feature is one tagged revision.
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
 | Current version | **v1.30.0** — the remaining open items (`2026-09-11`) |
-| Validation bar | `backend-sim` **PASS 583 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
-| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
+| Validation bar | `backend-sim` **PASS 583 / FAIL 0** · client units **PASS 350 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~5,110 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
 
@@ -354,7 +354,7 @@ admin/manager.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. 446 checks: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **583 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -364,7 +364,7 @@ admin/manager.
   the guards that now read under the lock).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  237 checks: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  **350 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
   ui `fmt`/`esc`/`debounce`/`csvCell`/`emptyState`/`skeleton`, (v1.15.0)
@@ -375,6 +375,13 @@ admin/manager.
   exclude their own day, hourly buckets + trading window, top sellers/margin,
   hours from open and closed punches.
 - `tests/pdf-send-smoke.mjs` — real headless browser, receipt PDF/share.
+  **⚠ UNRUN since the v1.18.0 gate.** Edge refuses to launch headless on this
+  machine (`Failed to launch the browser process: Code: 0`), including against
+  a clean temp profile, so every release from v1.19.0 onward shipped with this
+  gate reported as *not run* rather than as a pass. The receipt-PDF path is
+  otherwise unchanged across those releases, but it is untested — **re-run it
+  on a machine where Edge or Chrome will launch headless before treating the
+  receipt path as validated.**
 - `tests/e2e.mjs` — online happy path only; **skips without a live backend**;
   offline toggle, queue-then-reconnect sync, refunds, customers, reports, and
   purchases are NOT e2e-tested. Biggest remaining test gap.
@@ -444,71 +451,78 @@ Status of every finding class:
 
 ## 9. Standing todo (do these next)
 
-1. **Roadmap (user-directed order):**
-   - ~~**Price history & tracking**~~ — shipped in **v1.8.0**.
-   - ~~**Customer statements**~~ — shipped in **v1.9.0**.
-   - ~~**Aging inventory**~~ — shipped in **v1.10.0**.
-   - ~~**Deferred hardening list**~~ — **all shipped in v1.11.0** (lock-scope
-     races, VOIDED re-push idempotency, same-batch refunds/duplicates, GP
-     cost-at-sale, discounts in breakdowns, store-TZ day windows).
-   - ~~**Client test harness for `money.js`/`sync.js`**~~ — shipped in
-     **v1.12.0** (154 unit checks across money/sync/db/alerts/ui; 228 after
-     v1.14.0 added `stats.js` and v1.15.0 added `labels.js` + the CSV helpers).
-2. **Deploy current version** — v1.16.0 needs **both halves**: paste
-   `backend/Code.gs` into Apps Script and deploy a new Web App version (the
-   v1.14.0 time-clock endpoints and `shifts_` fix, the v1.15.0 reorder /
-   bulk-price / stock-take endpoints, the v1.15.1 hardening and the v1.16.0
-   localisation fields; the `TimeClock` and `StockTakes` tabs are created on
-   first use), then push `public/` to Cloudflare Pages as usual — **`_headers`
-   changed in v1.15.1, so confirm the new CSP is actually being served**.
-   Terminals pick up the v1.16.0 shell on next load. **Then sign in as an admin
-   once and complete the store setup dialog** (language, country, currency);
-   until that is done the store formats as en-US / USD with a US cash ladder. Per terminal that wants a
-   customer display: Settings → *Customer display* → mirror + open window
-   (allow pop-ups once). Local smoke: `npm run serve` + a browser at 375px and
-   ≥1024px.
-3. **Visual roadmap (user-approved order):**
-   - ~~v1.12.0~~ **done** — client test harness.
-   - ~~v1.13.0~~ **done** — theme polish + responsive shell: typography/
-     spacing polish (same navy/gold), **toggleable desktop sidebar** (icon
-     rail ↔ expanded) replacing the bottom tabbar at ≥1024px, **dual-panel
-     register** (product grid left, cart right on desktop), right-side
-     checkout + sheets on wide screens, `app.js` responsive state
-     (`mobile`/`tablet`/`desktop`) via `matchMedia`.
-   - ~~v1.14.0~~ **done** — screen refresh + enhanced dashboard + staff tools:
-     trend KPIs, hourly chart, top-seller table, shift summary; Staff screen
-     (time clock, shift history, per-cashier performance); shared skeletons,
-     one empty-state component, 44px touch targets, scrolling tab bar.
-   - ~~v1.15.0~~ **done** — customer display + inventory tools:
-     BroadcastChannel mirror with a second-screen option; bulk price update,
-     stock-take mode, barcode label printing, low-stock reorder worksheet.
-   - ~~v1.16.0~~ **done** — store localisation & multi-currency: first-run
-     language / country / currency setup, 18 currencies with real cash
-     ladders, every money surface formatting through the store's choice.
-   - **The roadmap the user approved is now complete.** Next work is
-     unscheduled: see §10 for the open review findings and what they cost —
-     the first is whether to translate the interface, and into which languages.
+The approved roadmap (v1.8–v1.16), the interface-v2 rebuild (v1.17–v1.20) and
+the operational-readiness program (v1.21–v1.30) are all complete. What is left
+is below, in the order it should be picked up.
 
-## 10. Review findings — open (2026-09-10)
+1. **Deploy v1.30.0 — both halves.** The backend has changed in nearly every
+   release since v1.16.0, so a frontend-only push ships a client that calls
+   endpoints the server does not have.
+   - Paste `backend/Code.gs` into Apps Script and **deploy a new Web App
+     version**. New tabs (`TimeClock`, `StockTakes`, `Audit`) are created on
+     first use.
+   - Run **`installBackupTrigger()`** once — nightly Drive backups into the
+     `POS Backup` folder do not start until it is installed.
+   - Run **`installReportTriggers()`** once, then set recipients in
+     Settings → *Scheduled reports*. **Every cadence ships off**; nobody
+     starts receiving mail because a release landed.
+   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.30.0 shell
+     on next load (`sw.js` VERSION is bumped).
+   - Sign in as an admin once and complete the store setup dialog (language,
+     country, currency) if this is a fresh deployment.
+2. **Cash drawer + thermal printer — v1.28.0, parked.** Held at the owner's
+   request until they speak to the business owners. **The version number is
+   deliberately left unused** so the release can land under it. It is blocked
+   on one decision, not on effort: **USB, network or Bluetooth** are
+   materially different builds (a USB drawer kicks through the printer; a
+   network printer is an IP and a raw 9100 socket; Bluetooth needs pairing per
+   terminal). Picking wrong means rewriting rather than configuring, which is
+   why it was not guessed at. See D1 in
+   `docs/superpowers/plans/2026-09-11-operational-readiness-program.md`.
+3. **Re-run `pdf-smoke`** somewhere Edge will launch headless — see §6.
+4. **Translation — needs a decision from the owner.** The one open review
+   finding; see §10.
+
+## 10. Review findings — status (reviewed 2026-09-10, closed out 2026-09-11)
 
 A full security + usability pass was run after v1.15.0. Everything cheap and
-safe to fix shipped in **v1.15.1** (CSP redirect, prototype-key corruption,
-two remaining pre-lock reads, dialog keyboard access). What is left is here,
-with what each would cost. Nothing below is silently ignored.
+safe to fix shipped in **v1.15.1**. The rest was written up here with what each
+would cost, and has since been worked through. **Seven of the eight are now
+closed.** Nothing below was silently dropped.
 
-### Closed since the review
+### Closed
 
-- ~~**The app cannot decide what currency it is in.**~~ **Shipped in v1.16.0**:
-  the owner asked for multiple currencies with the admin setting language,
-  country and currency at first setup, and that is what the release does —
-  store-level locale/country/currency/ladder, a first-run dialog, and every
-  money surface formatting through it.
+- ~~**The app cannot decide what currency it is in.**~~ **v1.16.0** —
+  store-level locale / country / currency / cash ladder, a first-run dialog,
+  and every money surface formatting through it.
+- ~~**2. A cart lives only in memory.**~~ **v1.21.0** — the cart persists to
+  IndexedDB on every mutation and rehydrates on boot, so a refresh, a tab
+  eviction or a phone killing a backgrounded PWA no longer loses a part-rung
+  sale.
+- ~~**3. A sync mid-cart can drift the on-hand mirror.**~~ **v1.21.0** — the
+  fix for #2 made this structural rather than incidental: `cart.js` **derives**
+  availability as `serverOnHand − quantityInCart` at render time instead of
+  mutating the catalog mirror, so a `pull()` mid-cart can no longer disagree
+  with what is on screen. Nothing decrements stock locally any more, which is
+  also why the external-sale dialog cannot claim a unit an open till sale is
+  holding.
+- ~~**4. The time clock needs a connection.**~~ **v1.30.0** — punches queue
+  through the outbox carrying **the moment they happened**, and are sent before
+  the sale batch so the floor record is right even if a sale is rejected.
+- ~~**5. Any signed-in account can enumerate the staff roster.**~~ **v1.30.0**
+  — `/api/config` returns the roster to manager/admin only. (The account-based
+  lockout itself is the harder half and stays documented under §7.)
+- ~~**6. The display never goes stale.**~~ **v1.30.0** — a frame older than
+  three minutes reads as idle, rechecked every thirty seconds.
+- ~~**7. `api.js` uses one 15s timeout for every call.**~~ **v1.30.0** —
+  60s for reports, exports, backups, audit and the reorder worksheet; 15s for
+  everything else, so a slow report is no longer reported as "offline".
 
 ### Open — the one that needs a decision
 
-1. **The interface itself is not translated.** v1.16.0 made the *locale* real —
-   currency, number grouping, dates all follow the store — but every string in
-   the UI is still English. Translating it is a different shape of work:
+1. **The interface itself is not translated.** v1.16.0 made the *locale* real
+   — currency, number grouping, dates all follow the store — but every string
+   in the UI is still English. Translating it is a different shape of work:
    extract ~600–1,000 strings from 15 screens into a catalogue, add a `t()`
    lookup and a per-locale bundle, handle plurals, and re-check every layout
    that assumes English word lengths (German and French run 20–30% longer;
@@ -518,61 +532,27 @@ with what each would cost. Nothing below is silently ignored.
    need it, and is RTL in scope? A half-translated UI is worse than an English
    one, so this should be all-or-nothing per language.
 
-### Open — worth doing, no decision needed
+### Deferred by decision, not by oversight
 
-2. **A cart lives only in memory.** `state.cart` is a `Map` on the app object.
-   A refresh, an OS tab eviction, or a phone killing a backgrounded PWA loses
-   a part-rung sale — on the device class this app is designed for, that is a
-   routine event, not an edge case. Serialized lines are worse: `addCartLine`
-   removes the serial from the local product mirror, so the units come back
-   only through `lineRemove`, which a crash never reaches. **Fix:** persist
-   the cart to IndexedDB on every mutation (the `meta` store already exists)
-   and rehydrate on boot; restore the mirrored stock from the persisted cart
-   rather than from the sync pull. ~Half a day, plus client unit tests.
-3. **A sync mid-cart can drift the on-hand mirror.** The register decrements
-   `product.onHand` on the in-memory catalog object as lines are added, but a
-   `pull()` (periodic, or on reconnect) replaces those objects wholesale from
-   the server. The open cart still holds the old references, so the displayed
-   stock and the quantities the cart will restore on removal can disagree.
-   **Fix:** derive available stock as `serverOnHand − quantityInCart` at
-   render time instead of mutating the mirror. Related to #2 and best done
-   with it.
-4. **The time clock needs a connection.** `/api/timeclock/punch` is a live
-   call; the Staff screen disables the button offline and says so, which is
-   honest, but a shop that can *sell* offline cannot *clock in* offline.
-   **Fix:** queue punches through the existing outbox with the same
-   first-committed-wins treatment sales get. ~A day; the sync layer is the
-   part that needs care, not the endpoint.
-5. **Any signed-in account can enumerate the staff roster.** `/api/config`
-   returns every active user's name and email to any role. Combined with the
-   account-based login lockout (documented weakness #6), one cashier can lock
-   every colleague out of the till for 15 minutes at a time. **Fix:** return
-   the roster only to admin/manager, or drop `email` from the cashier view.
-   An hour. (The lockout itself is the harder half and stays documented.)
-6. **The display never goes stale.** If the register tab closes mid-sale, the
-   customer display keeps showing the last cart indefinitely. **Fix:** treat a
-   frame older than a few minutes as idle. An hour.
-7. **`api.js` uses one 15s timeout for every call.** Reports and Drive export
-   over a large sheet can legitimately exceed it, and the client maps a
-   timeout to "offline", which hides the real cause. **Fix:** per-call
-   timeouts (the callers already pass `{ timeout }` in a couple of places —
-   make it consistent). An hour.
+Nine items were considered during the operational-readiness program and
+deliberately left out, each with a reason recorded in
+`docs/superpowers/plans/2026-09-11-operational-readiness-program.md`: repairs
+workflow, trade-ins, warranty per serial, layaway, store credit as a
+first-class object, accounting integration, marketplace API sync, UI
+translation / RTL (the same as #1 above), and tax-compliance specifics.
 
 ### Confirmed still-correct (checked this pass, no action)
 
 - Every privileged route calls `requireRole_`; refunds, payouts and
-  collections remain admin/manager-only.
+  collections remain admin/manager-only, and v1.23.0 moved bulk price, stock
+  take, suppliers and PO cancellation to **admin-only**.
 - `esc()` covers user text on every screen; `toast()` writes `textContent`;
   the receipt builder escapes line names built from product + serial.
 - The customer display is publish-only and same-origin, and the frame carries
   no cost, margin, customer or till field.
 - CSRF is not applicable: credentials live in IndexedDB and travel in the
   request body, so a cross-site page cannot make an authenticated call.
-- The v1.11.0 lock-scope sweep is now genuinely complete (v1.15.1 closed the
-  last two).
-- Secret comparison is constant-time on both paths: v1.15.1 extracted the
-  XOR-accumulate loop `verifyToken_` already used into `constantEquals_` and
-  put the PIN hash check behind it too (it had been a plain `!==`).
+- Secret comparison is constant-time on both paths (`constantEquals_`).
 
 ## 11. Session context / reconstructability
 
@@ -587,3 +567,69 @@ with what each would cost. Nothing below is silently ignored.
 - PowerShell: git push output looks like red errors but succeeds; verify the
   `main -> main` and `* [new tag]` lines.
 - `AGENTS.md` is the operating guide future sessions should follow verbatim.
+
+## 12. Session handover — 2026-09-11
+
+What happened in one line: **the interface-v2 rebuild and the whole
+operational-readiness program shipped — fourteen tagged releases, v1.17.0
+through v1.30.0.**
+
+### Shipped tonight
+
+| Release | What it does |
+|---|---|
+| v1.17.0 | New shell and navigation — launcher-tile home, nav as data (`nav.js`) |
+| v1.18.0 | Sell & checkout rebuilt |
+| v1.19.0 | Three money-out kinds — paid out, cash pick-up, staff expense |
+| v1.20.0 | Remaining screens brought onto the new shell |
+| v1.21.0 | **No sale is lost if interrupted** — cart persists to IndexedDB; availability is *derived*, never mutated (`cart.js`) |
+| v1.22.0 | Audit log, admin-only, with day/time stamps |
+| v1.23.0 | Management and ownership functions moved to admin-only |
+| v1.24.0 | Receipt numbering — `Orison-S000001`, allocated at sync |
+| v1.25.0 | Drive backups into `POS Backup` (date+time in every filename) + the 100-row cap with search |
+| v1.26.0 | Daily / weekly / monthly reports emailed to nominated admins |
+| v1.27.0 | Record a sale made elsewhere — marketplace, own site, phone |
+| v1.29.0 | Card tender — kept out of the drawer, counted as revenue |
+| v1.30.0 | The four remaining §10 findings |
+
+Two pre-existing bugs were found and fixed on the way: the `?status=all`
+shift-roster leak (v1.17.0) and the dead cart ✕ button (v1.18.0).
+
+### Two decisions that shaped the build
+
+- **Receipt numbers are allocated at sync, not at sale.** An offline terminal
+  cannot know the next number without risking a collision, so an offline
+  receipt prints "Receipt number pending sync" and repaints when the push
+  lands. The alternative — per-terminal number ranges — was rejected because
+  it makes the numbering non-sequential, which is exactly what the owner asked
+  for it *not* to be.
+- **The 100-transaction cap had a knock-on the request did not mention.** The
+  dashboard used to read the whole ledger. It now pages today only (bounded at
+  10 pages) and sources the 14-day chart and 30-day top sellers from
+  `/api/reports`, which is uncapped and discount-accurate. Without that the cap
+  would have silently made the dashboard wrong rather than slow.
+
+### Pick up here in the morning
+
+1. **Deploy v1.30.0 — both halves, plus the two one-time trigger installs.**
+   Full steps in §9. This is the gating item: everything above is tagged but
+   none of it is live.
+2. **The printer/drawer question** — v1.28.0 is parked on it, and it is a
+   question for the business owners, not a build task. §9 item 2.
+3. **`pdf-smoke`** — §6. It has been unrun since v1.18.0 and should not be
+   assumed green.
+4. **Translation** — §10, open finding #1, needs the owner to say which
+   languages and whether RTL is in scope.
+
+### Worth knowing before you touch it
+
+- **The service worker will lie to you.** During browser verification it
+  repeatedly served a stale build. Clear caches **and** unregister the SW
+  before every check, or you will verify the previous release.
+- **Never chain a gate into a commit and a tag with `&&`.** At v1.23.0 a
+  `grep` in the chain matched nothing (a multibyte prefix), so the commit was
+  skipped while `git tag` still ran — and the tag landed on the previous
+  release's commit. It was caught, deleted locally and remotely, and redone.
+  Run the gate, read it, then commit, then tag, as separate commands.
+- The Bash heredoc breaks on very long commands (~6KB+); use the file-write
+  tool for anything large.
