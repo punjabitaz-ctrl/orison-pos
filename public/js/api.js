@@ -42,7 +42,15 @@ async function clearToken() {
   await idb.put('meta', m, 'config');
 }
 
-async function request(path, { method = 'GET', body, timeout = 15000 } = {}) {
+/* One 15s timeout for every call mapped a slow report onto "offline", which
+   hid the real cause. Reads that legitimately take longer get longer. */
+const SLOW_CALLS = ['/api/reports', '/api/drive/export', '/api/backup/run', '/api/audit', '/api/inventory/reorder'];
+
+function defaultTimeout(action) {
+  return SLOW_CALLS.some((p) => action.indexOf(p) === 0) ? 60000 : 15000;
+}
+
+async function request(path, { method = 'GET', body, timeout } = {}) {
   const base = await getBaseUrl();
   const token = await getToken();
   const appToken = await getAppToken();
@@ -61,7 +69,7 @@ async function request(path, { method = 'GET', body, timeout = 15000 } = {}) {
   };
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
+  const timer = setTimeout(() => controller.abort(), timeout || defaultTimeout(action));
   try {
     const res = await fetch(base, {
       method: 'POST',

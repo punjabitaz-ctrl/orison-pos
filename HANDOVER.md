@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.29.0** — card tender (`2026-09-11`) |
-| Validation bar | `backend-sim` **PASS 574 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.30.0** — the remaining open items (`2026-09-11`) |
+| Validation bar | `backend-sim` **PASS 583 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,15 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.30.0** The remaining `HANDOVER` §10 items, and the end of the
+  operational-readiness program. **Fixed:** `/api/config` handed the staff
+  roster to every role (with the account lockout, one cashier could lock out the
+  shop) — now manager/admin only; **time-clock punches queue offline** through
+  the outbox carrying the moment they happened and are sent before the sale
+  batch; the **customer display goes idle** after a 3-minute-old frame rather
+  than showing a stale basket forever; **per-call timeouts** (60s for reports,
+  exports, backups, audit, reorder) so a slow report is not reported as
+  "offline". 9 new sim checks.
 - **v1.29.0** Card tender. A card sale previously had to be rung as cash, so it
   inflated the expected drawer and closed every shift short by the card total.
   **Card** is now a tender (recorded, not authorised) and is excluded from the

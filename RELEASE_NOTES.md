@@ -7,7 +7,32 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.29.0 — card tender
+## Latest: v1.30.0 — the remaining open items
+
+**2026-09-11.** Last of the operational-readiness program.
+
+- **A cashier could list every colleague.** `/api/config` handed the whole staff
+  roster — names and emails — to any signed-in account. Next to a lockout that
+  fires on five wrong PINs, that let one cashier lock the shop out of its own
+  till. Roster is now manager/admin only.
+- **Clocking in works offline.** Punches queue through the same outbox as sales,
+  carrying the moment they actually happened, and go up before the sale batch so
+  the floor record is right even if a sale is rejected.
+- **The customer display goes idle.** A register tab closing mid-sale used to
+  leave the last basket on the shopper-facing screen indefinitely.
+- **Per-call timeouts.** A slow report was being reported as "offline".
+
+**Validation:** backend-sim **PASS 583 / FAIL 0** (9 new) · client units
+**PASS 350 / FAIL 0**. All fourteen launcher destinations walked in-browser with
+zero console errors.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.29.0 — card tender
 
 **2026-09-11.** Ninth of the operational-readiness program. **v1.28.0 (cash
 drawer and thermal printer) is parked** until the hardware is confirmed.

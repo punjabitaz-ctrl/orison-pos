@@ -9,6 +9,10 @@ import { DISPLAY_CHANNEL, DISPLAY_STATE_KEY } from './customer-display.js';
 
 const root = document.getElementById('cd');
 const IDLE_AFTER_THANKS_MS = 45000;
+/* A register tab that closes mid-sale leaves the last frame on the customer
+   screen indefinitely. Anything older than this is treated as idle, so a
+   shopper never reads somebody else's basket. */
+const STALE_FRAME_MS = 3 * 60 * 1000;
 
 /* The register tells the display which currency the shop trades in; until a
    frame arrives, nothing is on screen to mis-format. */
@@ -130,7 +134,21 @@ function readLast() {
 
 /* Paint whatever the register last published, so a display opened mid-sale is
    correct immediately rather than blank until the next tap. */
-paint(readLast() || { view: 'idle' });
+function freshOrIdle(frame) {
+  if (!frame) return { view: 'idle' };
+  const age = Date.now() - (Number(frame.at) || 0);
+  return age > STALE_FRAME_MS ? { view: 'idle', store: frame.store } : frame;
+}
+
+paint(freshOrIdle(readLast()));
+
+/* And keep checking: a display left open after the register closed should fall
+   back to the welcome screen on its own. */
+setInterval(() => {
+  const last = readLast();
+  if (!last || root.dataset.view === 'idle') return;
+  if (Date.now() - (Number(last.at) || 0) > STALE_FRAME_MS) paint({ view: 'idle', store: last.store });
+}, 30000);
 
 try {
   if ('BroadcastChannel' in window) {

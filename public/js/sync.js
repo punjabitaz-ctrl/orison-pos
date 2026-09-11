@@ -103,10 +103,11 @@ export async function mergeProductLocal(product) {
 }
 
 export async function push() {
+  await pushPunches().catch(() => {});
   const deviceId = await getDeviceId();
   const outbox = await idb.getAll('outbox');
   const pending = outbox
-    .filter((o) => o.status === 'PENDING' && (o.attempts || 0) < 6)
+    .filter((o) => o.status === 'PENDING' && o.kind !== 'punch' && (o.attempts || 0) < 6)
     .map((o) => o.payload);
 
   if (!pending.length) {
@@ -131,7 +132,7 @@ export async function push() {
   const byClientTxId = {};
   for (const r of results) byClientTxId[r.clientTxId] = r;
 
-  for (const entry of outbox.filter((o) => o.status === 'PENDING')) {
+  for (const entry of outbox.filter((o) => o.status === 'PENDING' && o.kind !== 'punch')) {
     const r = byClientTxId[entry.payload.clientTxId];
     if (!r) continue;
     if (r.accepted) {
@@ -309,4 +310,42 @@ export async function syncNow() {
     return stats;
   }
   return null;
+}
+/* Time-clock punches taken while offline. They ride the same outbox as sales:
+   stored with the moment they happened, sent when the line returns. A shop that
+   can sell offline must be able to clock in offline. */
+export async function queuePunch(punch) {
+  const id = 'punch-' + (crypto.randomUUID ? crypto.randomUUID() : Date.now());
+  await idb.put('outbox', {
+    clientTxId: id,
+    kind: 'punch',
+    punch: { at: punch.at, deviceId: punch.deviceId, note: punch.note || '' },
+    status: 'PENDING',
+    attempts: 0,
+    createdAt: punch.at,
+  }, id);
+  emit({ kind: 'queued', what: 'punch' });
+  return id;
+}
+
+/* Sent before the sale batch so the floor record is right even if a sale is
+   rejected. A punch the server refuses (already clocked in, say) is dropped
+   rather than retried forever - the state it wanted is already true. */
+export async function pushPunches() {
+  if (!navigator.onLine) return { sent: 0 };
+  const outbox = await idb.getAll('outbox');
+  const queued = outbox.filter((o) => o.kind === 'punch' && o.status === 'PENDING');
+  let sent = 0;
+  for (const entry of queued) {
+    try {
+      await api.post('/api/timeclock/punch', entry.punch);
+      await idb.delete('outbox', entry.clientTxId);
+      sent += 1;
+    } catch (err) {
+      if (err && err.offline) break;
+      await idb.delete('outbox', entry.clientTxId);
+    }
+  }
+  if (sent) emit({ kind: 'punch', sent });
+  return { sent };
 }

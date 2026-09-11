@@ -61,7 +61,7 @@ function doPost(e) {
 function dispatch_(action, session, payload, params) {
   switch (action) {
     case '/api/login':           return login_(payload);
-    case '/api/config':          return config_();
+    case '/api/config':          return config_(session);
     case '/api/products':        return products_(session);
     case '/api/sync/pull':       return syncPull_(session, params);
     case '/api/sync/push':       return syncPush_(session, payload);
@@ -1596,16 +1596,23 @@ function userDto_(u) {
   };
 }
 
-function config_() {
-  return {
+/* The roster is only for those who manage it. Handing every cashier the name
+ * and email of every colleague, next to a login lockout that triggers on five
+ * wrong PINs, let one cashier lock the whole shop out of the till. */
+function config_(session) {
+  var out = {
     store: getStore_(),
     /* the setup dialog offers exactly what the server will accept, so the two
        cannot drift into a currency the client can pick and the server rejects. */
     currencies: currencyCatalogue_(),
-    users: readRows_('Users', USER_HEADERS)
-      .filter(function (u) { return String(u.active) === '1'; })
-      .map(userDto_),
+    users: [],
   };
+  if (isStoreRole_(session && session.role)) {
+    out.users = readRows_('Users', USER_HEADERS)
+      .filter(function (u) { return String(u.active) === '1'; })
+      .map(userDto_);
+  }
+  return out;
 }
 
 function users_() {
@@ -4259,6 +4266,10 @@ function timeClock_(session, params) {
  * the script lock so a double-tap can't open two entries or close one twice. */
 function timeClockPunch_(session, payload) {
   var note = String((payload && payload.note) || '').slice(0, 200);
+  /* A punch queued offline carries when it actually happened; a live punch is
+     now. A shop that can sell offline must be able to clock in offline too. */
+  var at = String((payload && payload.at) || '');
+  var when = at && !isNaN(Date.parse(at)) ? new Date(at) : new Date();
   var deviceId = String((payload && payload.deviceId) || '');
   var want = String((payload && payload.direction) || '').toLowerCase();
   if (want && want !== 'in' && want !== 'out') throw statusError_(400, 'direction must be in or out');
@@ -4272,7 +4283,7 @@ function timeClockPunch_(session, payload) {
       if (String(rows[i].status) === 'OPEN' && String(rows[i].user_id) === String(session.uid)) { open = rows[i]; break; }
     }
     var nameById = timeClockNames_();
-    var now = new Date();
+    var now = when;
     var nowIso = now.toISOString();
 
     if (open) {

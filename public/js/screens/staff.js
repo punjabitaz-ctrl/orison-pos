@@ -9,7 +9,7 @@
 import { api } from '../api.js';
 import { screenHead, sectionHead, statRow, dataTable, rankList } from '../components.js';
 import { fmt, esc, toast, beep, skeleton, emptyState } from '../ui.js';
-import { getDeviceId, SYNC_EVENT } from '../sync.js';
+import { getDeviceId, SYNC_EVENT, queuePunch } from '../sync.js';
 import { hoursFromEntries, fmtDuration, shiftDayKey, dayKey } from '../stats.js';
 
 const MANAGER_ROLES = ['admin', 'manager'];
@@ -99,7 +99,7 @@ export const screen = {
                 <p class="muted">${open ? 'since ' + esc(when(clock.me.since, false)) : 'Punch in when you start on the floor.'}</p>
               </div>
             </div>
-            <button class="btn ${open ? 'btn-danger' : ''}" id="punchBtn" ${offline ? 'disabled' : ''}>${open ? 'Punch out' : 'Punch in'}</button>
+            <button class="btn ${open ? 'btn-danger' : ''}" id="punchBtn">${open ? 'Punch out' : 'Punch in'}</button>
           </div>
           ${statRow([
             { label: 'Today', value: fmtDuration(todayHours) },
@@ -202,7 +202,7 @@ export const screen = {
 
     function draw() {
       body.innerHTML = `
-        ${offline ? '<p class="muted scr-note">Offline — the time clock and team figures need a connection.</p>' : ''}
+        ${offline ? '<p class="muted scr-note">Offline — punches are queued and sent when the line returns. Team figures need a connection.</p>' : ''}
         ${myClockCard()}
         ${isManager ? onFloorCard() : ''}
         ${isManager ? performanceCard() : ''}
@@ -222,8 +222,18 @@ export const screen = {
     async function doPunch(btn) {
       btn.disabled = true;
       const wasOpen = clock.me && clock.me.open;
+      if (!navigator.onLine) {
+        /* A shop that can sell offline must be able to clock in offline. The
+           punch is queued with the time it actually happened and sent when the
+           line returns. */
+        await queuePunch({ at: new Date().toISOString(), deviceId: await getDeviceId() });
+        toast(wasOpen ? 'Clock-out queued — will send when back online' : 'Clock-in queued — will send when back online', 'ok', 3200);
+        beep('ok');
+        btn.disabled = false;
+        return;
+      }
       try {
-        const res = await api.post('/api/timeclock/punch', { deviceId: await getDeviceId() });
+        const res = await api.post('/api/timeclock/punch', { at: new Date().toISOString(), deviceId: await getDeviceId() });
         toast(res.punched === 'in' ? 'Clocked in' : 'Clocked out · ' + fmtDuration((Number(res.entry.minutes) || 0) / 60), 'ok');
         beep('ok');
         await load();

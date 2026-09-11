@@ -5,6 +5,38 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.0] — 2026-09-11
+
+The four remaining items from `HANDOVER.md` §10, and the last release of the
+operational-readiness program.
+
+### Fixed
+
+- **Any signed-in account could enumerate the staff roster.** `/api/config`
+  returned every active user's name and email to every role. Combined with the
+  account-based login lockout, one cashier could lock every colleague out of the
+  till for fifteen minutes at a time. The roster is now manager/admin only;
+  cashiers still get the store and currency list the app needs to run.
+- **The time clock needed a connection.** A shop that can sell offline could not
+  clock in offline. Punches now queue through the outbox carrying **the moment
+  they happened**, and are sent when the line returns — before the sale batch, so
+  the floor record is right even if a sale is rejected. A punch the server
+  refuses is dropped rather than retried forever: the state it wanted is already
+  true.
+- **The customer display never went stale.** A register tab closing mid-sale
+  left the last cart on the customer-facing screen indefinitely. Any frame older
+  than three minutes now reads as idle, checked every thirty seconds, so a
+  shopper never reads somebody else's basket.
+- **One 15-second timeout for every call** mapped a slow report onto "offline"
+  and hid the real cause. Reports, exports, backups, the audit log and the
+  reorder worksheet get 60 seconds; everything else keeps 15.
+
+### Tests
+
+9 new sim checks, including that a queued punch keeps its own timestamp so the
+hours worked are computed from when someone actually clocked in, not from when
+the terminal happened to reconnect.
+
 ## [1.29.0] — 2026-09-11
 
 A card tender. Until now a card sale had to be rung as cash, which inflated the

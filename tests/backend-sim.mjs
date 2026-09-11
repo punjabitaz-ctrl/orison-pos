@@ -3328,6 +3328,46 @@ check('statement carries the changer/cashier',
     JSON.stringify({ drawer: cdLine('CASH IN DRAWER'), net: cdLine('NET CASH') }));
 }
 
+{
+  section('remaining open items (v1.30.0)');
+
+  const oiAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const oiMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const oiCash = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+
+  /* --- the staff roster is no longer handed to every signed-in account --- */
+  const cashCfg = req('/api/config', {}, { session: oiCash }).data;
+  check('a cashier no longer receives the staff roster',
+    Array.isArray(cashCfg.users) && cashCfg.users.length === 0, JSON.stringify(cashCfg.users));
+  check('a cashier still gets what the app needs to run',
+    !!cashCfg.store && (cashCfg.currencies || []).length > 0);
+  check('a manager still sees the roster',
+    req('/api/config', {}, { session: oiMgr }).data.users.length > 0);
+  check('an admin still sees the roster',
+    req('/api/config', {}, { session: oiAdm }).data.users.length > 0);
+
+  /* --- a punch queued offline keeps the time it actually happened --- */
+  /* earlier sections left this account clocked in; start from a known state */
+  if (req('/api/timeclock', {}, { session: oiCash }).data.me.open) {
+    req('/api/timeclock/punch', { direction: 'out' }, { session: oiCash });
+  }
+  const past = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+  const queued = req('/api/timeclock/punch', { at: past, deviceId: 'dev-oi' }, { session: oiCash });
+  check('a queued punch is accepted', queued.data.punched === 'in');
+  check('it keeps the moment it actually happened, not the moment it synced',
+    queued.data.entry.clockIn === past, JSON.stringify({ got: queued.data.entry.clockIn, want: past }));
+
+  const outAt = new Date(Date.now() - 1 * 3600 * 1000).toISOString();
+  const out = req('/api/timeclock/punch', { at: outAt, deviceId: 'dev-oi' }, { session: oiCash });
+  check('the matching clock-out also keeps its own time', out.data.entry.clockOut === outAt);
+  check('the hours worked are computed from those times, not from sync time',
+    out.data.entry.minutes === 120, String(out.data.entry.minutes));
+
+  check('a nonsense timestamp falls back to now rather than corrupting the record',
+    req('/api/timeclock/punch', { at: 'not-a-date', deviceId: 'dev-oi' }, { session: oiCash })
+      .data.entry.clockIn.length > 0);
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);
