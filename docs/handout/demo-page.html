@@ -1,0 +1,444 @@
+<title>Orison POS</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+  :root {
+    --paper: #f4f6f9;
+    --card: #ffffff;
+    --sunk: #eceff4;
+    --ink: #10202f;
+    --muted: #5b6b7c;
+    --faint: #8695a5;
+    --line: #dde3ea;
+    --line-2: #c7d0da;
+    --gold: #a8791a;
+    --gold-bright: #c9982a;
+    --ok: #0f7a52;
+    --alert: #b4232a;
+    --shadow: 0 1px 2px rgba(16, 32, 47, .05), 0 12px 30px -14px rgba(16, 32, 47, .22);
+    --shadow-lift: 0 2px 6px rgba(16, 32, 47, .07), 0 26px 50px -22px rgba(16, 32, 47, .35);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0b1622;
+      --card: #14212e;
+      --sunk: #0f1c28;
+      --ink: #e9eff6;
+      --muted: #9bb0c4;
+      --faint: #6f8598;
+      --line: #22333f;
+      --line-2: #2e4150;
+      --gold: #d9a93f;
+      --gold-bright: #e8c064;
+      --ok: #4bbd8a;
+      --alert: #e4707a;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 30px -14px rgba(0, 0, 0, .6);
+      --shadow-lift: 0 2px 6px rgba(0, 0, 0, .35), 0 26px 50px -22px rgba(0, 0, 0, .7);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0b1622;
+    --card: #14212e;
+    --sunk: #0f1c28;
+    --ink: #e9eff6;
+    --muted: #9bb0c4;
+    --faint: #6f8598;
+    --line: #22333f;
+    --line-2: #2e4150;
+    --gold: #d9a93f;
+    --gold-bright: #e8c064;
+    --ok: #4bbd8a;
+    --alert: #e4707a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 30px -14px rgba(0, 0, 0, .6);
+    --shadow-lift: 0 2px 6px rgba(0, 0, 0, .35), 0 26px 50px -22px rgba(0, 0, 0, .7);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+  h1, h2, h3, .display { font-family: Archivo, "Arial Narrow", system-ui, sans-serif; text-wrap: balance; }
+  .mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .eyebrow {
+    font-family: Archivo, system-ui, sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--gold);
+  }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 3px; border-radius: 3px; }
+
+  /* ---------- masthead ---------- */
+  .mast {
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+  .mast-in { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 24px; max-width: 1060px; margin: 0 auto; }
+  .brand { display: flex; align-items: center; gap: 11px; font-family: Archivo; font-weight: 800; font-size: 17px; letter-spacing: -.01em; }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 8px; flex: none;
+    background: var(--ink); color: var(--paper);
+    display: grid; place-items: center;
+    font-family: "JetBrains Mono", monospace; font-size: 14px; font-weight: 700;
+  }
+  .brand em { font-style: normal; color: var(--gold); }
+  .mast-note { font-size: 12.5px; color: var(--muted); }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 68px 0 56px; }
+  .hero-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 56px; align-items: center; }
+  .hero h1 {
+    margin: 14px 0 18px;
+    font-size: clamp(38px, 5.4vw, 62px);
+    font-weight: 800;
+    line-height: 1.02;
+    letter-spacing: -.03em;
+  }
+  .hero h1 span { color: var(--gold); }
+  .lede { font-size: clamp(17px, 1.5vw, 19.5px); color: var(--muted); max-width: 54ch; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .facts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+  .fact {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 11px 16px 12px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 11px;
+  }
+  .fact b { font-family: Archivo; font-size: 19px; font-weight: 700; letter-spacing: -.01em; }
+  .fact span { font-size: 11.5px; color: var(--faint); letter-spacing: .03em; }
+
+  /* ---------- receipt ---------- */
+  .receipt-stage { display: grid; place-items: center; }
+  .receipt {
+    width: 100%; max-width: 320px;
+    background: #fffdf8;
+    color: #1a1a1a;
+    padding: 26px 24px 34px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px;
+    line-height: 1.65;
+    box-shadow: var(--shadow-lift);
+    position: relative;
+    --notch: 7px;
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--notch)),
+      95% 100%, 90% calc(100% - var(--notch)), 85% 100%, 80% calc(100% - var(--notch)),
+      75% 100%, 70% calc(100% - var(--notch)), 65% 100%, 60% calc(100% - var(--notch)),
+      55% 100%, 50% calc(100% - var(--notch)), 45% 100%, 40% calc(100% - var(--notch)),
+      35% 100%, 30% calc(100% - var(--notch)), 25% 100%, 20% calc(100% - var(--notch)),
+      15% 100%, 10% calc(100% - var(--notch)), 5% 100%, 0 calc(100% - var(--notch)));
+  }
+  .r-title { text-align: center; font-weight: 700; font-size: 13px; letter-spacing: .1em; }
+  .r-sub { text-align: center; color: #6a6a6a; font-size: 10px; }
+  .r-rule { border-top: 1px dashed #b9b2a4; margin: 11px 0; }
+  .r-line { display: flex; justify-content: space-between; gap: 12px; }
+  .r-line .r-name { min-width: 0; }
+  .r-imei { color: #6a6a6a; font-size: 9.5px; letter-spacing: .04em; }
+  .r-total { font-weight: 700; font-size: 14px; }
+  .r-foot { text-align: center; color: #6a6a6a; font-size: 9.5px; margin-top: 12px; line-height: 1.5; }
+  .r-tag {
+    position: absolute; top: -13px; right: -10px;
+    background: var(--ink); color: var(--paper);
+    font-family: "Public Sans", sans-serif; font-size: 10px; font-weight: 600; letter-spacing: .05em;
+    padding: 4px 9px; border-radius: 999px;
+  }
+
+  /* ---------- sections ---------- */
+  section { padding: 56px 0; border-top: 1px solid var(--line); }
+  .sec-head { max-width: 62ch; margin-bottom: 32px; }
+  .sec-head h2 { margin: 10px 0 10px; font-size: clamp(25px, 3vw, 34px); font-weight: 700; letter-spacing: -.02em; }
+  .sec-head p { margin: 0; color: var(--muted); font-size: 16.5px; }
+
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px 22px; }
+  .panel h3 { margin: 0 0 7px; font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+  .panel p { margin: 0; font-size: 14.5px; color: var(--muted); }
+  .panel p + p { margin-top: 9px; }
+
+  /* offline strip */
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--card); }
+  .step { padding: 20px 22px; border-right: 1px solid var(--line); }
+  .step:last-child { border-right: 0; }
+  .step-n { font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--gold); font-weight: 700; }
+  .step h4 { margin: 7px 0 5px; font-family: Archivo; font-size: 15px; font-weight: 700; }
+  .step p { margin: 0; font-size: 13.5px; color: var(--muted); }
+
+  /* launcher */
+  .launcher { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 10px; }
+  .tile {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 15px 8px 13px; text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 9px;
+    transition: transform .16s cubic-bezier(.22,.61,.36,1), border-color .16s;
+  }
+  .tile:hover { transform: translateY(-2px); border-color: var(--line-2); }
+  .tile i {
+    width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
+    font-style: normal; color: #fff; font-size: 17px; font-weight: 700;
+    font-family: "JetBrains Mono", monospace;
+  }
+  .tile b { font-size: 12px; font-weight: 600; line-height: 1.25; }
+
+  /* till */
+  .till { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: 18px; }
+  .slip { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .slip-h { padding: 14px 18px; border-bottom: 1px solid var(--line); font-family: Archivo; font-weight: 700; font-size: 14px; }
+  .row { display: flex; justify-content: space-between; gap: 14px; padding: 9px 18px; font-size: 14px; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row span { color: var(--muted); }
+  .row b { font-family: "JetBrains Mono", monospace; font-weight: 500; }
+  .row.tot { background: var(--sunk); }
+  .row.tot span, .row.tot b { color: var(--ink); font-weight: 700; }
+  .neg { color: var(--alert); }
+  .pos { color: var(--ok); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .tbl-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow-x: auto; }
+  th, td { padding: 11px 16px; text-align: left; white-space: nowrap; }
+  thead th { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); border-bottom: 1px solid var(--line); font-weight: 600; }
+  tbody tr + tr td { border-top: 1px solid var(--line); }
+  td.num, th.num { text-align: right; font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
+  .chip-low { background: color-mix(in srgb, var(--alert) 14%, transparent); color: var(--alert); }
+  .chip-ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+
+  .note { font-size: 13px; color: var(--faint); margin-top: 14px; }
+
+  /* close */
+  .close { background: var(--ink); color: #eef3f8; border-radius: 18px; padding: 42px 40px; margin: 56px 0; }
+  .close h2 { margin: 0 0 12px; font-size: clamp(24px, 3vw, 32px); font-weight: 700; letter-spacing: -.02em; color: #fff; }
+  .close p { margin: 0; color: #a9bccd; max-width: 60ch; font-size: 16px; }
+  .close .facts { margin-top: 26px; }
+  .close .fact { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.13); }
+  .close .fact b { color: #fff; }
+  .close .fact span { color: #9db1c4; }
+
+  footer { border-top: 1px solid var(--line); padding: 26px 0 40px; }
+  .foot-in { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); }
+  .credit { font-family: Archivo; font-weight: 700; letter-spacing: .02em; color: var(--ink); }
+
+  @media (max-width: 860px) {
+    .hero-grid { grid-template-columns: 1fr; gap: 40px; }
+    .hero { padding: 44px 0 40px; }
+    .step { border-right: 0; border-bottom: 1px solid var(--line); }
+    .step:last-child { border-bottom: 0; }
+    .close { padding: 32px 26px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<header class="mast">
+  <div class="mast-in">
+    <div class="brand"><span class="brand-mark">O</span>Orison <em>POS</em></div>
+    <div class="mast-note">Prepared for Orison Electronics</div>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="hero">
+      <div class="hero-grid">
+        <div>
+          <div class="eyebrow">Point of sale</div>
+          <h1>The till that keeps<br>selling when the<br><span>internet stops.</span></h1>
+          <p class="lede">Every sale is written to the device first and syncs when the line comes back. Staff never wait for a spinner. Runs on the phones and tablets you already own, with <strong>no per-seat licence fee</strong> and no monthly software bill.</p>
+          <div class="facts">
+            <div class="fact"><b>0</b><span>Per-seat cost</span></div>
+            <div class="fact"><b>788</b><span>Automated checks</span></div>
+            <div class="fact"><b>18</b><span>Currencies</span></div>
+          </div>
+        </div>
+        <div class="receipt-stage">
+          <div class="receipt">
+            <div class="r-tag">Sample</div>
+            <div class="r-title">ORISON ELECTRONICS</div>
+            <div class="r-sub">Terminal B9DB1EA5 &middot; Amara N.</div>
+            <div class="r-rule"></div>
+            <div class="r-line"><span class="r-name">Galaxy S24 Ultra 256GB</span><b>$949.00</b></div>
+            <div class="r-imei">IMEI 356938035643809</div>
+            <div class="r-line"><span class="r-name">USB-C Cable 1m <em>2 &times; 9.50</em></span><b>$19.00</b></div>
+            <div class="r-line"><span class="r-name">Screen repair &mdash; labour</span><b>$45.00</b></div>
+            <div class="r-rule"></div>
+            <div class="r-line"><span>Subtotal</span><b>$1,013.00</b></div>
+            <div class="r-line"><span>Discount 5%</span><b>&minus;$50.65</b></div>
+            <div class="r-line"><span>Tax 6.625%</span><b>$63.77</b></div>
+            <div class="r-line r-total"><span>TOTAL</span><b>$1,026.12</b></div>
+            <div class="r-rule"></div>
+            <div class="r-line"><span>Cash</span><b>$1,000.00</b></div>
+            <div class="r-line"><span>Store credit</span><b>$26.12</b></div>
+            <div class="r-line"><span>Change</span><b>$0.00</b></div>
+            <div class="r-foot">
+              Thank you for shopping at Orison!<br>
+              # 8f2c-41d9-b077
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <section>
+      <div class="sec-head">
+        <div class="eyebrow">The hard part</div>
+        <h2>What happens when the line drops mid-sale</h2>
+        <p>Most systems stop. This one doesn't, and it doesn't lose or double-count anything when the connection returns.</p>
+      </div>
+      <div class="flow">
+        <div class="step">
+          <div class="step-n">01</div>
+          <h4>Sale is rung</h4>
+          <p>Written to the terminal and queued. The cashier carries on with the next customer.</p>
+        </div>
+        <div class="step">
+          <div class="step-n">02</div>
+          <h4>Line returns</h4>
+          <p>The queue sends itself. Nobody presses anything, and stock levels catch up.</p>
+        </div>
+        <div class="step">
+          <div class="step-n">03</div>
+          <h4>Two tills disagree</h4>
+          <p>Same phone sold twice? First one through is kept. The second is voided, its stock restored.</p>
+        </div>
+        <div class="step">
+          <div class="step-n">04</div>
+          <h4>Manager is told</h4>
+          <p>The clash is logged for review with the device and time. Nothing is silently dropped.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <div class="eyebrow">Every job, one tap</div>
+        <h2>The menu your staff already know</h2>
+        <p>One button opens every job this account is allowed to do, labelled in plain words. A cashier sees only their own; nothing is hidden behind a submenu.</p>
+      </div>
+      <div class="launcher">
+        <div class="tile"><i style="background:#f97316">&#8630;</i><b>Refund</b></div>
+        <div class="tile"><i style="background:#ef4444">&darr;</i><b>Paid Out</b></div>
+        <div class="tile"><i style="background:#b45309">&#8801;</i><b>Cash Pick Up</b></div>
+        <div class="tile"><i style="background:#9333ea">+</i><b>Staff Expense</b></div>
+        <div class="tile"><i style="background:#64748b">&#9201;</i><b>Time Clock</b></div>
+        <div class="tile"><i style="background:#0ea5e9">&#9679;</i><b>Customers</b></div>
+        <div class="tile"><i style="background:#059669">&#9635;</i><b>Products</b></div>
+        <div class="tile"><i style="background:#d97706">!</i><b>Alerts</b></div>
+        <div class="tile"><i style="background:#7c3aed">&#8600;</i><b>Purchases</b></div>
+        <div class="tile"><i style="background:#e11d48">&#9707;</i><b>Reports</b></div>
+        <div class="tile"><i style="background:#2563eb">&#9632;</i><b>Dashboard</b></div>
+        <div class="tile"><i style="background:#0891b2">&#9881;</i><b>Settings</b></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <div class="eyebrow">Cash accountability</div>
+        <h2>Where the money went, by reason</h2>
+        <p>Money out of the drawer is three separate records, not one free-text note. So "how much went out as staff expense last month" is a question the ledger answers by itself.</p>
+      </div>
+      <div class="till">
+        <div class="slip">
+          <div class="slip-h">Shift close &middot; Amara N.</div>
+          <div class="row"><span>Opening float</span><b>$200.00</b></div>
+          <div class="row"><span>Cash sales</span><b>$1,486.50</b></div>
+          <div class="row"><span>Paid out &mdash; vendor</span><b class="neg">&minus;$120.00</b></div>
+          <div class="row"><span>Cash pick-up &mdash; bank</span><b class="neg">&minus;$800.00</b></div>
+          <div class="row"><span>Staff expense</span><b class="neg">&minus;$24.00</b></div>
+          <div class="row"><span>Expected in drawer</span><b>$742.50</b></div>
+          <div class="row"><span>Counted</span><b>$737.50</b></div>
+          <div class="row tot"><span>Over / short</span><b class="neg">&minus;$5.00</b></div>
+        </div>
+        <div class="slip">
+          <div class="slip-h">Counted in real notes</div>
+          <div class="row"><span>$100 &times; 4</span><b>$400.00</b></div>
+          <div class="row"><span>$50 &times; 5</span><b>$250.00</b></div>
+          <div class="row"><span>$20 &times; 3</span><b>$60.00</b></div>
+          <div class="row"><span>$10 &times; 2</span><b>$20.00</b></div>
+          <div class="row"><span>$5 &times; 1</span><b>$5.00</b></div>
+          <div class="row"><span>$1 &times; 2</span><b>$2.00</b></div>
+          <div class="row"><span>25&cent; &times; 2</span><b>$0.50</b></div>
+          <div class="row tot"><span>Declared</span><b>$737.50</b></div>
+        </div>
+      </div>
+      <p class="note">Sample figures. The drawer ladder follows the shop's own currency &mdash; USD, GBP, EUR, AED and PKR are all supported, each with the right notes and coins.</p>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <div class="eyebrow">Stock that pays for itself</div>
+        <h2>What to buy next, from what actually sold</h2>
+        <p>Not a guess from a reorder point alone. Real units sold over a window, days of cover left at that rate, and the supplier who last delivered it.</p>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Item</th><th>Supplier</th><th class="num">On hand</th><th class="num">Sold 30d</th><th class="num">Cover</th><th class="num">Order</th><th class="num">Est. cost</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Galaxy S24 Ultra 256GB</td><td>Gulf Mobile Dist.</td><td class="num">1</td><td class="num">14</td><td class="num"><span class="chip chip-low">2.1d</span></td><td class="num"><b>6</b></td><td class="num">$4,140.00</td></tr>
+            <tr><td>USB-C Cable 1m</td><td>Shenzhen Lianhe</td><td class="num">6</td><td class="num">88</td><td class="num"><span class="chip chip-low">2.0d</span></td><td class="num"><b>35</b></td><td class="num">$122.50</td></tr>
+            <tr><td>Tempered glass &mdash; iPhone 15</td><td>Shenzhen Lianhe</td><td class="num">11</td><td class="num">42</td><td class="num"><span class="chip chip-low">7.9d</span></td><td class="num"><b>9</b></td><td class="num">$27.00</td></tr>
+            <tr><td>65W GaN charger</td><td>Gulf Mobile Dist.</td><td class="num">4</td><td class="num">19</td><td class="num"><span class="chip chip-ok">6.3d</span></td><td class="num"><b>5</b></td><td class="num">$71.25</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Sample worksheet. Exports to CSV, and every line can be turned into a purchase order that posts stock in at weighted-average cost.</p>
+    </section>
+
+    <section>
+      <div class="sec-head">
+        <div class="eyebrow">Everything else it does</div>
+        <h2>The rest of the shop, covered</h2>
+      </div>
+      <div class="cols">
+        <div class="panel">
+          <h3>IMEI tracking</h3>
+          <p>Phones and laptops are tracked one unit at a time. Selling one captures its serial and binds it to that sale for life &mdash; through history, refunds and receipts.</p>
+        </div>
+        <div class="panel">
+          <h3>Customer accounts</h3>
+          <p>Net-30 terms, a running ledger, collections, and 30/60/90+ day ageing so you know who owes what and for how long.</p>
+        </div>
+        <div class="panel">
+          <h3>Customer display</h3>
+          <p>A second screen faces the shopper and mirrors the cart live. Cost and margin never cross to it.</p>
+        </div>
+        <div class="panel">
+          <h3>Time clock</h3>
+          <p>Staff punch in and out from any terminal. Nobody can punch for anyone else, and hours feed the per-cashier performance view.</p>
+        </div>
+        <div class="panel">
+          <h3>Stock take &amp; ageing</h3>
+          <p>Count the shelf and post the variance, valued at cost. See what has been sitting 90+ days before it becomes a write-off.</p>
+        </div>
+        <div class="panel">
+          <h3>Shelf labels</h3>
+          <p>Code&nbsp;128 barcodes with name and price, printed as a sheet straight from the products screen.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="wrap">
+    <div class="close">
+      <h2>Runs on what the shop already owns</h2>
+      <p>Install it from the browser on any phone, tablet or computer and it behaves like an app &mdash; full screen, its own icon, working offline. The back end lives in the shop's own Google account, so the data is yours and adding a terminal costs nothing.</p>
+      <div class="facts">
+        <div class="fact"><b>~30 min</b><span>To go live</span></div>
+        <div class="fact"><b>Any device</b><span>Phone, tablet, desktop</span></div>
+        <div class="fact"><b>Your Google</b><span>Sheets &amp; Drive</span></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap foot-in">
+    <div class="credit">An AYiN Advisors Project</div>
+    <div>Orison POS &middot; prepared for Orison Electronics</div>
+  </div>
+</footer>
