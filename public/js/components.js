@@ -26,6 +26,7 @@ export const ICONS = {
   reports: SVG('<rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M8 16v-4M12 16V8M16 16v-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'),
   dashboard: SVG('<rect x="3" y="3" width="8" height="10" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="3" width="8" height="6" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="3" y="15" width="8" height="6" rx="1.5" stroke="currentColor" stroke-width="1.6"/><rect x="13" y="11" width="8" height="10" rx="1.5" stroke="currentColor" stroke-width="1.6"/>'),
   audit: SVG('<path d="M6 3h9l4 4v14H6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 3v5h5M9 12h6M9 16h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'),
+  repairs: SVG('<path d="M15.5 3.5a5 5 0 00-6.1 6.1L3.6 15.4a1.9 1.9 0 002.7 2.7l5.8-5.8a5 5 0 006.1-6.1l-2.8 2.8-2.4-.6-.6-2.4 2.8-2.8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>'),
   settings: SVG('<circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.4 1a7 7 0 00-2-1.2L14 3h-4l-.4 2.7a7 7 0 00-2 1.2l-2.5-1-2 3.4 2.1 1.5a7 7 0 000 2.4L3.1 14.6l2 3.4 2.5-1a7 7 0 002 1.2L10 21h4l.4-2.7a7 7 0 002-1.2l2.5 1 2-3.4-2.1-1.5c.1-.4.2-.8.2-1.2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>'),
 };
 

@@ -47,7 +47,9 @@ test('menuTiles()', async (t) => {
     assert.ok(!manager.includes('audit'), 'a manager must not see the audit log');
   });
   await t.test('a cashier sees only what their role may open', () => {
-    assert.deepEqual(menuTiles('cashier').map((x) => x.id), ['staff', 'dashboard', 'settings']);
+    // Repairs is counter work: a cashier books a device in with the customer
+    // standing there. Money out and management stay off this list.
+    assert.deepEqual(menuTiles('cashier').map((x) => x.id), ['staff', 'repairs', 'dashboard', 'settings']);
   });
   await t.test('an unknown role is treated as a cashier, not as an admin', () => {
     assert.deepEqual(menuTiles('nonsense').map((x) => x.id), menuTiles('cashier').map((x) => x.id));

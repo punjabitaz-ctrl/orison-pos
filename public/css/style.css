@@ -1426,3 +1426,49 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; le
 .mono-no { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 12px; letter-spacing: .02em; }
 
 .i-external { background: #0d9488; }
+
+/* ---------- Repairs ---------- */
+
+.rp-filters { flex-wrap: wrap; margin-bottom: 10px; }
+
+.rp-pill {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .3px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.rp-new  { background: #e8effa; color: var(--navy-3); border-color: #cfdcf1; }
+.rp-work { background: #fff3e0; color: #b45309; border-color: #fbe0b8; }
+.rp-wait { background: #fdf2e3; color: #92400e; border-color: #f5dfbc; }
+.rp-good { background: #e6f6ef; color: var(--ok); border-color: #c4ead9; }
+.rp-done { background: #eef1f5; color: var(--muted); border-color: var(--line); }
+.rp-bad  { background: #fdecec; color: var(--danger); border-color: #f7cdcd; }
+
+.rp-row { cursor: pointer; }
+.rp-row:hover { background: #f7f9fc; }
+
+.rp-detail { margin-top: 16px; }
+
+.rp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.rp-grid > div { display: flex; flex-direction: column; gap: 2px; }
+.rp-grid span { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+
+.rp-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 12px 0;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 17px;
+}
+.rp-total strong { font-size: 21px; font-variant-numeric: tabular-nums; }

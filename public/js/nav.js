@@ -18,6 +18,7 @@ export const DESTINATIONS = [
   { id: 'customers', label: 'Customers', screen: 'customers', roles: MANAGER },
   { id: 'inventory', label: 'Products', screen: 'inventory', roles: MANAGER },
   { id: 'alerts', label: 'Alerts', screen: 'alerts', roles: MANAGER },
+  { id: 'repairs', label: 'Repairs', screen: 'repairs', roles: null },
   { id: 'purchases', label: 'Purchases', screen: 'purchases', roles: MANAGER },
   { id: 'reports', label: 'Reports', screen: 'reports', roles: MANAGER },
   { id: 'dashboard', label: 'Dashboard', screen: 'dashboard', roles: null },
