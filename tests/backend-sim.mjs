@@ -1825,7 +1825,7 @@ check('statement carries the changer/cashier',
     const exp = eTender[ty];
     return row && near(row.amount, exp.amount) && row.count === exp.count;
   }), JSON.stringify(byTender));
-  const knownLabels = { cash: 'Cash', transfer: 'Transfer', store_credit: 'Store credit', net30: 'On account', account: 'On account' };
+  const knownLabels = { cash: 'Cash', card: 'Card', transfer: 'Transfer', store_credit: 'Store credit', net30: 'On account', account: 'On account' };
   check('tender labels known or fall back to key', byTender.every((t) => t.label === (knownLabels[t.type] || t.type)), JSON.stringify(byTender));
 
   check('byDay calendar-locked to window', rep.byDay.length === 1 && rep.byDay[0].date === tKey && near(rep.byDay[0].sales, e.gross));
@@ -3256,6 +3256,76 @@ check('statement carries the changer/cashier',
   }, { session: chCash });
   check('the counter cannot sell a unit the marketplace already took',
     dbl.data.results[0].accepted === false, JSON.stringify(dbl.data.results[0]));
+}
+
+{
+  section('card tender (v1.29.0)');
+
+  const cdAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const cdCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const cdUsers = req('/api/admin/users/list', {}, { session: cdAdm }).data.users;
+  const cdCashId = cdUsers.find((u) => u.email === 'amara@example.com').id;
+
+  const cdProd = req('/api/admin/products', {
+    name: 'Card Widget', sku: 'CD-1', category: 'CD', costPrice: 10, retailPrice: 50, onHand: 200,
+  }, { session: cdAdm }).data.id;
+
+  const cdSell = (clientTxId, tenders, amount) => req('/api/sync/push', {
+    deviceId: 'dev-cd',
+    batch: [{
+      clientTxId, userId: cdCashId, grandTotal: amount, createdAt: new Date().toISOString(),
+      tenders, items: [{ productId: cdProd, quantity: 1, unitPrice: amount }],
+    }],
+  }, { session: cdCash });
+
+  /* the whole point: a card sale must not inflate the drawer */
+  const cdShift = req('/api/shifts/open', { openingFloat: 500 }, { session: cdCash }).data.shift.id;
+
+  cdSell('tx-cd-cash', [{ type: 'cash', amount: 50 }], 50);
+  cdSell('tx-cd-card', [{ type: 'card', amount: 50 }], 50);
+  cdSell('tx-cd-split', [{ type: 'cash', amount: 20 }, { type: 'card', amount: 30 }], 50);
+
+  const cdClose = req('/api/shifts/close', { shiftId: cdShift, denoms: {} }, { session: cdCash }).data.shift;
+  check('a card sale never counts toward the expected drawer',
+    cdClose.expectedCash === 500 + 50 + 20,
+    JSON.stringify({ expected: cdClose.expectedCash, wanted: 570 }));
+
+  /* it is still revenue */
+  const cdRep = req('/api/reports', {}, { session: cdAdm }).data;
+  const cardLine = (cdRep.byTender || []).find((t) => t.type === 'card');
+  check('card is reported as its own tender line', !!cardLine, JSON.stringify(cdRep.byTender));
+  check('it is labelled Card, not left as a bare key', cardLine && cardLine.label === 'Card');
+  check('card takings are counted', cardLine && cardLine.amount >= 80, JSON.stringify(cardLine));
+  check('card sales still count as gross sales', cdRep.summary.grossSales >= 150);
+
+  /* a card refund gives the money back on the card, not out of the till */
+  const cdShift2 = req('/api/shifts/open', { openingFloat: 100 }, { session: cdCash }).data.shift.id;
+  req('/api/sync/push', {
+    deviceId: 'dev-cd',
+    batch: [{ clientTxId: 'tx-cd-refund', kind: 'refund', originalClientTx: 'tx-cd-card',
+      userId: cdCashId, grandTotal: 50, createdAt: new Date().toISOString(),
+      tenders: [{ type: 'card', amount: 50 }],
+      items: [{ productId: cdProd, quantity: 1, unitPrice: 50 }] }],
+  }, { session: cdAdm });
+  const cdClose2 = req('/api/shifts/close', { shiftId: cdShift2, denoms: {} }, { session: cdCash }).data.shift;
+  check('a card refund does not take cash out of the drawer either',
+    cdClose2.expectedCash === 100, JSON.stringify({ expected: cdClose2.expectedCash }));
+
+  /* the export tells cash and card apart */
+  const cdDay = new Date().toISOString().slice(0, 10);
+  const cdExp = req('/api/drive/export', { date: cdDay }, { session: cdAdm });
+  const cdFile = driveFiles.find((f) => f.id === (cdExp.data || {}).fileId);
+  const cdCsv = (cdFile && cdFile.content) || '';
+  const cdLine = (label) => {
+    const row = cdCsv.split(String.fromCharCode(10)).find((l) => l.indexOf(',,' + label + ',,') === 0);
+    return row ? Number(row.split(',')[4]) : null;
+  };
+  check('the export carries a CARD line', cdLine('CARD') !== null, 'missing');
+  check('the export carries what the drawer should actually hold',
+    cdLine('CASH IN DRAWER') !== null, 'missing');
+  check('cash in drawer is less than net cash once cards are in play',
+    cdLine('CASH IN DRAWER') < cdLine('NET CASH'),
+    JSON.stringify({ drawer: cdLine('CASH IN DRAWER'), net: cdLine('NET CASH') }));
 }
 
 console.log('\n-------------------------------------');

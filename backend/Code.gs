@@ -2920,7 +2920,7 @@ function agingBuckets_(txRows) {
  *  refunds + payouts down per method, so a manager can see *where* cash lives.
  * ------------------------------------------------------------------ */
 
-var REPORT_DENOM_LABELS = { cash: 'Cash', transfer: 'Transfer', store_credit: 'Store credit', net30: 'On account', account: 'On account' };
+var REPORT_DENOM_LABELS = { cash: 'Cash', card: 'Card', transfer: 'Transfer', store_credit: 'Store credit', net30: 'On account', account: 'On account' };
 
 function reports_(session, params) {
   requireRole_(session, ['admin', 'manager']);
@@ -4919,6 +4919,7 @@ function driveExport_(session, payload, params) {
 
   var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note' + (isStore ? ',cost,gross_profit' : '') + '\n';
   var sales = 0, refunds = 0, payouts = 0, pickups = 0, expenses = 0, collections = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
+  var cashDrawer = 0, cardTotal = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
     var k = String(t.kind || 'sale');
@@ -4929,6 +4930,20 @@ function driveExport_(session, payload, params) {
     else if (k === 'expense') expenses += v;
     else if (k === 'payment') collections += v;
     else if (k !== 'purchase') sales += v;
+
+    /* What the drawer should actually hold is a TENDER question, not a kind
+       question: a card sale is revenue but never cash. */
+    var dayTenders = [];
+    try { dayTenders = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
+    for (var dt = 0; dt < dayTenders.length; dt++) {
+      var dty = String(dayTenders[dt].type || 'cash');
+      var dta = num_(dayTenders[dt].amount);
+      if (dty === 'card') cardTotal += (k === 'refund' ? -dta : dta);
+      if (dty !== 'cash') continue;
+      if (k === 'refund') cashDrawer -= dta;
+      else if (k === 'sale' || k === 'payment') cashDrawer += dta;
+    }
+    if (isCashOutKind_(k)) cashDrawer -= v;
     if (String(t.tax_amount || '') !== '') taxTotal += num_(t.tax_amount);
 
     var items = [];
@@ -4976,6 +4991,8 @@ function driveExport_(session, payload, params) {
   csv += ',,CASH PICK-UP,,' + String(pickups) + ',\n';
   csv += ',,STAFF EXPENSE,,' + String(expenses) + ',\n';
   csv += ',,COLLECTIONS,,' + String(collections) + ',\n';
+  csv += ',,CARD,,' + String(round2_(cardTotal)) + ',\n';
+  csv += ',,CASH IN DRAWER,,' + String(round2_(cashDrawer)) + ',\n';
   csv += ',,NET CASH,,' + String(net) + ',\n';
   if (isStore) {
     csv += ',,TOTAL COST,,' + String(costTotalDay) + ',\n';

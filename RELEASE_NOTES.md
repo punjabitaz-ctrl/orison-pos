@@ -7,7 +7,34 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.27.0 — sales made elsewhere
+## Latest: v1.29.0 — card tender
+
+**2026-09-11.** Ninth of the operational-readiness program. **v1.28.0 (cash
+drawer and thermal printer) is parked** until the hardware is confirmed.
+
+A card sale had to be rung as **cash**, so every card payment inflated the
+expected drawer and every shift closed short by exactly the card total. There is
+now a **Card** tender: recorded, not authorised — the terminal beside the till
+authorises, the POS records the amount — and excluded from the drawer in both
+directions, so a card refund takes nothing out of the till either.
+
+**Also fixed:** the export's `NET CASH` was never actually drawer cash. It
+netted by transaction *kind*, so store-credit and on-account sales counted as
+cash; adding card made that plainly wrong. A new **`CASH IN DRAWER`** line nets
+by *tender* — cash in on sales and collections, less cash refunds and all three
+cash-out reasons — which is the figure that reconciles against a physical count.
+`NET CASH` is unchanged so old exports stay comparable.
+
+**Validation:** backend-sim **PASS 574 / FAIL 0** (9 new) · client units
+**PASS 350 / FAIL 0**.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.27.0 — sales made elsewhere
 
 **2026-09-11.** Seventh of the operational-readiness program.
 

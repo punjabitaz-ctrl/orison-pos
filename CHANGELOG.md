@@ -5,6 +5,38 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0] — 2026-09-11
+
+A card tender. Until now a card sale had to be rung as cash, which inflated the
+expected drawer and closed every shift short by the card total.
+
+### Added
+
+- **Card** as a tender alongside Cash, Store Credit and Net-30. It is *recorded*,
+  not authorised — the terminal beside the till does the authorising and the POS
+  records the amount.
+- **Card is excluded from the expected drawer** at shift close, in both
+  directions: a card sale adds nothing to the till and a card refund takes
+  nothing out of it.
+- Card appears as its own line in reports, and the Drive export gains **CARD**.
+- 9 sim checks, including a split cash/card sale reconciling correctly.
+
+### Fixed
+
+- **The export's `NET CASH` was never drawer cash.** It netted by transaction
+  *kind*, so store-credit and on-account sales counted as cash; card sales made
+  it plainly wrong. A new **`CASH IN DRAWER`** line nets by *tender* — cash
+  taken in on sales and collections, less cash refunds and all three cash-out
+  reasons — which is the figure that reconciles against a physical count.
+  `NET CASH` is left as it was so existing exports stay comparable.
+
+### v1.28.0 skipped
+
+The cash drawer and thermal printer release is **parked at the owner's request**
+until the hardware is confirmed — USB, network and Bluetooth are materially
+different builds. The version number is left unused rather than reassigned so
+the plan and the tags keep matching.
+
 ## [1.27.0] — 2026-09-11
 
 Record a sale that happened somewhere else, so marketplace stock stops drifting

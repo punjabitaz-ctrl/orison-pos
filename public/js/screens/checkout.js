@@ -11,8 +11,12 @@ import { publishCheckout, publishThanks, publishIdle } from '../customer-display
 import { screenHead } from '../components.js';
 import { clearSaved } from '../cart.js';
 
+/* Card is recorded, not authorised: the terminal beside the till does the
+   authorising and the POS records the amount. Crucially it is not cash, so it
+   never counts toward the drawer at shift close. */
 const TENDERS = [
   { id: 'cash', label: 'Cash' },
+  { id: 'card', label: 'Card' },
   { id: 'store_credit', label: 'Store Credit' },
   { id: 'net30', label: 'Net-30 Terms' },
 ];

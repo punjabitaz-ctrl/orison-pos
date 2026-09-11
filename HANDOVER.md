@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.27.0** — sales made elsewhere (`2026-09-11`) |
-| Validation bar | `backend-sim` **PASS 565 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.29.0** — card tender (`2026-09-11`) |
+| Validation bar | `backend-sim` **PASS 574 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,15 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.29.0** Card tender. A card sale previously had to be rung as cash, so it
+  inflated the expected drawer and closed every shift short by the card total.
+  **Card** is now a tender (recorded, not authorised) and is excluded from the
+  drawer in both directions. **Fixed:** the export's `NET CASH` netted by
+  *kind*, so store-credit and on-account sales counted as cash — a new
+  **`CASH IN DRAWER`** line nets by *tender* and is the figure that reconciles
+  against a physical count; `NET CASH` left unchanged for comparability.
+  9 new sim checks. ⚠️ **v1.28.0 (drawer + thermal printer) is PARKED** pending
+  the hardware model — the version number is deliberately unused.
 - **v1.27.0** Sales made elsewhere. `channel` + `external_ref` on every
   transaction (`in_store` default, `online`, `marketplace`, `phone`, `other`;
   unknown values fall back to `in_store`). **Sold Elsewhere** launcher dialog
