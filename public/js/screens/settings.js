@@ -41,6 +41,15 @@ export const screen = {
         </div>
       </section>
 
+      ${(user && user.role === 'admin') ? `
+      <section class="set-card">
+        <h3>Backups</h3>
+        <p class="muted">A copy of the whole workbook lands nightly in a Drive folder called <strong>POS Backup</strong>, named with the date and time. The last 30 nights and 12 months are kept.</p>
+        <div id="bkStatus" class="muted">Checking…</div>
+        <div class="row"><button class="btn" id="bkRun">Back up now</button></div>
+        <p id="bkMsg" class="muted" role="status"></p>
+      </section>` : ''}
+
       <section class="set-card">
         <h3>Customer display</h3>
         <p class="muted">Mirror the cart on a second screen facing the shopper. Item names, quantities, prices and the amount due only — never cost, margin or customer records.</p>
@@ -149,6 +158,33 @@ export const screen = {
       const { openStoreSetup } = await import('./store-setup.js');
       openStoreSetup({ store: m.store, firstRun: false, onSaved: () => redraw() });
     });
+
+    const bkRun = root.querySelector('#bkRun');
+    if (bkRun) {
+      const bkStatus = root.querySelector('#bkStatus');
+      const bkMsg = root.querySelector('#bkMsg');
+      const paint = (st) => {
+        if (!st) { bkStatus.textContent = 'Could not read backup status.'; return; }
+        const when = st.lastAt ? new Date(st.lastAt).toLocaleString() : 'never';
+        bkStatus.innerHTML = `Last backup: <strong>${esc(when)}</strong>${st.lastName ? ' · ' + esc(st.lastName) : ''}`;
+        if (st.lastError) bkStatus.innerHTML += `<br><span class="tag-bad">Last failure: ${esc(st.lastError)}</span>`;
+      };
+      api.get('/api/backup/status').then(paint).catch(() => paint(null));
+      bkRun.addEventListener('click', async () => {
+        bkRun.disabled = true;
+        bkMsg.textContent = 'Backing up…';
+        try {
+          const res = await api.post('/api/backup/run', {}, { timeout: 60000 });
+          bkMsg.textContent = 'Saved ' + res.name;
+          toast('Backup saved', 'ok'); beep('ok');
+          api.get('/api/backup/status').then(paint).catch(() => {});
+        } catch (err) {
+          bkMsg.textContent = (err && err.data && err.data.error) || 'Backup failed';
+          toast('Backup failed', 'warn');
+        }
+        bkRun.disabled = false;
+      });
+    }
 
     root.querySelector('#cdOn').addEventListener('change', (e) => {
       setDisplayEnabled(e.target.checked);

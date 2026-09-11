@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.23.0** — management is admin only (`2026-09-11`) |
-| Validation bar | `backend-sim` **PASS 497 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.24.0** — backups (`2026-09-11`) |
+| Validation bar | `backend-sim` **PASS 515 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,16 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.24.0** Backups. Nightly Apps Script trigger at 02:00 copies the whole
+  workbook to a Drive folder **`POS Backup`** as
+  `Orison-POS-Backup_YYYY-MM-DD_HHmm.xlsx` in store-local time; 30 nightly + 12
+  monthly retained. `backupDaily()` never throws (a throwing trigger stops being
+  scheduled) — a failure emails every admin, logs `backup.failed`, and shows in
+  Settings. `/api/backup/status` + `/api/backup/run` are admin only.
+  ⚠️ **Run `installBackupTrigger()` once from the Apps Script editor** or no
+  backup ever runs. **Fixed:** `setup` would re-seed a live workbook and destroy
+  its history; it now refuses when transactions exist unless `CONFIRM_RESEED`
+  is `yes`. 18 new sim checks.
 - **v1.23.0** Management is admin only. `adminBulkPrice_`, `adminStockTake_`,
   `suppliers_` and `purchaseOrderCancel_` moved from admin+manager to
   **admin**; Stock take and Bulk price hidden from Products → Tools for

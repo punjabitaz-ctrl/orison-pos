@@ -181,7 +181,7 @@ const sandbox = {
     }),
   },
   DriveApp: {
-    getFolderById: (id) => (driveFolders.find((f) => f.id === id) ? { getId: () => id, createFile: realCreateFile } : (() => { throw new Error('missing folder ' + id); })()),
+    getFolderById: (id) => { const f = driveFolders.find((x) => x.id === id); if (!f) throw new Error('missing folder ' + id); return folderHandle(f); },
     getFoldersByName: (name) => {
       const matches = driveFolders.filter((f) => f.name === name);
       let idx = 0;
@@ -218,15 +218,65 @@ sandbox.DriveApp.getFoldersByName = (name) => {
   if (!it._matches.length) {
     const f = { id: 'folder-auto', name };
     driveFolders.push(f);
-    return { hasNext: () => true, next: () => ({ getId: () => f.id, createFile: realCreateFile }) };
+    return { hasNext: () => true, next: () => folderHandle(f) };
   }
-  return { hasNext: () => true, next: () => ({ getId: () => it._matches[0].id, createFile: realCreateFile }) };
+  return { hasNext: () => true, next: () => folderHandle(it._matches[0]) };
 };
 sandbox.DriveApp.createFolder = (name) => {
-  const f = { id: 'folder-new', name };
+  const f = { id: 'folder-' + randomUUID(), name };
   driveFolders.push(f);
-  return { getId: () => f.id, createFile: realCreateFile };
+  return folderHandle(f);
 };
+
+/* Backups copy the whole workbook into its own folder, so the Drive mock needs
+   makeCopy and a folder that can list what is in it. Backup files are tracked
+   separately from CSV exports so retention can be asserted. */
+const driveBackups = [];
+function folderHandle(f) {
+  return {
+    getId: () => f.id,
+    createFile: realCreateFile,
+    getFilesByType: () => {
+      const mine = driveBackups.filter((b) => b.folderId === f.id && !b.trashed);
+      let i = 0;
+      return { hasNext: () => i < mine.length, next: () => fileHandle(mine[i++]) };
+    },
+  };
+}
+function fileHandle(b) {
+  return {
+    getId: () => b.id,
+    getName: () => b.name,
+    getUrl: () => 'https://drive.google.com/file/' + b.id,
+    setTrashed: (v) => { b.trashed = !!v; },
+    makeCopy: (name, folder) => {
+      const copy = { id: 'bk-' + randomUUID(), name, folderId: folder.getId(), trashed: false };
+      driveBackups.push(copy);
+      return fileHandle(copy);
+    },
+  };
+}
+sandbox.DriveApp.getFileById = (id) => fileHandle({ id, name: 'Orison POS', folderId: null });
+sandbox.MimeType.GOOGLE_SHEETS = 'application/vnd.google-apps.spreadsheet';
+sandbox.ScriptApp = {
+  getProjectTriggers: () => scriptTriggers.slice(),
+  deleteTrigger: (t) => { const i = scriptTriggers.indexOf(t); if (i >= 0) scriptTriggers.splice(i, 1); },
+  newTrigger: (fn) => {
+    const spec = { fn, hour: null, days: null };
+    const builder = {
+      timeBased: () => builder,
+      atHour: (h) => { spec.hour = h; return builder; },
+      everyDays: (d) => { spec.days = d; return builder; },
+      create: () => {
+        const t = { getHandlerFunction: () => spec.fn, _spec: spec };
+        scriptTriggers.push(t);
+        return t;
+      },
+    };
+    return builder;
+  },
+};
+const scriptTriggers = [];
 
 /* URL uniqueness: mock createFile takes (name, content, mime) */
 void realCreateFile;
@@ -2862,6 +2912,70 @@ check('statement carries the changer/cashier',
   /* --- the restriction is recorded, so a refusal is explainable later --- */
   const roAudit = req('/api/audit', {}, { session: roAdm }).data;
   check('admin actions keep landing in the audit log', roAudit.entries.length > 0);
+}
+
+{
+  section('backups (v1.24.0)');
+
+  const bkAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const bkMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const bkCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+
+  check('a manager cannot run a backup', req('/api/backup/run', {}, { session: bkMgr }).status === 403);
+  check('a cashier cannot read backup status', req('/api/backup/status', {}, { session: bkCash }).status === 403);
+
+  const beforeCount = driveBackups.length;
+  const run = req('/api/backup/run', {}, { session: bkAdm });
+  check('an admin can run a backup', run.ok === true, JSON.stringify(run));
+  check('it writes one file', driveBackups.length === beforeCount + 1);
+  check('the file name carries the date and the time',
+    /^Orison-POS-Backup_\d{4}-\d{2}-\d{2}_\d{4}\.xlsx$/.test(run.data.name), run.data.name);
+  check('the file lands in a folder called POS Backup',
+    driveFolders.some((f) => f.name === 'POS Backup'));
+
+  const status = req('/api/backup/status', {}, { session: bkAdm }).data;
+  check('status reports the last backup', status.lastName === run.data.name && !!status.lastAt);
+  check('status names the folder and the retention', status.folder === 'POS Backup' && status.keepDaily === 30);
+
+  const bkAudit = req('/api/audit', {}, { session: bkAdm, params: { action: 'backup.run' } }).data;
+  check('the backup is recorded in the audit log',
+    bkAudit.entries.length > 0 && bkAudit.entries[0].summary.indexOf('Orison-POS-Backup_') === 0,
+    JSON.stringify(bkAudit.entries[0] || {}));
+
+  /* --- the nightly trigger --- */
+  scriptTriggers.length = 0;
+  sandbox.installBackupTrigger();
+  check('installing creates one nightly trigger', scriptTriggers.length === 1);
+  check('it runs daily, in the small hours',
+    scriptTriggers[0]._spec.hour === 2 && scriptTriggers[0]._spec.days === 1);
+  sandbox.installBackupTrigger();
+  check('installing twice does not stack duplicate triggers', scriptTriggers.length === 1);
+
+  /* --- a failed backup must shout, not fail silently --- */
+  const mailsBefore = mails.length;
+  const realGetFileById = sandbox.DriveApp.getFileById;
+  sandbox.DriveApp.getFileById = () => { throw new Error('Drive unavailable'); };
+  sandbox.backupDaily();
+  sandbox.DriveApp.getFileById = realGetFileById;
+  check('a scheduled backup that fails does not throw out of the trigger', true);
+  check('a failed backup emails the admins', mails.length > mailsBefore,
+    JSON.stringify({ before: mailsBefore, after: mails.length }));
+  check('the failure is recorded in the audit log',
+    req('/api/audit', {}, { session: bkAdm, params: { action: 'backup.failed' } }).data.entries.length > 0);
+  check('the failure is visible in status',
+    /Drive unavailable/.test(req('/api/backup/status', {}, { session: bkAdm }).data.lastError));
+
+  /* --- retention --- */
+  const folderId = driveFolders.find((f) => f.name === 'POS Backup').id;
+  for (let i = 1; i <= 40; i++) {
+    driveBackups.push({ id: 'old-' + i, name: 'Orison-POS-Backup_2026-01-' + String(i % 28 + 1).padStart(2, '0') + '_0200.xlsx', folderId, trashed: false });
+  }
+  req('/api/backup/run', {}, { session: bkAdm });
+  const live = driveBackups.filter((b) => b.folderId === folderId && !b.trashed);
+  check('retention prunes old backups rather than letting Drive fill up',
+    live.length < 41, String(live.length));
+  check('the newest backup always survives pruning',
+    live.some((b) => b.name.indexOf('Orison-POS-Backup_20') === 0));
 }
 
 console.log('\n-------------------------------------');

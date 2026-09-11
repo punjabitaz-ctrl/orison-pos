@@ -103,6 +103,8 @@ function dispatch_(action, session, payload, params) {
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
     case '/api/audit':           return auditLog_(session, params);
+    case '/api/backup/status':   return backupStatus_(session);
+    case '/api/backup/run':      return backupNow_(session);
     case '/api/inventory/reorder': return inventoryReorder_(session, params);
     case '/api/admin/products/bulk-price': return adminBulkPrice_(session, payload);
     case '/api/admin/stock-take': return adminStockTake_(session, payload);
@@ -740,6 +742,169 @@ function auditLog_(session, params) {
 }
 
 /* ------------------------------------------------------------------ *
+ *  Backups
+ *
+ *  The entire business lives in one spreadsheet. A bad edit, a wrong
+ *  re-seed, or an account problem loses the shop's whole history, so a
+ *  nightly copy lands in its own Drive folder with the date and time in
+ *  the file name.
+ *
+ *  A silent backup failure is worse than no backup, because it is
+ *  believed - so a failure emails the admins and is written to the audit
+ *  log, and the Settings screen shows when the last good one ran.
+ * ------------------------------------------------------------------ */
+
+var BACKUP_FOLDER_NAME = 'POS Backup';
+var BACKUP_KEEP_DAILY = 30;
+var BACKUP_KEEP_MONTHLY = 12;
+
+function getBackupFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty('BACKUP_FOLDER_ID');
+  var folder = null;
+  if (id) {
+    try { folder = DriveApp.getFolderById(id); } catch (_) { folder = null; }
+  }
+  if (!folder) {
+    var it = DriveApp.getFoldersByName(BACKUP_FOLDER_NAME);
+    folder = it.hasNext() ? it.next() : DriveApp.createFolder(BACKUP_FOLDER_NAME);
+    props.setProperty('BACKUP_FOLDER_ID', folder.getId());
+  }
+  return folder;
+}
+
+/* Local wall-clock stamp, because a shop reads its own clock, not UTC. */
+function backupStamp_(date, tzMin) {
+  var d = new Date(date.getTime() + (num_(tzMin) || 0) * 60000);
+  function two(n) { return (n < 10 ? '0' : '') + n; }
+  return d.getUTCFullYear() + '-' + two(d.getUTCMonth() + 1) + '-' + two(d.getUTCDate())
+    + '_' + two(d.getUTCHours()) + two(d.getUTCMinutes());
+}
+
+function backupFileName_(stamp) {
+  return 'Orison-POS-Backup_' + stamp + '.xlsx';
+}
+
+/* A real copy of the workbook, not loose CSVs: it restores by opening it. */
+function runBackup_(session, reason) {
+  var store = getStore_();
+  var stamp = backupStamp_(new Date(), store.tzOffsetMin);
+  var name = backupFileName_(stamp);
+  var folder = getBackupFolder_();
+  var ssFile = DriveApp.getFileById(spreadSheet_().getId());
+  var copy = ssFile.makeCopy(name, folder);
+
+  var info = {
+    name: name,
+    fileId: copy.getId(),
+    url: copy.getUrl(),
+    at: new Date().toISOString(),
+    reason: String(reason || 'manual'),
+  };
+  setKv_('backup_last_at', info.at);
+  setKv_('backup_last_name', name);
+  logAudit_(session, 'backup.run', 'file', info.fileId, name + ' (' + info.reason + ')', '');
+  pruneBackups_(folder);
+  return info;
+}
+
+/* Keep the last 30 dailies and the first backup of each of the last 12 months.
+   Drive filling up silently is its own kind of backup failure. */
+function pruneBackups_(folder) {
+  try {
+    var files = [];
+    var it = folder.getFilesByType(MimeType.GOOGLE_SHEETS);
+    while (it.hasNext()) {
+      var f = it.next();
+      var nm = f.getName();
+      if (nm.indexOf('Orison-POS-Backup_') !== 0) continue;
+      files.push({ file: f, name: nm, stamp: nm.slice('Orison-POS-Backup_'.length).replace('.xlsx', '') });
+    }
+    files.sort(function (a, b) { return b.stamp.localeCompare(a.stamp); });
+
+    var keep = {};
+    var i;
+    for (i = 0; i < files.length && i < BACKUP_KEEP_DAILY; i++) keep[files[i].name] = true;
+    var monthsSeen = {};
+    for (i = 0; i < files.length; i++) {
+      var month = files[i].stamp.slice(0, 7);
+      if (monthsSeen[month]) continue;
+      monthsSeen[month] = true;
+      if (Object.keys(monthsSeen).length <= BACKUP_KEEP_MONTHLY) keep[files[i].name] = true;
+    }
+    for (i = 0; i < files.length; i++) {
+      if (!keep[files[i].name]) files[i].file.setTrashed(true);
+    }
+  } catch (_) { /* pruning must never fail a backup that already succeeded */ }
+}
+
+/* Called by the nightly time-driven trigger. Never throws: a trigger that
+   throws stops being scheduled, which would silently end all backups. */
+function backupDaily() {
+  try {
+    runBackup_(null, 'scheduled');
+  } catch (err) {
+    var msg = (err && err.message) || String(err);
+    try {
+      setKv_('backup_last_error', new Date().toISOString() + ' ' + msg);
+      logAudit_(null, 'backup.failed', 'file', '', msg, '');
+      notifyAdmins_('Orison POS backup FAILED',
+        'The nightly backup did not run.\n\n' + msg + '\n\nThe shop is running without a current backup.');
+    } catch (_) {}
+  }
+}
+
+/* One place that finds the admins to tell. */
+function notifyAdmins_(subject, body) {
+  var users = readRows_('Users', USER_HEADERS);
+  var to = [];
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].active) !== '1') continue;
+    if (String(users[i].role) !== 'admin') continue;
+    var email = String(users[i].email || '');
+    if (email) to.push(email);
+  }
+  if (!to.length) return 0;
+  MailApp.sendEmail({ to: to.join(','), subject: subject, body: body });
+  return to.length;
+}
+
+/* Install the nightly trigger. Safe to run repeatedly - it clears its own
+   previous trigger first rather than stacking duplicates. */
+function installBackupTrigger() {
+  var existing = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < existing.length; i++) {
+    if (existing[i].getHandlerFunction() === 'backupDaily') ScriptApp.deleteTrigger(existing[i]);
+  }
+  ScriptApp.newTrigger('backupDaily').timeBased().atHour(2).everyDays(1).create();
+  return { installed: true, hour: 2 };
+}
+
+function backupStatus_(session) {
+  requireRole_(session, ['admin']);
+  var k = kv_();
+  return {
+    lastAt: String(k.backup_last_at || ''),
+    lastName: String(k.backup_last_name || ''),
+    lastError: String(k.backup_last_error || ''),
+    folder: BACKUP_FOLDER_NAME,
+    keepDaily: BACKUP_KEEP_DAILY,
+    keepMonthly: BACKUP_KEEP_MONTHLY,
+  };
+}
+
+function backupNow_(session) {
+  requireRole_(session, ['admin']);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    return runBackup_(session, 'manual');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* ------------------------------------------------------------------ *
  *  Seed
  * ------------------------------------------------------------------ */
 
@@ -867,6 +1032,13 @@ function ensureSeed_() {
     // (gated by the 50s Apps Script max-execution, a lock timeout, ...) a
     // second run must see the already-created accounts and NOT seed twice.
     if (kv_().store_id && readRows_('Users', USER_HEADERS).length > 0) { props.setProperty('SEEDED', '1'); return; }
+    /* A workbook with trade in it must never be re-seeded by accident: seeding
+       rewrites users and the catalog, and one wrong run in the Apps Script
+       editor would take the shop's history with it. */
+    if (readRows_('Transactions', TX_HEADERS).length > 0
+        && props.getProperty('CONFIRM_RESEED') !== 'yes') {
+      throw statusError_(409, 'Refusing to seed over a workbook that already has transactions. Set the CONFIRM_RESEED script property to "yes" if this is really intended.');
+    }
     seed_();
     props.setProperty('SEEDED', '1');
   } finally {

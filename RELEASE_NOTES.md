@@ -7,7 +7,38 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.23.0 — management is admin only
+## Latest: v1.24.0 — backups
+
+**2026-09-11.** Fourth of the operational-readiness program.
+
+The whole business lives in one spreadsheet and nothing was copying it
+anywhere. Now a full copy of the workbook lands nightly at 02:00 in its own
+Drive folder **`POS Backup`**, named `Orison-POS-Backup_2026-09-11_0200.xlsx`
+in the store's own local time. The last 30 nights and 12 months are kept.
+
+**A failed backup shouts.** The trigger never throws — one that throws stops
+being scheduled, which would end all backups silently — it emails every admin,
+writes to the audit log, and shows the failure in Settings. A silent backup
+failure is worse than no backup, because it is believed.
+
+**Also fixed:** `setup` would happily re-seed a live workbook, rewriting users
+and the catalog. One wrong run in the Apps Script editor took the shop's
+history with it. It now refuses when transactions exist unless a
+`CONFIRM_RESEED` script property says otherwise.
+
+**Validation:** backend-sim **PASS 515 / FAIL 0** (18 new) · client units
+**PASS 350 / FAIL 0**.
+
+### Deploying
+
+1. **Backend redeploy required.**
+2. **Run `installBackupTrigger()` once** from the Apps Script editor to schedule
+   the nightly job, and approve the trigger permission prompt.
+3. Check Settings → Backups shows a time after the first run.
+
+---
+
+## v1.23.0 — management is admin only
 
 **2026-09-11.** Third of the operational-readiness program.
 

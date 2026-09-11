@@ -5,6 +5,37 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0] — 2026-09-11
+
+Backups. The entire business lives in one spreadsheet; until now nothing copied
+it anywhere.
+
+### Added
+
+- **Nightly backup** via an Apps Script time-driven trigger at 02:00, writing a
+  full copy of the workbook to its own Drive folder **`POS Backup`**, named
+  `Orison-POS-Backup_YYYY-MM-DD_HHmm.xlsx` in the **store's** local time.
+  A copy of the spreadsheet, not loose CSVs — it restores by being opened.
+- **Retention**: the last 30 nightly copies and the first of each of the last 12
+  months. Drive filling up silently is its own kind of backup failure.
+- **`installBackupTrigger()`** — run once from the Apps Script editor. Safe to
+  run repeatedly: it clears its own previous trigger rather than stacking.
+- **A failed backup shouts.** `backupDaily()` never throws (a trigger that
+  throws stops being scheduled, which would end all backups silently); instead
+  it emails every active admin, writes `backup.failed` to the audit log, and
+  the failure shows in Settings.
+- **`/api/backup/status` and `/api/backup/run`**, both admin only, with a
+  **Back up now** button and the last-backup time in Settings.
+- 18 sim checks, including that a failed scheduled run emails the admins and
+  that installing the trigger twice does not create two.
+
+### Fixed
+
+- **`setup` would re-seed a live workbook.** Seeding rewrites users and the
+  catalog, so one wrong run in the Apps Script editor took the shop's history
+  with it. It now refuses when transactions exist unless a `CONFIRM_RESEED`
+  script property is set to `yes`.
+
 ## [1.23.0] — 2026-09-11
 
 Management and ownership functions are now admin only, at the owner's
