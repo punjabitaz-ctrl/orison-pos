@@ -5,6 +5,36 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0] — 2026-09-11
+
+Record a sale that happened somewhere else, so marketplace stock stops drifting
+from the shelf.
+
+### Added
+
+- **`channel` and `external_ref` on every transaction.** Channels are
+  `in_store` (the default), `online`, `marketplace`, `phone` and `other`; an
+  unrecognised value falls back to `in_store` rather than storing junk.
+- **"Sold Elsewhere" on the launcher** (manager/admin): pick where it sold, give
+  the order reference and the date, find the items — **including IMEI capture
+  for serialised stock** — set the price actually received, and record it. The
+  stock comes off exactly as it would at the counter.
+- **Availability respects an open till sale.** The dialog counts what is free
+  using the same `cart.js` maths, so an external sale cannot claim a unit
+  somebody is mid-way through selling at the register.
+- **Reports gain `byChannel`** — sales, count and units per channel — while
+  channel sales still count in the overall totals.
+- The order reference and the channel are **searchable**, so a sale is findable
+  by its eBay order number.
+- 13 sim checks, including that a unit sold on the marketplace can no longer be
+  sold at the counter.
+
+### Note
+
+This is not a marketplace integration. Somebody still types the sale in. What it
+buys is that when they do, the stock, the ledger and the reports stay honest —
+and there is one place that knows what is actually in the building.
+
 ## [1.26.0] — 2026-09-11
 
 Daily, weekly and monthly reports emailed automatically to the admins the owner

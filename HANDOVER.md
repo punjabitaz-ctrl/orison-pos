@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.26.0** — scheduled reports (`2026-09-11`) |
-| Validation bar | `backend-sim` **PASS 552 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.27.0** — sales made elsewhere (`2026-09-11`) |
+| Validation bar | `backend-sim` **PASS 565 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,15 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.27.0** Sales made elsewhere. `channel` + `external_ref` on every
+  transaction (`in_store` default, `online`, `marketplace`, `phone`, `other`;
+  unknown values fall back to `in_store`). **Sold Elsewhere** launcher dialog
+  (manager/admin) records a marketplace sale against the same stock with IMEI
+  capture, using `cart.js` availability so it cannot claim a unit an open till
+  sale holds. Reports gain `byChannel`; the order reference and channel are
+  searchable. 13 new sim checks including that the counter refuses a unit the
+  marketplace already took. **Not** a marketplace API integration — someone
+  still types it in.
 - **v1.26.0** Scheduled reports. `/api/reports/schedule` (admin only) sets
   recipients and per-cadence on/off, reports last-sent times, and can send one
   immediately. Three time-driven triggers (daily 06:00, weekly, monthly) via

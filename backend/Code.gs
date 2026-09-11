@@ -332,7 +332,7 @@ var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pi
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
-var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no'];
+var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
@@ -1920,6 +1920,8 @@ function syncPush_(session, payload) {
         tax_amount: totals ? totals.tax : 0,
         discount_pct: orderPct,
         customer_id: custId,
+        channel: normaliseChannel_(tx.channel),
+        external_ref: String(tx.externalRef || '').slice(0, 120),
       };
       if (reuseId && hasErrors) {
         /* still blocked: report the fresh failure against the SAME transaction
@@ -2444,6 +2446,8 @@ function txMatchesQuery_(t, q, custName, cashier) {
   var hay = [
     String(t.receipt_no || ''),
     String(t.client_tx_id || ''),
+    String(t.external_ref || ''),
+    String(t.channel || ''),
     String(t.counterparty || ''),
     String(t.note || ''),
     String(t.kind || 'sale'),
@@ -2463,6 +2467,16 @@ function txMatchesQuery_(t, q, custName, cashier) {
     if (line.indexOf(needle) >= 0) return true;
   }
   return false;
+}
+
+/* Where a sale happened. Stock has to come off whether the customer stood at
+ * the counter or clicked Buy It Now somewhere else, and the shop needs to be
+ * able to tell the two apart afterwards. */
+var SALE_CHANNELS = ['in_store', 'online', 'marketplace', 'phone', 'other'];
+
+function normaliseChannel_(c) {
+  var v = String(c || 'in_store');
+  return SALE_CHANNELS.indexOf(v) >= 0 ? v : 'in_store';
 }
 
 var TX_PAGE_MAX = 100;
@@ -2547,6 +2561,8 @@ function transactions_(session, params) {
       deviceId: String(t.device_id),
       clientTxId: String(t.client_tx_id || ''),
       receiptNo: String(t.receipt_no || ''),
+      channel: normaliseChannel_(t.channel),
+      externalRef: String(t.external_ref || ''),
       kind: kindName,
       originalClientTx: String(t.original_client_tx || ''),
       counterparty: String(t.counterparty || ''),
@@ -2951,6 +2967,7 @@ function reports_(session, params) {
   var byTender = Object.create(null);
   var byProduct = Object.create(null);
   var byCustomerTx = Object.create(null);
+  var byChannel = Object.create(null);
   var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0 };
 
   function costOf_(t) {
@@ -2990,6 +3007,11 @@ function reports_(session, params) {
 
     if (kind === 'sale') {
       var g1 = num_(t.grand_total);
+      var ch = normaliseChannel_(t.channel);
+      var che = byChannel[ch] || (byChannel[ch] = { sales: 0, count: 0, units: 0 });
+      che.sales += g1;
+      che.count += 1;
+      che.units += items.reduce(function (n, it2) { return n + (it2.quantity || 1); }, 0);
       summary.grossSales += g1;
       summary.salesCount += 1;
       summary.units += items.reduce(function (s, it) { return s + (it.quantity || 1); }, 0);
@@ -3114,6 +3136,9 @@ function reports_(session, params) {
     byCategory: byCatOut,
     byCashier: byCashOut,
     byTender: byTenderOut,
+    byChannel: Object.keys(byChannel).map(function (k) {
+      return { channel: k, sales: num_(byChannel[k].sales), count: byChannel[k].count, units: byChannel[k].units };
+    }).sort(function (a, b) { return b.sales - a.sales; }),
     topProducts: byProductOut,
     topCustomers: topCust,
   };

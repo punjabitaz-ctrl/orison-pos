@@ -3167,6 +3167,97 @@ check('statement carries the changer/cashier',
   check('installing twice does not stack duplicates', scriptTriggers.length === 3);
 }
 
+{
+  section('sales made elsewhere (v1.27.0)');
+
+  const chAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const chCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const chUsers = req('/api/admin/users/list', {}, { session: chAdm }).data.users;
+  const chCashId = chUsers.find((u) => u.email === 'amara@example.com').id;
+
+  const chProd = req('/api/admin/products', {
+    name: 'Channel Widget', sku: 'CH-1', category: 'CH', costPrice: 4, retailPrice: 20, onHand: 50,
+  }, { session: chAdm }).data.id;
+
+  const chSell = (clientTxId, channel, externalRef, qty) => req('/api/sync/push', {
+    deviceId: 'dev-ch',
+    batch: [{
+      clientTxId, userId: chCashId, grandTotal: 20 * (qty || 1),
+      createdAt: new Date().toISOString(),
+      channel, externalRef,
+      tenders: [{ type: 'transfer', amount: 20 * (qty || 1) }],
+      items: [{ productId: chProd, quantity: qty || 1, unitPrice: 20 }],
+    }],
+  }, { session: chCash });
+
+  const before = req('/api/products', {}, { session: chAdm }).data.find((p) => p.sku === 'CH-1').onHand;
+
+  check('a marketplace sale is accepted',
+    chSell('tx-ch-mkt', 'marketplace', 'eBay 12-34567-89012', 2).data.results[0].accepted === true);
+
+  const after = req('/api/products', {}, { session: chAdm }).data.find((p) => p.sku === 'CH-1').onHand;
+  check('it takes the stock off the shelf, exactly like a counter sale',
+    after === before - 2, JSON.stringify({ before, after }));
+
+  const chLedger = req('/api/transactions', {}, { session: chAdm, params: { q: 'eBay 12-34567' } }).data;
+  check('it is findable by its order reference',
+    chLedger.transactions.length === 1, String(chLedger.transactions.length));
+  const row = chLedger.transactions[0];
+  check('the row records where it sold', row.channel === 'marketplace', row.channel);
+  check('the row keeps the external reference', row.externalRef === 'eBay 12-34567-89012', row.externalRef);
+  check('it is still a numbered customer document', /^Orison-S\d{6}$/.test(row.receiptNo || ''), row.receiptNo);
+
+  /* --- a counter sale is still a counter sale --- */
+  chSell('tx-ch-counter', undefined, '', 1);
+  const counter = req('/api/transactions', {}, { session: chAdm, params: { q: 'tx-ch-counter' } }).data.transactions[0];
+  check('a sale with no channel defaults to in-store', counter.channel === 'in_store', counter.channel);
+
+  /* --- an unknown channel cannot be smuggled in --- */
+  chSell('tx-ch-bogus', 'bogus-channel', 'X1', 1);
+  const bogus = req('/api/transactions', {}, { session: chAdm, params: { q: 'tx-ch-bogus' } }).data.transactions[0];
+  check('an unrecognised channel falls back to in-store rather than storing junk',
+    bogus.channel === 'in_store', bogus.channel);
+
+  /* --- reports split it out --- */
+  const chRep = req('/api/reports', {}, { session: chAdm }).data;
+  const chans = chRep.byChannel || [];
+  const mkt = chans.find((c) => c.channel === 'marketplace');
+  const store = chans.find((c) => c.channel === 'in_store');
+  check('reports break sales down by channel', !!mkt && !!store, JSON.stringify(chans));
+  check('the marketplace figures are its own', mkt && mkt.units === 2 && mkt.count === 1,
+    JSON.stringify(mkt));
+  check('channel sales still count in the overall total',
+    chRep.summary.grossSales >= 40 + 20 + 20);
+
+  /* --- serialized stock sold elsewhere --- */
+  const chSer = req('/api/admin/products', {
+    name: 'Channel Phone', sku: 'CH-PH', category: 'CH', costPrice: 100, retailPrice: 300, isSerialized: true,
+  }, { session: chAdm }).data.id;
+  req('/api/admin/serials', { productId: chSer, serialNumbers: ['CH-SN-1'] }, { session: chAdm });
+  req('/api/sync/push', {
+    deviceId: 'dev-ch',
+    batch: [{ clientTxId: 'tx-ch-serial', userId: chCashId, grandTotal: 300,
+      createdAt: new Date().toISOString(), channel: 'marketplace', externalRef: 'eBay 99-9',
+      tenders: [{ type: 'transfer', amount: 300 }],
+      items: [{ productId: chSer, quantity: 1, unitPrice: 300, serialNumber: 'CH-SN-1' }] }],
+  }, { session: chCash });
+  const chSerAfter = req('/api/products', {}, { session: chAdm }).data.find((p) => p.sku === 'CH-PH');
+  check('an IMEI sold elsewhere is consumed like any other',
+    chSerAfter.onHand === 0 && chSerAfter.serials.length === 0,
+    JSON.stringify({ onHand: chSerAfter.onHand, serials: chSerAfter.serials }));
+
+  /* --- and the same unit cannot then be sold at the counter --- */
+  const dbl = req('/api/sync/push', {
+    deviceId: 'dev-counter',
+    batch: [{ clientTxId: 'tx-ch-double', userId: chCashId, grandTotal: 300,
+      createdAt: new Date().toISOString(),
+      tenders: [{ type: 'cash', amount: 300 }],
+      items: [{ productId: chSer, quantity: 1, unitPrice: 300, serialNumber: 'CH-SN-1' }] }],
+  }, { session: chCash });
+  check('the counter cannot sell a unit the marketplace already took',
+    dbl.data.results[0].accepted === false, JSON.stringify(dbl.data.results[0]));
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

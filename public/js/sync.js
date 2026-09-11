@@ -231,6 +231,10 @@ export async function enqueueTransaction(tx) {
     tenders: tx.tenders,
     note: tx.note || '',
     createdAt: tx.createdAt || new Date().toISOString(),
+    /* where the sale happened, so marketplace stock does not drift from the
+       shelf and the two can be told apart in reports afterwards. */
+    channel: tx.channel || 'in_store',
+    externalRef: tx.externalRef || '',
     items: tx.items,
   };
   await idb.put('outbox', {

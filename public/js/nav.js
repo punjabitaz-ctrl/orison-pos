@@ -13,6 +13,7 @@ export const DESTINATIONS = [
   { id: 'payout', label: 'Paid Out', screen: 'dashboard', roles: MANAGER, dialog: 'payout' },
   { id: 'pickup', label: 'Cash Pick Up', screen: 'dashboard', roles: MANAGER, dialog: 'pickup' },
   { id: 'expense', label: 'Staff Expense', screen: 'dashboard', roles: MANAGER, dialog: 'expense' },
+  { id: 'external', label: 'Sold Elsewhere', screen: 'register', roles: MANAGER, dialog: 'external' },
   { id: 'staff', label: 'Time Clock', screen: 'staff', roles: null },
   { id: 'customers', label: 'Customers', screen: 'customers', roles: MANAGER },
   { id: 'inventory', label: 'Products', screen: 'inventory', roles: MANAGER },

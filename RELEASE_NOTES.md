@@ -7,7 +7,40 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.26.0 — scheduled reports
+## Latest: v1.27.0 — sales made elsewhere
+
+**2026-09-11.** Seventh of the operational-readiness program.
+
+You list on marketplaces. When something sells there the stock leaves the shelf
+and nothing here knew, so the counts drifted apart and the POS stopped being the
+truth about what is in the building.
+
+**Sold Elsewhere** on the launcher records that sale in the same ledger, against
+the same stock: pick where it sold, give the order reference and date, find the
+items (IMEI capture included), set the price actually received. Stock comes off
+exactly as it would at the counter, and the sale gets a receipt number like any
+other customer document.
+
+It also cannot cheat: the dialog counts what is free using the same maths the
+register does, so it cannot claim a unit someone is mid-way through selling —
+and once a phone has sold on the marketplace, the counter refuses it.
+
+Reports now break down **by channel**, and the order reference is searchable, so
+a sale is findable by its eBay order number.
+
+**This is not a marketplace integration.** Somebody still types it in. What it
+buys is that when they do, the numbers stay honest.
+
+**Validation:** backend-sim **PASS 565 / FAIL 0** (13 new) · client units
+**PASS 350 / FAIL 0**.
+
+### Deploying
+
+**Backend redeploy required** — two new schema columns.
+
+---
+
+## v1.26.0 — scheduled reports
 
 **2026-09-11.** Sixth of the operational-readiness program.
 
