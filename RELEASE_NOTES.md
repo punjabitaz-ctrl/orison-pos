@@ -7,7 +7,39 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.25.0 — never load more than 100
+## Latest: v1.26.0 — scheduled reports
+
+**2026-09-11.** Sixth of the operational-readiness program.
+
+Daily, weekly and monthly figures now email themselves to the admins you
+nominate in Settings. Each report covers **the period that just closed** — a
+daily sent at 06:00 is about yesterday — and carries gross sales, refunds, cash
+out broken down by reason, collections, net revenue, gross profit, average
+ticket, a per-cashier breakdown and the top five sellers, with the period CSV
+attached.
+
+**Nothing is scheduled until you ask for it.** All three cadences default to
+off, so nobody starts receiving mail because a release shipped. There is a
+**Send one now** button to see what arrives before switching anything on.
+
+The figures come from the same function the Reports screen uses, so a mailed
+report and the screen can never disagree. A failing send does not throw out of
+the trigger — that would silently end all future reports — it logs and surfaces
+in Settings instead.
+
+**Validation:** backend-sim **PASS 552 / FAIL 0** (23 new) · client units
+**PASS 350 / FAIL 0**.
+
+### Deploying
+
+1. **Backend redeploy required.**
+2. **Run `installReportTriggers()` once** from the Apps Script editor.
+3. In Settings → Scheduled reports, add recipients, tick the cadences, save, and
+   use **Send one now** to confirm delivery.
+
+---
+
+## v1.25.0 — never load more than 100
 
 **2026-09-11.** Fifth of the operational-readiness program.
 

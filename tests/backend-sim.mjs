@@ -267,6 +267,8 @@ sandbox.ScriptApp = {
       timeBased: () => builder,
       atHour: (h) => { spec.hour = h; return builder; },
       everyDays: (d) => { spec.days = d; return builder; },
+      everyWeeks: (w) => { spec.weeks = w; return builder; },
+      onWeekDay: (d) => { spec.weekDay = d; return builder; },
       create: () => {
         const t = { getHandlerFunction: () => spec.fn, _spec: spec };
         scriptTriggers.push(t);
@@ -3075,6 +3077,94 @@ check('statement carries the changer/cashier',
     big.transactions.length === 100 && big.matched > 2000,
     JSON.stringify({ rows: big.transactions.length, matched: big.matched }));
   console.log('      (ledger ' + big.matched + ' rows, paged read ' + readMs + 'ms in the sim)');
+}
+
+{
+  section('scheduled reports (v1.26.0)');
+
+  const schAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const schMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+
+  check('only an admin can read or change the schedule',
+    req('/api/reports/schedule', {}, { session: schMgr }).status === 403);
+
+  const initial = req('/api/reports/schedule', {}, { session: schAdm }).data;
+  check('nothing is scheduled until someone asks for it',
+    initial.daily === false && initial.weekly === false && initial.monthly === false
+    && initial.recipients.length === 0, JSON.stringify(initial));
+
+  check('a bad email address is refused',
+    req('/api/reports/schedule', { recipients: 'not-an-email' }, { session: schAdm }).status === 400);
+
+  const set = req('/api/reports/schedule', {
+    recipients: 'owner@example.com, books@example.com',
+  }, { session: schAdm }).data;
+  check('recipients are stored and trimmed',
+    set.recipients.length === 2 && set.recipients[0] === 'owner@example.com', JSON.stringify(set.recipients));
+
+  const on = req('/api/reports/schedule', { cadence: 'daily', on: true }, { session: schAdm }).data;
+  check('a cadence can be switched on', on.daily === true && on.weekly === false);
+
+  /* --- sending --- */
+  const mailsBefore = mails.length;
+  const sent = req('/api/reports/schedule', { sendNow: 'daily' }, { session: schAdm });
+  check('send-now sends to every recipient',
+    sent.data.sent === true && sent.data.recipients === 2, JSON.stringify(sent.data));
+  check('exactly one mail goes out, addressed to both', mails.length === mailsBefore + 1);
+  const mail = mails[mails.length - 1];
+  check('it is addressed to the nominated admins',
+    mail.to.indexOf('owner@example.com') >= 0 && mail.to.indexOf('books@example.com') >= 0, mail.to);
+  check('the subject names the shop and the window',
+    /report/.test(mail.subject) && /\d{4}-\d{2}-\d{2}/.test(mail.subject), mail.subject);
+  check('the figures are in the body',
+    /Gross sales/.test(mail.body) && /Net revenue/.test(mail.body) && /Gross profit/.test(mail.body));
+  check('cash out is broken down by reason in the body',
+    /paid out/.test(mail.body) && /cash pick-up/.test(mail.body) && /staff expense/.test(mail.body));
+  check('the period CSV is attached',
+    (mail.attachments || []).length === 1 && /\.csv$/.test(mail.attachments[0].fileName),
+    JSON.stringify((mail.attachments || []).map((a) => a.fileName)));
+  check('the CSV has a header and day rows',
+    /^date,sales,count,gross_profit/.test(mail.attachments[0].content));
+  check('the send is recorded in the audit log',
+    req('/api/audit', {}, { session: schAdm, params: { action: 'report.sent' } }).data.entries.length > 0);
+  check('status remembers when the daily last went',
+    !!req('/api/reports/schedule', {}, { session: schAdm }).data.lastDaily);
+
+  /* --- the trigger path --- */
+  const beforeTrigger = mails.length;
+  sandbox.reportDaily();
+  check('the scheduled trigger sends when the cadence is on', mails.length === beforeTrigger + 1);
+
+  req('/api/reports/schedule', { cadence: 'daily', on: false }, { session: schAdm });
+  const beforeOff = mails.length;
+  sandbox.reportDaily();
+  check('a cadence that is switched off sends nothing', mails.length === beforeOff);
+
+  /* --- no recipients is a no-op, not a crash --- */
+  req('/api/reports/schedule', { recipients: '' }, { session: schAdm });
+  const none = req('/api/reports/schedule', { sendNow: 'weekly' }, { session: schAdm }).data;
+  check('with nobody to send to it declines rather than throwing',
+    none.sent === false && none.reason === 'no_recipients', JSON.stringify(none));
+
+  /* --- a failing send must not kill the trigger --- */
+  req('/api/reports/schedule', { recipients: 'owner@example.com' }, { session: schAdm });
+  req('/api/reports/schedule', { cadence: 'weekly', on: true }, { session: schAdm });
+  const realSend = sandbox.MailApp.sendEmail;
+  sandbox.MailApp.sendEmail = () => { throw new Error('Mail quota exceeded'); };
+  sandbox.reportWeekly();
+  sandbox.MailApp.sendEmail = realSend;
+  check('a failing scheduled report does not throw out of the trigger', true);
+  check('the failure is recorded in the audit log',
+    req('/api/audit', {}, { session: schAdm, params: { action: 'report.failed' } }).data.entries.length > 0);
+  check('the failure is visible in the schedule status',
+    /Mail quota exceeded/.test(req('/api/reports/schedule', {}, { session: schAdm }).data.lastError));
+
+  /* --- triggers install once --- */
+  scriptTriggers.length = 0;
+  sandbox.installReportTriggers();
+  check('three report triggers are installed', scriptTriggers.length === 3);
+  sandbox.installReportTriggers();
+  check('installing twice does not stack duplicates', scriptTriggers.length === 3);
 }
 
 console.log('\n-------------------------------------');

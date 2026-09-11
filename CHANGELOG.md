@@ -5,6 +5,40 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0] — 2026-09-11
+
+Daily, weekly and monthly reports emailed automatically to the admins the owner
+nominates.
+
+### Added
+
+- **`/api/reports/schedule`** (admin only): set recipients, switch each cadence
+  on or off, read when each last went, and send one immediately.
+- **Three time-driven triggers** — daily 06:00, weekly, monthly — installed once
+  with `installReportTriggers()`, which clears its own previous triggers rather
+  than stacking duplicates.
+- **Each report covers the period that just closed.** A daily report sent at
+  06:00 is about yesterday, not the morning it is sent in.
+- The email carries gross sales, refunds, **cash out broken down by reason**,
+  collections, net revenue, gross profit, sales and units, average ticket, a
+  per-cashier breakdown and the top five sellers — with the period CSV attached.
+- **Settings panel** for recipients, the three toggles, the last-sent times and
+  a **Send one now** button.
+- 23 sim checks including the trigger path, a switched-off cadence sending
+  nothing, and a failing send.
+
+### Notes
+
+- **Nothing is scheduled until someone asks for it.** All three cadences default
+  to off, so no one starts receiving mail because a release shipped.
+- The figures come from `reports_()`, the same function the Reports screen uses,
+  so a scheduled report and the screen can never disagree.
+- A failing send does **not** throw out of the trigger — a trigger that throws
+  stops being scheduled. It writes `report.failed` to the audit log and shows in
+  Settings instead.
+- Apps Script's `MailApp` quota is 100 recipients/day on a consumer account and
+  1,500 on Workspace. Three reports to a handful of admins is nowhere near it.
+
 ## [1.25.0] — 2026-09-11
 
 Never load more than 100 transactions, and search the ledger on the server

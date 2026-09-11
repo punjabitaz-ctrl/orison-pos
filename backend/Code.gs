@@ -103,6 +103,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
     case '/api/audit':           return auditLog_(session, params);
+    case '/api/reports/schedule': return reportSettings_(session, payload);
     case '/api/backup/status':   return backupStatus_(session);
     case '/api/backup/run':      return backupNow_(session);
     case '/api/inventory/reorder': return inventoryReorder_(session, params);
@@ -902,6 +903,204 @@ function backupNow_(session) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Scheduled reports
+ *
+ *  Daily, weekly and monthly figures emailed to the admins the owner
+ *  nominates. The numbers come from reports_(), so a scheduled report and
+ *  the Reports screen can never disagree.
+ * ------------------------------------------------------------------ */
+
+var REPORT_CADENCES = ['daily', 'weekly', 'monthly'];
+
+function reportRecipients_() {
+  var raw = String(kv_().report_recipients || '');
+  if (!raw) return [];
+  return raw.split(',').map(function (x) { return String(x).trim(); }).filter(function (x) { return x; });
+}
+
+function reportCadenceOn_(cadence) {
+  var k = kv_();
+  var key = 'report_' + cadence;
+  /* default off: nobody should start receiving mail because a release shipped */
+  return String(k[key] || '') === '1';
+}
+
+/* Local calendar day, offset by the store's own clock. */
+function reportDayKey_(date, tzMin) {
+  return localDayKey_(date.toISOString(), num_(tzMin) || 0);
+}
+
+/* The window a cadence covers, ending yesterday - a "daily" report sent at
+ * 06:00 is about the day that just closed, not the one that just started. */
+function reportWindow_(cadence, now, tzMin) {
+  var end = new Date(now.getTime() - 86400000);
+  var start = new Date(end.getTime());
+  if (cadence === 'weekly') start = new Date(end.getTime() - 6 * 86400000);
+  else if (cadence === 'monthly') start = new Date(end.getTime() - 29 * 86400000);
+  return { from: reportDayKey_(start, tzMin), to: reportDayKey_(end, tzMin) };
+}
+
+function money_(v, store) {
+  return (store.currencySymbol || '') + num_(v).toFixed(2);
+}
+
+function reportEmailBody_(cadence, win, data, store) {
+  var s = data.summary || {};
+  var lines = [];
+  lines.push(store.name + ' — ' + cadence + ' report');
+  lines.push(win.from === win.to ? win.from : win.from + ' to ' + win.to);
+  lines.push('');
+  lines.push('Gross sales      ' + money_(s.grossSales, store));
+  lines.push('Refunds          ' + money_(s.refunds, store));
+  lines.push('Cash out         ' + money_(s.cashOut, store));
+  lines.push('  paid out       ' + money_(s.payouts, store));
+  lines.push('  cash pick-up   ' + money_(s.pickups, store));
+  lines.push('  staff expense  ' + money_(s.expenses, store));
+  lines.push('Collections      ' + money_(s.collections, store));
+  lines.push('Net revenue      ' + money_(s.netRevenue, store));
+  lines.push('Gross profit     ' + money_(s.grossProfit, store));
+  lines.push('Sales            ' + s.salesCount + '   units ' + s.units);
+  lines.push('Average ticket   ' + money_(s.avgTicket, store));
+  lines.push('');
+
+  var cashiers = data.byCashier || [];
+  if (cashiers.length) {
+    lines.push('By cashier');
+    for (var c = 0; c < cashiers.length; c++) {
+      lines.push('  ' + cashiers[c].userName + '  ' + money_(cashiers[c].sales, store)
+        + '  (' + cashiers[c].count + ' sales)');
+    }
+    lines.push('');
+  }
+  var top = data.topProducts || [];
+  if (top.length) {
+    lines.push('Top sellers');
+    for (var t = 0; t < top.length && t < 5; t++) {
+      lines.push('  ' + top[t].name + '  ' + top[t].units + ' ×  ' + money_(top[t].sales, store));
+    }
+    lines.push('');
+  }
+  lines.push('The period CSV is attached.');
+  lines.push('');
+  lines.push('An AYiN Advisors Project');
+  return lines.join('\n');
+}
+
+function reportCsv_(data) {
+  var rows = [];
+  rows.push(['date', 'sales', 'count', 'gross_profit'].join(','));
+  var byDay = data.byDay || [];
+  for (var i = 0; i < byDay.length; i++) {
+    rows.push([csvCell_(byDay[i].date), num_(byDay[i].sales).toFixed(2),
+      String(byDay[i].count), num_(byDay[i].gp).toFixed(2)].join(','));
+  }
+  return rows.join('\n');
+}
+
+/* Build and send one cadence. Returns what happened so the trigger and the
+ * manual "send now" button can both report it honestly. */
+function sendScheduledReport_(cadence, session) {
+  if (REPORT_CADENCES.indexOf(cadence) < 0) throw statusError_(400, 'unknown cadence');
+  var store = getStore_();
+  var to = reportRecipients_();
+  if (!to.length) return { sent: false, reason: 'no_recipients', cadence: cadence };
+
+  var win = reportWindow_(cadence, new Date(), store.tzOffsetMin);
+  var data = reports_({ role: 'admin', uid: (session && session.uid) || '' }, { from: win.from, to: win.to });
+  var subject = store.name + ' — ' + cadence + ' report — '
+    + (win.from === win.to ? win.from : win.from + ' to ' + win.to);
+
+  MailApp.sendEmail({
+    to: to.join(','),
+    subject: subject,
+    body: reportEmailBody_(cadence, win, data, store),
+    attachments: [{
+      fileName: 'orison-' + cadence + '-' + win.to + '.csv',
+      mimeType: 'text/csv',
+      content: reportCsv_(data),
+    }],
+  });
+  setKv_('report_last_' + cadence, new Date().toISOString());
+  logAudit_(session, 'report.sent', 'report', cadence,
+    'Sent ' + cadence + ' report for ' + win.from + '..' + win.to + ' to ' + to.length + ' recipient(s)', '');
+  return { sent: true, cadence: cadence, recipients: to.length, window: win };
+}
+
+/* Trigger entry points. Each swallows its own failure for the same reason the
+ * backup does: a trigger that throws stops being scheduled. */
+function reportDaily()   { runScheduledReport_('daily'); }
+function reportWeekly()  { runScheduledReport_('weekly'); }
+function reportMonthly() { runScheduledReport_('monthly'); }
+
+function runScheduledReport_(cadence) {
+  try {
+    if (!reportCadenceOn_(cadence)) return;
+    sendScheduledReport_(cadence, null);
+  } catch (err) {
+    var msg = (err && err.message) || String(err);
+    try {
+      setKv_('report_last_error', new Date().toISOString() + ' ' + cadence + ': ' + msg);
+      logAudit_(null, 'report.failed', 'report', cadence, msg, '');
+    } catch (_) {}
+  }
+}
+
+function installReportTriggers() {
+  var wanted = { reportDaily: 1, reportWeekly: 1, reportMonthly: 1 };
+  var existing = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < existing.length; i++) {
+    if (wanted[existing[i].getHandlerFunction()]) ScriptApp.deleteTrigger(existing[i]);
+  }
+  ScriptApp.newTrigger('reportDaily').timeBased().atHour(6).everyDays(1).create();
+  ScriptApp.newTrigger('reportWeekly').timeBased().atHour(7).everyWeeks(1).create();
+  ScriptApp.newTrigger('reportMonthly').timeBased().atHour(8).everyDays(30).create();
+  return { installed: 3 };
+}
+
+function reportSettings_(session, payload) {
+  requireRole_(session, ['admin']);
+  var isWrite = payload && (payload.recipients !== undefined || payload.cadence !== undefined || payload.sendNow);
+
+  if (payload && payload.sendNow) {
+    return sendScheduledReport_(String(payload.sendNow), session);
+  }
+
+  if (isWrite) {
+    if (payload.recipients !== undefined) {
+      var list = String(payload.recipients || '').split(',')
+        .map(function (x) { return String(x).trim(); })
+        .filter(function (x) { return x; });
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].indexOf('@') < 1 || list[i].indexOf('.') < 0) {
+          throw statusError_(400, 'Not an email address: ' + list[i]);
+        }
+      }
+      if (list.length > 10) throw statusError_(400, 'At most 10 recipients');
+      setKv_('report_recipients', list.join(','));
+      logAudit_(session, 'report.recipients', 'report', '', list.join(', ') || '(none)', '');
+    }
+    if (payload.cadence !== undefined) {
+      var c = String(payload.cadence);
+      if (REPORT_CADENCES.indexOf(c) < 0) throw statusError_(400, 'unknown cadence');
+      setKv_('report_' + c, payload.on ? '1' : '0');
+      logAudit_(session, 'report.cadence', 'report', c, (payload.on ? 'on' : 'off'), '');
+    }
+  }
+
+  var k = kv_();
+  return {
+    recipients: reportRecipients_(),
+    daily: reportCadenceOn_('daily'),
+    weekly: reportCadenceOn_('weekly'),
+    monthly: reportCadenceOn_('monthly'),
+    lastDaily: String(k.report_last_daily || ''),
+    lastWeekly: String(k.report_last_weekly || ''),
+    lastMonthly: String(k.report_last_monthly || ''),
+    lastError: String(k.report_last_error || ''),
+  };
 }
 
 /* ------------------------------------------------------------------ *

@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.25.0** — never load more than 100 (`2026-09-11`) |
-| Validation bar | `backend-sim` **PASS 529 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.26.0** — scheduled reports (`2026-09-11`) |
+| Validation bar | `backend-sim` **PASS 552 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,15 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.26.0** Scheduled reports. `/api/reports/schedule` (admin only) sets
+  recipients and per-cadence on/off, reports last-sent times, and can send one
+  immediately. Three time-driven triggers (daily 06:00, weekly, monthly) via
+  **`installReportTriggers()`** — ⚠️ **run it once or nothing is ever sent**.
+  Each report covers the period that just closed; figures come from `reports_()`
+  so a mailed report and the Reports screen cannot disagree. All cadences
+  default **off**. A failing send logs `report.failed` rather than throwing out
+  of the trigger. Settings panel with recipients, toggles and Send-one-now.
+  23 new sim checks.
 - **v1.25.0** Never load more than 100. `/api/transactions` hard-capped at
   **100** (was 500) with **keyset paging** on `created_at` via `cursor`, plus
   **server-side search** (`q`) across receipt number, client id, customer,

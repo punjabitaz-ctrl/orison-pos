@@ -43,6 +43,23 @@ export const screen = {
 
       ${(user && user.role === 'admin') ? `
       <section class="set-card">
+        <h3>Scheduled reports</h3>
+        <p class="muted">Daily, weekly and monthly figures emailed automatically. Each report covers the period that just closed and carries the CSV.</p>
+        <div class="field">
+          <span>Send to (comma separated)</span>
+          <input id="rsTo" type="text" placeholder="owner@example.com, books@example.com" autocapitalize="none" spellcheck="false">
+        </div>
+        <label class="check"><input id="rsDaily" type="checkbox"> Daily</label>
+        <label class="check"><input id="rsWeekly" type="checkbox"> Weekly</label>
+        <label class="check"><input id="rsMonthly" type="checkbox"> Monthly</label>
+        <div class="row">
+          <button class="btn" id="rsSave">Save</button>
+          <button class="btn btn-ghost" id="rsTest">Send one now</button>
+        </div>
+        <p id="rsMsg" class="muted" role="status"></p>
+      </section>
+
+      <section class="set-card">
         <h3>Backups</h3>
         <p class="muted">A copy of the whole workbook lands nightly in a Drive folder called <strong>POS Backup</strong>, named with the date and time. The last 30 nights and 12 months are kept.</p>
         <div id="bkStatus" class="muted">Checking…</div>
@@ -158,6 +175,57 @@ export const screen = {
       const { openStoreSetup } = await import('./store-setup.js');
       openStoreSetup({ store: m.store, firstRun: false, onSaved: () => redraw() });
     });
+
+    const rsSave = root.querySelector('#rsSave');
+    if (rsSave) {
+      const rsMsg = root.querySelector('#rsMsg');
+      const paintSchedule = (st) => {
+        if (!st) { rsMsg.textContent = 'Could not read the schedule.'; return; }
+        root.querySelector('#rsTo').value = (st.recipients || []).join(', ');
+        root.querySelector('#rsDaily').checked = !!st.daily;
+        root.querySelector('#rsWeekly').checked = !!st.weekly;
+        root.querySelector('#rsMonthly').checked = !!st.monthly;
+        const last = [
+          st.lastDaily ? 'daily ' + new Date(st.lastDaily).toLocaleDateString() : '',
+          st.lastWeekly ? 'weekly ' + new Date(st.lastWeekly).toLocaleDateString() : '',
+          st.lastMonthly ? 'monthly ' + new Date(st.lastMonthly).toLocaleDateString() : '',
+        ].filter(Boolean).join(' · ');
+        rsMsg.innerHTML = last ? 'Last sent: ' + esc(last) : 'Nothing sent yet.';
+        if (st.lastError) rsMsg.innerHTML += `<br><span class="tag-bad">${esc(st.lastError)}</span>`;
+      };
+      api.post('/api/reports/schedule', {}).then(paintSchedule).catch(() => paintSchedule(null));
+
+      const saveSchedule = async () => {
+        rsSave.disabled = true;
+        try {
+          await api.post('/api/reports/schedule', { recipients: root.querySelector('#rsTo').value });
+          for (const [id, cadence] of [['#rsDaily', 'daily'], ['#rsWeekly', 'weekly'], ['#rsMonthly', 'monthly']]) {
+            await api.post('/api/reports/schedule', { cadence, on: root.querySelector(id).checked });
+          }
+          const st = await api.post('/api/reports/schedule', {});
+          paintSchedule(st);
+          toast('Schedule saved', 'ok'); beep('ok');
+        } catch (err) {
+          rsMsg.textContent = (err && err.data && err.data.error) || 'Could not save';
+          toast('Could not save the schedule', 'warn');
+        }
+        rsSave.disabled = false;
+      };
+      rsSave.addEventListener('click', saveSchedule);
+
+      root.querySelector('#rsTest').addEventListener('click', async () => {
+        rsMsg.textContent = 'Sending…';
+        try {
+          const res = await api.post('/api/reports/schedule', { sendNow: 'daily' }, { timeout: 45000 });
+          rsMsg.textContent = res.sent
+            ? `Sent to ${res.recipients} recipient${res.recipients === 1 ? '' : 's'}.`
+            : 'Nobody to send to — add a recipient and save first.';
+          if (res.sent) { toast('Report sent', 'ok'); beep('ok'); }
+        } catch (err) {
+          rsMsg.textContent = (err && err.data && err.data.error) || 'Send failed';
+        }
+      });
+    }
 
     const bkRun = root.querySelector('#bkRun');
     if (bkRun) {
