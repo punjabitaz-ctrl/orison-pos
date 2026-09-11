@@ -2235,22 +2235,81 @@ function fallbackUserId_(userRows, session) {
  *  Transactions list
  * ------------------------------------------------------------------ */
 
+/* Does this row match the typed search? Evaluated on the server so a terminal
+ * never has to hold the whole ledger to find one sale. Matches the receipt
+ * number, the customer, the cashier, an item name, a serial/IMEI, the note,
+ * the kind, and an exact amount. */
+function txMatchesQuery_(t, q, custName, cashier) {
+  if (!q) return true;
+  var needle = q.toLowerCase();
+  var hay = [
+    String(t.receipt_no || ''),
+    String(t.client_tx_id || ''),
+    String(t.counterparty || ''),
+    String(t.note || ''),
+    String(t.kind || 'sale'),
+    String(custName || ''),
+    String(cashier || ''),
+  ].join(' ').toLowerCase();
+  if (hay.indexOf(needle) >= 0) return true;
+
+  /* an amount typed as 949 or 949.00 should find the sale either way */
+  var asNum = Number(q);
+  if (!isNaN(asNum) && asNum !== 0 && Math.abs(num_(t.grand_total) - asNum) < 0.005) return true;
+
+  var items = itobjs_(t.items_json);
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i] || {};
+    var line = (String(it.name || '') + ' ' + String(it.serialNumber || '')).toLowerCase();
+    if (line.indexOf(needle) >= 0) return true;
+  }
+  return false;
+}
+
+var TX_PAGE_MAX = 100;
+
 function transactions_(session, params) {
+  /* Hard cap. Reading the whole ledger into a terminal is the thing that
+     stops working as the shop grows, so no caller may ask for more. */
   var limit = parseInt(params && params.limit, 10);
-  if (isNaN(limit) || limit < 1) limit = 100;
-  limit = Math.min(limit, 500);
+  if (isNaN(limit) || limit < 1) limit = TX_PAGE_MAX;
+  limit = Math.min(limit, TX_PAGE_MAX);
+  var q = String((params && params.q) || '').trim();
+  var cursor = String((params && params.cursor) || '');
+  var from = String((params && params.from) || '');
+  var to = String((params && params.to) || '');
+  var kindFilter = String((params && params.kind) || '');
 
   /* cashier scope: own rows only; admin/manager see the full store ledger. */
   var isStore = isStoreRole_(session && session.role);
+
+  var qUserRows = readRows_('Users', USER_HEADERS);
+  var qNameById = {};
+  for (var qu = 0; qu < qUserRows.length; qu++) {
+    qNameById[String(qUserRows[qu].id)] =
+      (String(qUserRows[qu].first_name || '') + ' ' + String(qUserRows[qu].last_name || '')).trim();
+  }
+  var qCustRows = readRows_('Customers', CUSTOMERS_HEADERS);
+  var qCustById = {};
+  for (var qc = 0; qc < qCustRows.length; qc++) qCustById[String(qCustRows[qc].id)] = String(qCustRows[qc].name || '');
+
   var txRows = readRows_('Transactions', TX_HEADERS)
     .filter(function (t) {
       if (String(t.status) !== 'COMPLETED') return false;
-      if (isStore) return true;
-      return String(t.user_id) === String(session.uid);
+      if (!isStore && String(t.user_id) !== String(session.uid)) return false;
+      if (kindFilter && String(t.kind || 'sale') !== kindFilter) return false;
+      if (from && String(t.created_at || '') < from) return false;
+      if (to && String(t.created_at || '') > to) return false;
+      return txMatchesQuery_(t, q, qCustById[String(t.customer_id || '')], qNameById[String(t.user_id)]);
     });
   txRows.sort(function (a, b) {
     return String(b.created_at).localeCompare(String(a.created_at));
   });
+  var matched = txRows.length;
+  /* keyset paging on created_at: stable as new sales arrive at the top. */
+  if (cursor) {
+    txRows = txRows.filter(function (t) { return String(t.created_at) < cursor; });
+  }
 
   var userRows = readRows_('Users', USER_HEADERS);
   var nameById = {};
@@ -2323,7 +2382,12 @@ function transactions_(session, params) {
     /* Gross profit is a manager/admin figure and stays off cashier responses. */
     if (isStore) out[out.length - 1].grossProfit = grossProfit;
   }
-  return { transactions: out };
+  return {
+    transactions: out,
+    matched: matched,
+    nextCursor: txRows.length > out.length ? String(out[out.length - 1].createdAt) : null,
+    query: q,
+  };
 }
 
 /* ------------------------------------------------------------------ *

@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.24.0** — backups (`2026-09-11`) |
-| Validation bar | `backend-sim` **PASS 515 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.25.0** — never load more than 100 (`2026-09-11`) |
+| Validation bar | `backend-sim` **PASS 529 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,15 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.25.0** Never load more than 100. `/api/transactions` hard-capped at
+  **100** (was 500) with **keyset paging** on `created_at` via `cursor`, plus
+  **server-side search** (`q`) across receipt number, client id, customer,
+  cashier, item name, serial/IMEI, note, kind and exact amount, and `from`/`to`
+  bounds. History gained a search box, match count and Load-100-more. **The
+  dashboard stopped slabbing the ledger**: today's KPIs/hourly page through
+  today (bounded 10 pages) and the 14-day chart + 30-day top sellers now come
+  from `/api/reports` — uncapped and discount-accurate. 14 new sim checks
+  including a 2,198-row ledger.
 - **v1.24.0** Backups. Nightly Apps Script trigger at 02:00 copies the whole
   workbook to a Drive folder **`POS Backup`** as
   `Orison-POS-Backup_YYYY-MM-DD_HHmm.xlsx` in store-local time; 30 nightly + 12

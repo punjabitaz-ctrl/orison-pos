@@ -46,16 +46,38 @@ export const screen = {
     let server = true;
     let conflicts = [];
     let shifts = [];
+    let report = null;
 
     function scope() {
       return isManager ? txs : txs.filter((t) => String(t.user_id) === String(user.id));
     }
 
+    /* v1.25.0 caps every page at 100 rows. The dashboard only ever needs
+       today for its KPIs and hourly chart, so it pages through today rather
+       than asking for a slab of the ledger - bounded, because one day cannot
+       run away. The 14-day chart and 30-day top sellers come from the server's
+       own aggregate instead (see loadAggregate). */
+    async function fetchToday() {
+      const from = new Date();
+      from.setHours(0, 0, 0, 0);
+      const out = [];
+      let cursor = '';
+      for (let page = 0; page < 10; page++) {
+        const qs = ['limit=100', 'from=' + encodeURIComponent(from.toISOString())];
+        if (cursor) qs.push('cursor=' + encodeURIComponent(cursor));
+        const res = await api.get('/api/transactions?' + qs.join('&'));
+        out.push(...(res.transactions || []));
+        if (!res.nextCursor) break;
+        cursor = res.nextCursor;
+      }
+      return { transactions: out };
+    }
+
     async function load() {
-      const [prods, res, outbox, con, shiftRes] = await Promise.all([
+      const [prods, res, outbox, con, shiftRes, rep] = await Promise.all([
         idb.getAll('products').catch(() => []),
         navigator.onLine
-          ? api.get('/api/transactions?limit=300').catch((err) => { server = !(err && err.offline); return { ok:false }; })
+          ? fetchToday().catch((err) => { server = !(err && err.offline); return { ok: false }; })
           : Promise.resolve({ ok: false }),
         idb.getAll('outbox').catch(() => []),
         navigator.onLine && isManager
@@ -64,12 +86,19 @@ export const screen = {
         navigator.onLine
           ? api.get('/api/shifts').catch(() => ({ shifts: [] }))
           : Promise.resolve({ shifts: [] }),
+        /* the 14-day chart and the 30-day top sellers come from the server's
+           own aggregate: it is not capped, and it applies line and order
+           discounts the client can only approximate. */
+        navigator.onLine && isManager
+          ? api.get(`/api/reports?from=${todayKey(29)}&to=${todayKey(0)}`).catch(() => null)
+          : Promise.resolve(null),
       ]);
       products = prods;
       txs = (res && res.transactions) || [];
       pending = outbox.filter((o) => o.status === 'PENDING').length;
       conflicts = (con && con.conflicts) || [];
       shifts = (shiftRes && shiftRes.shifts) || [];
+      report = rep;
       draw();
     }
 
@@ -84,9 +113,14 @@ export const screen = {
       const avgTrend = trend(d0.avgTicket, d1.avgTicket);
       const hours = hourlyBuckets(relevant, today);
       const peak = busiestHour(hours);
-      const recent30 = withinDays(relevant, 30);
-      const sellers = topSellers(recent30, 5);
-      const sellerWindow = recent30.filter((t) => kindOf(t) === 'sale').length;
+      const sellers = report
+        ? (report.topProducts || []).slice(0, 5).map((p) => ({
+            name: p.name, units: p.units, rev: p.sales, gp: p.gp,
+            margin: p.sales ? (p.gp / p.sales) * 100 : 0,
+          }))
+        : topSellers(withinDays(relevant, 30), 5);
+      const sellerWindow = report ? (report.summary || {}).salesCount || 0
+        : withinDays(relevant, 30).filter((t) => kindOf(t) === 'sale').length;
 
       const recent = [...relevant].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 4);
       const alerts = inventoryAlerts(products);
@@ -154,7 +188,7 @@ export const screen = {
 
         <section class="dash-section">
           <h3>Revenue — last 14 days</h3>
-          <div class="dash-chart">${barChart(last14(txs))}</div>
+          <div class="dash-chart">${barChart(report ? reportDays(report) : last14(txs))}</div>
         </section>
 
         ${openConflicts(conflicts).length ? `
@@ -628,4 +662,19 @@ function shiftSummary(shifts, today) {
       rightHtml: `<b class="${Number(s.overShort) === 0 ? 'gp' : 'neg'}">${Number(s.overShort) > 0 ? '+' : ''}${money(s.overShort)}</b>`,
     }))) : '<p class="muted">No closed shifts yet.</p>'}
     <div class="row dash-actions"><button class="btn btn-ghost btn-sm" id="dashStaff">Staff &amp; time clock</button></div>`;
+}
+
+/* The server's by-day figures, padded to the last 14 calendar days so the
+   chart keeps a fixed shape whether or not the shop traded every day. */
+function reportDays(report) {
+  const byKey = new Map((report.byDay || []).map((d) => [d.date, d]));
+  const buckets = [];
+  for (let i = 13; i >= 0; i--) {
+    const key = todayKey(i);
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const hit = byKey.get(key);
+    buckets.push({ key, date: d, total: hit ? hit.sales : 0, count: hit ? hit.count : 0 });
+  }
+  return buckets;
 }

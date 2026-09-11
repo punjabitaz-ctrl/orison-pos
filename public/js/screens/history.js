@@ -7,7 +7,7 @@
 import { idb } from '../db.js';
 import { screenHead } from '../components.js';
 import { api } from '../api.js';
-import { fmt, esc, openModal, closeModal, toast } from '../ui.js';
+import { fmt, esc, openModal, closeModal, toast, debounce } from '../ui.js';
 import { kindInfo, createRefund } from '../money.js';
 
 export const screen = {
@@ -21,11 +21,21 @@ export const screen = {
 
     let serverTxs = [];
     let loaded = false;
+    let query = '';
+    let matched = 0;
+    let nextCursor = null;
 
-    async function loadServer() {
+    /* The server searches and pages; a terminal never holds the whole ledger.
+       `more` appends the next 100 rather than replacing what is on screen. */
+    async function loadServer(more) {
       try {
-        const res = await api.get('/api/transactions?limit=100');
-        serverTxs = (res.transactions || []).map((t) => ({
+        const qs = ['limit=100'];
+        if (query) qs.push('q=' + encodeURIComponent(query));
+        if (more && nextCursor) qs.push('cursor=' + encodeURIComponent(nextCursor));
+        const res = await api.get('/api/transactions?' + qs.join('&'));
+        matched = res.matched == null ? (res.transactions || []).length : res.matched;
+        nextCursor = res.nextCursor || null;
+        const page = (res.transactions || []).map((t) => ({
           id: 'srv:' + t.id,
           server: true,
           status: 'SERVER',
@@ -45,6 +55,7 @@ export const screen = {
           clientTxId: t.clientTxId,
           receiptNo: t.receiptNo || '',
         }));
+        serverTxs = more ? serverTxs.concat(page) : page;
         loaded = true;
       } catch (_) {
         loaded = false;
@@ -69,6 +80,14 @@ export const screen = {
           subHtml: `${local.length} local · ${stat.synced} synced · <span class="warn-text">${stat.pending} pending · ${stat.voided} voided</span>`,
           actions: '<button class="icon-btn" id="refreshH" aria-label="Refresh">⟳</button>',
         })}
+        <div class="search-row">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <input id="hxSearch" type="search" placeholder="Receipt no., customer, item, IMEI or amount…"
+                   value="${esc(query)}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+          </div>
+        </div>
+        ${query ? `<p class="muted scr-note">${matched} match${matched === 1 ? '' : 'es'} for “${esc(query)}” · <button class="linklike" id="hxClear">clear</button></p>` : ''}
         <div class="hx-list">
           ${all.length ? all.map((t) => {
             const k = kindInfo(t.kind);
@@ -86,10 +105,36 @@ export const screen = {
               </div>
             </button>`;
           }).join('')
-            : `<div class="empty"><p>No sales yet.</p></div>`}
-        </div>`;
+            : `<div class="empty"><p>${query ? 'Nothing matches that search.' : 'No sales yet.'}</p></div>`}
+        </div>
+        ${nextCursor ? '<div class="row dash-actions"><button class="btn btn-ghost" id="hxMore">Load 100 more</button></div>' : ''}`;
 
-      root.querySelector('#refreshH').addEventListener('click', loadServer);
+      root.querySelector('#refreshH').addEventListener('click', () => loadServer(false));
+
+      const search = root.querySelector('#hxSearch');
+      if (search) {
+        const run = debounce(() => {
+          const next = search.value.trim();
+          if (next === query) return;
+          query = next;
+          nextCursor = null;
+          loadServer(false);
+        }, 350);
+        search.addEventListener('input', run);
+        search.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          query = search.value.trim();
+          nextCursor = null;
+          loadServer(false);
+        });
+        /* typing then re-rendering must not steal the caret away */
+        if (query) { search.focus(); search.setSelectionRange(query.length, query.length); }
+      }
+      const clear = root.querySelector('#hxClear');
+      if (clear) clear.addEventListener('click', () => { query = ''; nextCursor = null; loadServer(false); });
+      const more = root.querySelector('#hxMore');
+      if (more) more.addEventListener('click', () => loadServer(true));
 
       root.querySelectorAll('[data-tx]').forEach((b) => b.addEventListener('click', () => {
         const t = all.find((x) => x.id === b.dataset.tx);
@@ -245,7 +290,7 @@ export const screen = {
           await createRefund({ original: t, items, method, note: modalEl.querySelector('#rf-note').value.trim(), user });
           closeModal();
           toast('Refund queued', 'ok', 1800);
-          if (navigator.onLine) loadServer(); else render();
+          if (navigator.onLine) loadServer(false); else render();
         } catch (_) {
           confirm.disabled = false;
           toast('Refund failed — try again', 'warn', 2400);
@@ -308,6 +353,6 @@ export const screen = {
     }
 
     await render();
-    if (navigator.onLine) loadServer();
+    if (navigator.onLine) loadServer(false);
   },
 };

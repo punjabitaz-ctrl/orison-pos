@@ -5,6 +5,36 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0] — 2026-09-11
+
+Never load more than 100 transactions, and search the ledger on the server
+instead.
+
+### Added
+
+- **Server-side search** on `/api/transactions` via `q`: receipt number, client
+  id, customer name, cashier, item name, serial/IMEI, note, kind, and an exact
+  amount (typing `949` finds a $949.00 sale). Plus `from`/`to` date bounds and a
+  `kind` filter.
+- **Keyset paging** on `created_at` with a `cursor`, so new sales arriving at the
+  top cannot shuffle a page under the reader.
+- **History gets a search box** — receipt number, customer, item, IMEI or amount
+  — with a match count, a clear link and **Load 100 more**.
+- 14 sim checks including a 2,198-row ledger, pages that do not overlap, and
+  that searching never widens a cashier's view beyond their own rows.
+
+### Changed
+
+- **`/api/transactions` is hard-capped at 100 rows.** It previously allowed 500
+  and the dashboard asked for 300. Reading a slab of the ledger into a terminal
+  is the thing that stops working as the shop grows.
+- **The dashboard no longer pulls a slab.** Its KPIs and hourly chart page
+  through **today only** (bounded at 10 pages), and the 14-day chart and 30-day
+  top sellers now come from **`/api/reports`** — the server's own aggregate,
+  which is uncapped and applies line and order discounts the client could only
+  approximate.
+- The audit log and the customer ledger use the same 100-row cap.
+
 ## [1.24.0] — 2026-09-11
 
 Backups. The entire business lives in one spreadsheet; until now nothing copied

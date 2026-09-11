@@ -2978,6 +2978,105 @@ check('statement carries the changer/cashier',
     live.some((b) => b.name.indexOf('Orison-POS-Backup_20') === 0));
 }
 
+{
+  section('100-row cap + server-side search (v1.25.0)');
+
+  const pgAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const pgCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const pgUsers = req('/api/admin/users/list', {}, { session: pgAdm }).data.users;
+  const pgCashId = pgUsers.find((u) => u.email === 'amara@example.com').id;
+
+  const pgProd = req('/api/admin/products', {
+    name: 'Paging Widget', sku: 'PG-1', category: 'PG', costPrice: 1, retailPrice: 3, onHand: 100000,
+  }, { session: pgAdm }).data.id;
+  const pgCust = req('/api/admin/customers', { name: 'Priya Paging', phone: '555-0101' }, { session: pgAdm }).data.customer.id;
+
+  /* 130 sales so the cap and the cursor both have something to prove */
+  const pgBatch = [];
+  for (let i = 0; i < 130; i++) {
+    pgBatch.push({
+      clientTxId: 'tx-pg-' + i, userId: pgCashId, grandTotal: 3,
+      createdAt: new Date(Date.now() - (130 - i) * 60000).toISOString(),
+      tenders: [{ type: 'cash', amount: 3 }],
+      items: [{ productId: pgProd, quantity: 1, unitPrice: 3 }],
+    });
+  }
+  req('/api/sync/push', { deviceId: 'dev-pg', batch: pgBatch }, { session: pgCash });
+
+  const p1 = req('/api/transactions', {}, { session: pgAdm, params: { limit: 500 } }).data;
+  check('no caller can ask for more than 100 rows', p1.transactions.length === 100, String(p1.transactions.length));
+  check('the response says how many matched in total', p1.matched >= 130, String(p1.matched));
+  check('it hands back a cursor when there is more', !!p1.nextCursor);
+
+  const p2 = req('/api/transactions', {}, { session: pgAdm, params: { cursor: p1.nextCursor } }).data;
+  check('the cursor returns the next page, not the same one',
+    p2.transactions.length > 0 && p2.transactions[0].clientTxId !== p1.transactions[0].clientTxId);
+  const idsA = p1.transactions.map((t) => t.clientTxId);
+  const idsB = p2.transactions.map((t) => t.clientTxId);
+  check('pages do not overlap', idsB.every((id) => !idsA.includes(id)));
+
+  /* --- search --- */
+  const pgOne = req('/api/transactions', {}, { session: pgAdm, params: { limit: 100 } }).data.transactions[0];
+  const byReceipt = req('/api/transactions', {}, { session: pgAdm, params: { q: pgOne.receiptNo } }).data;
+  check('a sale is findable by its receipt number',
+    byReceipt.transactions.length === 1 && byReceipt.transactions[0].receiptNo === pgOne.receiptNo,
+    JSON.stringify({ q: pgOne.receiptNo, got: byReceipt.transactions.length }));
+
+  check('searching an item name finds the sales',
+    req('/api/transactions', {}, { session: pgAdm, params: { q: 'Paging Widget' } }).data.matched >= 100);
+  check('searching an amount finds sales of that amount',
+    req('/api/transactions', {}, { session: pgAdm, params: { q: '3' } }).data.matched >= 100);
+  check('a search that matches nothing returns nothing, not everything',
+    req('/api/transactions', {}, { session: pgAdm, params: { q: 'zzz-no-such-thing' } }).data.transactions.length === 0);
+
+  /* customer + serial search */
+  req('/api/sync/push', {
+    deviceId: 'dev-pg',
+    batch: [{ clientTxId: 'tx-pg-cust', userId: pgCashId, customerId: pgCust, grandTotal: 3,
+      createdAt: new Date().toISOString(), tenders: [{ type: 'net30', amount: 3 }],
+      items: [{ productId: pgProd, quantity: 1, unitPrice: 3 }] }],
+  }, { session: pgCash });
+  check('a sale is findable by customer name',
+    req('/api/transactions', {}, { session: pgAdm, params: { q: 'Priya' } }).data.transactions
+      .some((t) => t.clientTxId === 'tx-pg-cust'));
+  check('a sale is findable by cashier name',
+    req('/api/transactions', {}, { session: pgAdm, params: { q: 'Amara' } }).data.matched > 0);
+
+  /* --- search must not widen a cashier's view --- */
+  const pgOther = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  check('a cashier searching still only sees their own rows',
+    req('/api/transactions', {}, { session: pgOther, params: { q: 'Paging Widget' } }).data.transactions.length === 0);
+
+  /* --- date window --- */
+  const pgFrom = new Date(Date.now() - 5 * 60000).toISOString();
+  const windowed = req('/api/transactions', {}, { session: pgAdm, params: { from: pgFrom } }).data;
+  check('a from-date narrows the window',
+    windowed.matched < p1.matched && windowed.matched > 0,
+    JSON.stringify({ windowed: windowed.matched, all: p1.matched }));
+
+  /* --- the ceiling nobody had measured --- */
+  const bulk = [];
+  for (let i = 0; i < 2000; i++) {
+    bulk.push({
+      clientTxId: 'tx-load-' + i, userId: pgCashId, grandTotal: 2,
+      createdAt: new Date(Date.now() - i * 1000).toISOString(),
+      tenders: [{ type: 'cash', amount: 2 }],
+      items: [{ productId: pgProd, quantity: 1, unitPrice: 2 }],
+    });
+  }
+  for (let c = 0; c < 5; c++) {
+    req('/api/sync/push', { deviceId: 'dev-load-' + c, batch: bulk.slice(c * 400, (c + 1) * 400)
+      .map((b) => ({ ...b, clientTxId: b.clientTxId + '-' + c })) }, { session: pgCash });
+  }
+  const t0 = Date.now();
+  const big = req('/api/transactions', {}, { session: pgAdm, params: { limit: 100 } }).data;
+  const readMs = Date.now() - t0;
+  check('a paged read still returns 100 rows with thousands in the ledger',
+    big.transactions.length === 100 && big.matched > 2000,
+    JSON.stringify({ rows: big.transactions.length, matched: big.matched }));
+  console.log('      (ledger ' + big.matched + ' rows, paged read ' + readMs + 'ms in the sim)');
+}
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

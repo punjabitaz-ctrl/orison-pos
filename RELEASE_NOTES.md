@@ -7,7 +7,35 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.24.0 — backups
+## Latest: v1.25.0 — never load more than 100
+
+**2026-09-11.** Fifth of the operational-readiness program.
+
+`/api/transactions` is now hard-capped at **100 rows** — it allowed 500, and the
+dashboard was asking for 300. Reading a slab of the ledger into a terminal is
+precisely what stops working as the shop grows.
+
+**Search moved to the server.** History has a search box that finds a sale by
+**receipt number, customer, cashier, item name, IMEI, note or amount** — typing
+`949` finds a $949.00 sale — with a match count and **Load 100 more**. Paging is
+keyset-based on the timestamp, so sales arriving at the top cannot shuffle a
+page under whoever is reading it.
+
+**The dashboard stopped pulling a slab.** Its KPIs and hourly chart page through
+today only; the 14-day chart and 30-day top sellers now come from
+`/api/reports`, the server's own aggregate — uncapped, and more accurate, since
+it applies the line and order discounts the client could only approximate.
+
+**Validation:** backend-sim **PASS 529 / FAIL 0** (14 new, including a
+2,198-row ledger) · client units **PASS 350 / FAIL 0**.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.24.0 — backups
 
 **2026-09-11.** Fourth of the operational-readiness program.
 
