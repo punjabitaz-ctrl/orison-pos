@@ -5,6 +5,42 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0] — 2026-09-11
+
+Management and ownership functions are now admin only, at the owner's
+instruction.
+
+### Changed
+
+Four routes moved from **admin + manager** to **admin only**:
+
+| Route | Why |
+|---|---|
+| `/api/admin/products/bulk-price` | Repricing the catalog is an ownership act, not a daily one. |
+| `/api/admin/stock-take` | Committing a count rewrites stock on the owner's authority. |
+| `/api/suppliers` | Who the shop buys from is an ownership decision. |
+| `/api/purchase-orders/cancel` | Cancelling an order destroys a commitment. |
+
+Managers keep the daily trade: refunds, all three cash-out kinds, product
+create/edit, serials, stock adjustment, purchase orders (create and receive),
+reports, price history, ageing, the reorder worksheet, customers, ledgers,
+statements, collections, conflict review and login unlocks.
+
+The Stock take and Bulk price entries are hidden from the Products → Tools menu
+for managers; the server refuses them regardless of what the interface shows.
+
+### Note for deployment
+
+**This takes powers away from existing managers.** Tell staff before it goes
+out, or a manager will hit a refusal mid-task with no explanation.
+
+### Tests
+
+17 new sim checks: each moved route refused for a manager and accepted for an
+admin, each retained route still working for a manager, and cashiers gaining
+nothing. Four existing supplier and purchase-order tests were written as manager
+calls and were updated to admin — they were asserting the old rule.
+
 ## [1.22.0] — 2026-09-11
 
 Receipt numbers and an audit log — the two things that make the ledger

@@ -7,7 +7,32 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.22.0 — receipt numbers and the audit log
+## Latest: v1.23.0 — management is admin only
+
+**2026-09-11.** Third of the operational-readiness program.
+
+Four things moved from manager to **admin only**: **bulk repricing**,
+**committing a stock take**, **supplier records** and **cancelling a purchase
+order**. The reasoning is one line — a manager runs the day, an admin owns the
+business: what things cost, who the shop buys from, and what can be destroyed.
+
+Managers keep everything else: refunds, cash out, products, serials, stock
+adjustment, purchase orders, reports, customers, ledgers, collections,
+conflicts and login unlocks.
+
+⚠️ **This takes powers away from your current managers.** Tell staff before
+deploying, or someone hits a refusal mid-task with no explanation.
+
+**Validation:** backend-sim **PASS 497 / FAIL 0** (17 new) · client units
+**PASS 350 / FAIL 0**.
+
+### Deploying
+
+**Backend redeploy required** — the role gates live in `Code.gs`.
+
+---
+
+## v1.22.0 — receipt numbers and the audit log
 
 **2026-09-11.** Second of the operational-readiness program.
 

@@ -1800,11 +1800,11 @@ check('statement carries the changer/cashier',
 
   const acme = req('/api/suppliers', { name: 'Acme Wholesale', phone: '(555) 777-8899', paymentTerms: 'Net 30' }, { session: poAdm });
   check('admin can add a supplier', !!acme.data && !!acme.data.id);
-  const dupSup = req('/api/suppliers', { name: 'Acme Wholesale' }, { session: poMgr });
+  const dupSup = req('/api/suppliers', { name: 'Acme Wholesale' }, { session: poAdm });
   check('duplicate supplier name rejected', dupSup.status === 409);
-  check('empty supplier name rejected', req('/api/suppliers', { name: '  ' }, { session: poMgr }).status === 400);
+  check('empty supplier name rejected', req('/api/suppliers', { name: '  ' }, { session: poAdm }).status === 400);
 
-  const supList = req('/api/suppliers', {}, { session: poMgr }).data.suppliers;
+  const supList = req('/api/suppliers', {}, { session: poAdm }).data.suppliers;
   const acmeRow = supList.find((s) => s.name === 'Acme Wholesale');
   check('seeded + added suppliers list for managers', supList.some((s) => s.name === 'Swift Supplies') && !!acmeRow && acmeRow.paymentTerms === 'Net 30');
 
@@ -1886,7 +1886,7 @@ check('statement carries the changer/cashier',
   const draft = req('/api/purchase-orders', { supplierId: acmeRow.id, lines: [{ productId: mouseId, quantity: 1, unitCost: 13 }], status: 'DRAFT' }, { session: poMgr });
   check('draft PO created', draft.data.status === 'DRAFT');
   check('draft can be cancelled', req('/api/purchase-orders/cancel', { id: draft.data.id }, { session: poAdm }).data.status === 'CANCELLED');
-  check('cancelling twice rejected', req('/api/purchase-orders/cancel', { id: draft.data.id }, { session: poMgr }).status === 409);
+  check('cancelling twice rejected', req('/api/purchase-orders/cancel', { id: draft.data.id }, { session: poAdm }).status === 409);
   check('cancelling a received order rejected', req('/api/purchase-orders/cancel', { id: poId }, { session: poAdm }).status === 409);
   check('cancel of unknown order 404s', req('/api/purchase-orders/cancel', { id: 'nope' }, { session: poAdm }).status === 404);
 }
@@ -2808,6 +2808,60 @@ check('statement carries the changer/cashier',
   check('it can be filtered to one action',
     req('/api/audit', {}, { session: rnAdm, params: { action: 'store.settings' } })
       .data.entries.every((e) => e.action === 'store.settings'));
+}
+
+{
+  section('management is admin only (v1.23.0)');
+
+  const roAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const roMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const roCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+
+  const roProd = req('/api/admin/products', {
+    name: 'RO Widget', sku: 'RO-1', category: 'RO', costPrice: 5, retailPrice: 12, onHand: 40,
+  }, { session: roAdm }).data.id;
+
+  /* --- moved to admin only --- */
+  check('a manager can no longer reprice the catalog in bulk',
+    req('/api/admin/products/bulk-price', { productIds: [roProd], mode: 'pct', value: 5 }, { session: roMgr }).status === 403);
+  check('a manager can no longer commit a stock take',
+    req('/api/admin/stock-take', { counts: [{ productId: roProd, counted: 39 }] }, { session: roMgr }).status === 403);
+  check('a manager can no longer create a supplier',
+    req('/api/suppliers', { name: 'RO Supplies' }, { session: roMgr }).status === 403);
+  check('a manager can no longer cancel a purchase order',
+    req('/api/purchase-orders/cancel', { id: 'whatever' }, { session: roMgr }).status === 403);
+
+  check('an admin still can reprice',
+    req('/api/admin/products/bulk-price', { productIds: [roProd], mode: 'pct', value: 0, preview: true }, { session: roAdm }).ok === true);
+  check('an admin still can commit a stock take',
+    req('/api/admin/stock-take', { counts: [{ productId: roProd, counted: 40 }] }, { session: roAdm }).ok === true);
+  const roSup = req('/api/suppliers', { name: 'RO Supplies' }, { session: roAdm });
+  check('an admin still can create a supplier', roSup.ok === true);
+
+  /* --- managers keep the daily trade --- */
+  check('a manager still runs reports', req('/api/reports', {}, { session: roMgr }).ok === true);
+  check('a manager still edits a product', req('/api/admin/products/patch',
+    { productId: roProd, retailPrice: 13 }, { session: roMgr }).ok === true);
+  check('a manager still adjusts stock', req('/api/admin/inventory',
+    { productId: roProd, onHand: 41 }, { session: roMgr }).ok === true);
+  check('a manager still reads the reorder worksheet',
+    req('/api/inventory/reorder', {}, { session: roMgr }).ok === true);
+  check('a manager still sees customers and receivables',
+    req('/api/customers/receivables', {}, { session: roMgr }).ok === true);
+  check('a manager still creates a purchase order',
+    req('/api/purchase-orders', { supplierId: roSup.data.id, lines: [{ productId: roProd, quantity: 1, unitCost: 5 }], status: 'DRAFT' }, { session: roMgr }).ok === true);
+
+  /* --- cashiers gain nothing --- */
+  check('a cashier still cannot reprice',
+    req('/api/admin/products/bulk-price', { productIds: [roProd], mode: 'pct', value: 5 }, { session: roCash }).status === 403);
+  check('a cashier still cannot read suppliers',
+    req('/api/suppliers', {}, { session: roCash }).status === 403);
+  check('a cashier still cannot read the audit log',
+    req('/api/audit', {}, { session: roCash }).status === 403);
+
+  /* --- the restriction is recorded, so a refusal is explainable later --- */
+  const roAudit = req('/api/audit', {}, { session: roAdm }).data;
+  check('admin actions keep landing in the audit log', roAudit.entries.length > 0);
 }
 
 console.log('\n-------------------------------------');

@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.22.0** — receipt numbers + audit log (`2026-09-11`) |
-| Validation bar | `backend-sim` **PASS 480 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.23.0** — management is admin only (`2026-09-11`) |
+| Validation bar | `backend-sim` **PASS 497 / FAIL 0** · client units **PASS 350 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,14 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.23.0** Management is admin only. `adminBulkPrice_`, `adminStockTake_`,
+  `suppliers_` and `purchaseOrderCancel_` moved from admin+manager to
+  **admin**; Stock take and Bulk price hidden from Products → Tools for
+  managers. Managers keep the daily trade (refunds, cash out, products,
+  serials, stock adjust, POs create/receive, reports, customers, conflicts).
+  ⚠️ Takes powers away from existing managers — warn staff before deploying.
+  17 new sim checks; four existing supplier/PO tests updated from manager to
+  admin because they asserted the old rule.
 - **v1.22.0** Receipt numbers + audit log. Gap-free `Orison-S000001` series:
   counter in `Meta`, advanced **inside the same lock that appends the
   transaction**, allocated **at sync** (an offline terminal cannot know the next

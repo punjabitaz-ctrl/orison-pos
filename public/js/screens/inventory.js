@@ -32,6 +32,9 @@ export const screen = {
     document.getElementById('tabbar').classList.remove('hidden');
     const { state } = ctx;
     const isAdmin = state.user && (state.user.role === 'admin' || state.user.role === 'manager');
+    /* Stock take and bulk pricing rewrite the catalog on the owner's authority,
+       so they are admin-only from v1.23.0 - the server enforces it too. */
+    const isOwner = state.user && state.user.role === 'admin';
 
     await this.refreshProducts();
     const stats = await getSyncState();
@@ -112,8 +115,9 @@ export const screen = {
         <div class="cart-head"><h3>Inventory tools</h3><button class="icon-btn" data-x aria-label="Close">✕</button></div>
         <div class="tool-menu">
           <button class="tool-item" data-tool="reorder"><b>Reorder worksheet</b><span>What to buy next, from sales velocity and reorder points</span></button>
+          ${isOwner ? `
           <button class="tool-item" data-tool="stocktake"><b>Stock take</b><span>Count the shelf and post the variance</span></button>
-          <button class="tool-item" data-tool="bulk"><b>Bulk price update</b><span>Reprice a category or the whole catalog by rule</span></button>
+          <button class="tool-item" data-tool="bulk"><b>Bulk price update</b><span>Reprice a category or the whole catalog by rule</span></button>` : ''}
           <button class="tool-item" data-tool="labels"><b>Print shelf labels</b><span>Code 128 barcodes with name and price</span></button>
           <button class="tool-item" data-tool="aging"><b>Inventory aging</b><span>How long stock has been sitting, valued at cost</span></button>
         </div>`);

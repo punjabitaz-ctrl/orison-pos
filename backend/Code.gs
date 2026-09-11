@@ -2972,7 +2972,8 @@ function bulkPriceNext_(current, mode, value, roundTo) {
 }
 
 function adminBulkPrice_(session, payload) {
-  requireRole_(session, ['admin', 'manager']);
+  /* admin only: repricing the catalog is an ownership act, not a daily one */
+  requireRole_(session, ['admin']);
   var field = String((payload && payload.field) || 'retail_price');
   if (field !== 'retail_price' && field !== 'cost_price') {
     throw statusError_(400, 'field must be retail_price or cost_price');
@@ -3059,7 +3060,8 @@ function adminBulkPrice_(session, payload) {
  * Read + write happen under the lock: the "expected" a variance is measured
  * against must be the value that is actually being overwritten. */
 function adminStockTake_(session, payload) {
-  requireRole_(session, ['admin', 'manager']);
+  /* admin only: committing a count rewrites stock on the owner's authority */
+  requireRole_(session, ['admin']);
   var counts = payload && payload.counts;
   if (Object.prototype.toString.call(counts) !== '[object Array]' || !counts.length) {
     throw statusError_(400, 'counts are required');
@@ -3181,7 +3183,8 @@ function poSupplierMap_(supplierRows) {
 }
 
 function suppliers_(session, payload) {
-  requireRole_(session, ['admin', 'manager']);
+  /* admin only: who the shop buys from is an ownership decision */
+  requireRole_(session, ['admin']);
   /* list mode */
   if (!payload || !Object.keys(payload).length) {
     var rows = readRows_('Suppliers', SUPPLIER_HEADERS);
@@ -3503,7 +3506,8 @@ function purchaseOrderReceive_(session, payload) {
 }
 
 function purchaseOrderCancel_(session, payload) {
-  requireRole_(session, ['admin', 'manager']);
+  /* admin only: cancelling an order destroys a commitment */
+  requireRole_(session, ['admin']);
   var id = String((payload && payload.id) || '');
   var poRows = readRows_('PurchaseOrders', PO_HEADERS);
   var po = null;
