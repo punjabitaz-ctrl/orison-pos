@@ -102,6 +102,9 @@ function dispatch_(action, session, payload, params) {
     case '/api/repairs':         return repairs_(session, payload, params);
     case '/api/repairs/detail':  return repairDetail_(session, params);
     case '/api/repairs/parts':   return repairParts_(session, payload);
+    case '/api/repairs/labour':  return repairLabour_(session, payload);
+    case '/api/repairs/status':  return repairStatus_(session, payload);
+    case '/api/repairs/void':    return repairVoid_(session, payload);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
@@ -4318,6 +4321,178 @@ function repairParts_(session, payload) {
     row.parts_json = JSON.stringify(parts);
     var t = repairTotals_(row);
     return { id: id, parts: parts, partsTotal: t.parts, labourTotal: t.labour, total: t.total };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* Labour on a ticket. Either a service product the shop already prices, or
+ * one-off work typed at the bench. Both carry into the invoice as ordinary
+ * sale lines when the job is collected. */
+function repairLabour_(session, payload) {
+  requireRole_(session, REPAIR_ROLES_ANY);
+  var id = String((payload || {}).id || '');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = repairFind_(id);
+    if (!row) throw statusError_(404, 'Repair not found');
+    if (REPAIR_TERMINAL[String(row.status)]) throw statusError_(409, 'This ticket is closed');
+
+    var labour = itobjs_(row.labour_json);
+    var stamp = new Date().toISOString();
+    var summary;
+
+    if (payload.removeIndex !== undefined && payload.removeIndex !== null) {
+      var idx = Math.floor(num_(payload.removeIndex));
+      if (!(idx >= 0 && idx < labour.length)) throw statusError_(400, 'No such labour line');
+      summary = 'Removed labour "' + String(labour[idx].description || '') + '" from ' + String(row.ticket_no || '');
+      labour.splice(idx, 1);
+    } else {
+      var add = payload.add || {};
+      var desc = String(add.description || '').trim().slice(0, 200);
+      var amount = num_(add.amount);
+      if (!desc) throw statusError_(400, 'What was the work? A description is required.');
+      if (!(amount >= 0)) throw statusError_(400, 'Labour cannot be a negative amount');
+      labour.push({
+        description: desc,
+        amount: round2_(amount),
+        productId: String(add.productId || ''),
+        addedAt: stamp,
+        addedBy: String(session.uid || ''),
+      });
+      summary = 'Labour "' + desc + '" on ' + String(row.ticket_no || '');
+    }
+
+    applyPatches_('Repairs', REPAIR_HEADERS, 'id', {
+      [id]: { labour_json: JSON.stringify(labour), updated_at: stamp },
+    });
+    logAudit_(session, 'repair.labour', 'repair', id, summary, '');
+
+    row.labour_json = JSON.stringify(labour);
+    var t = repairTotals_(row);
+    return { id: id, labour: labour, partsTotal: t.parts, labourTotal: t.labour, total: t.total };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* Give every fitted part back. Caller holds the lock and applies the patches,
+ * so a cancel and a void can each batch their writes into one pass. */
+function repairReturnParts_(row, stamp) {
+  var parts = itobjs_(row.parts_json);
+  var productPatches = {};
+  var serialPatches = {};
+  var returned = 0;
+  if (!parts.length) return { productPatches: productPatches, serialPatches: serialPatches, returned: 0 };
+
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var prodById = {};
+  for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
+  var serialRows = readRows_('Serials', SERIAL_HEADERS);
+
+  for (var i = 0; i < parts.length; i++) {
+    var ln = parts[i];
+    var prod = prodById[String(ln.productId)];
+    if (!prod || String(prod.item_type) === 'service') continue;
+    var qty = num_(ln.quantity);
+    if (ln.serialNumber) {
+      for (var s = 0; s < serialRows.length; s++) {
+        if (String(serialRows[s].serial_number) === String(ln.serialNumber)
+          && String(serialRows[s].product_id) === String(ln.productId)
+          && String(serialRows[s].status) === 'SOLD') {
+          serialPatches[String(serialRows[s].id)] = { status: 'IN_STOCK', tx_id: '', updated_at: stamp };
+          break;
+        }
+      }
+    }
+    var base = productPatches[String(prod.id)] ? num_(productPatches[String(prod.id)].on_hand) : num_(prod.on_hand);
+    productPatches[String(prod.id)] = { on_hand: base + qty, updated_at: stamp };
+    returned += qty;
+  }
+  return { productPatches: productPatches, serialPatches: serialPatches, returned: returned };
+}
+
+function repairStatus_(session, payload) {
+  requireRole_(session, REPAIR_ROLES_ANY);
+  var id = String((payload || {}).id || '');
+  var want = String((payload || {}).status || '');
+  if (REPAIR_STATUSES.indexOf(want) < 0) throw statusError_(400, 'Unknown status: ' + want);
+  if (want === 'voided') throw statusError_(400, 'Voiding is its own action');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = repairFind_(id);
+    if (!row) throw statusError_(404, 'Repair not found');
+    var from = String(row.status || 'intake');
+    if (REPAIR_TERMINAL[from]) throw statusError_(409, 'This ticket is closed and cannot change');
+    if (want === from) throw statusError_(409, 'Already ' + want);
+
+    /* Collection is v1.32.0's job: a repair is collected by invoicing it, which
+       needs a transaction against the ticket, not a status picked from a menu. */
+    if (want === 'collected' && !String(row.invoice_tx_id || '')) {
+      throw statusError_(409, 'A repair is collected by invoicing it, not by setting the status');
+    }
+
+    var stamp = new Date().toISOString();
+    var patch = { status: want, updated_at: stamp };
+    if (payload.note !== undefined) patch.note = String(payload.note || '').trim().slice(0, 500);
+    var returned = 0;
+
+    if (want === 'cancelled' || want === 'unrepairable') {
+      var back = repairReturnParts_(row, stamp);
+      returned = back.returned;
+      if (Object.keys(back.productPatches).length) applyPatches_('Products', PRODUCT_HEADERS, 'id', back.productPatches);
+      if (Object.keys(back.serialPatches).length) applyPatches_('Serials', SERIAL_HEADERS, 'id', back.serialPatches);
+      patch.parts_json = '[]';
+      patch.closed_at = stamp;
+    }
+
+    applyPatches_('Repairs', REPAIR_HEADERS, 'id', { [id]: patch });
+    logAudit_(session, 'repair.status', 'repair', id,
+      String(row.ticket_no || '') + ': ' + from + ' -> ' + want
+      + (returned ? ' (' + returned + ' part(s) returned to stock)' : ''), '');
+
+    return { id: id, status: want, from: from, returned: returned };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* A ticket entered in error. Not a cancel - a cancel is a real event with a
+ * real customer who changed their mind; this is "that row should not exist".
+ * Admin only, and the parts come back either way. */
+function repairVoid_(session, payload) {
+  requireRole_(session, ['admin']);
+  var id = String((payload || {}).id || '');
+  var reason = String((payload || {}).reason || '').trim().slice(0, 200);
+  if (!reason) throw statusError_(400, 'Voiding a ticket needs a reason');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = repairFind_(id);
+    if (!row) throw statusError_(404, 'Repair not found');
+    if (String(row.status) === 'voided') throw statusError_(409, 'Already voided');
+    if (String(row.invoice_tx_id || '')) throw statusError_(409, 'This ticket has been invoiced - refund it instead');
+
+    var stamp = new Date().toISOString();
+    var back = repairReturnParts_(row, stamp);
+    if (Object.keys(back.productPatches).length) applyPatches_('Products', PRODUCT_HEADERS, 'id', back.productPatches);
+    if (Object.keys(back.serialPatches).length) applyPatches_('Serials', SERIAL_HEADERS, 'id', back.serialPatches);
+
+    applyPatches_('Repairs', REPAIR_HEADERS, 'id', {
+      [id]: {
+        status: 'voided', parts_json: '[]', closed_at: stamp, updated_at: stamp,
+        note: (String(row.note || '') + ' | Voided: ' + reason).slice(0, 500),
+      },
+    });
+    logAudit_(session, 'repair.voided', 'repair', id,
+      String(row.ticket_no || '') + ' voided: ' + reason
+      + (back.returned ? ' (' + back.returned + ' part(s) returned)' : ''), '');
+    return { id: id, voided: true, returned: back.returned };
   } finally {
     lock.releaseLock();
   }

@@ -3500,6 +3500,73 @@ check('statement carries the changer/cashier',
 
   check('fitting a part is audited',
     req('/api/audit', {}, { session: rpAdm, params: { action: 'repair.part' } }).data.entries.length >= 1);
+
+  const rpLab = req('/api/repairs/labour', {
+    id: made.data.id, add: { description: 'Screen fit and calibration', amount: 45 },
+  }, { session: rpCash });
+  check('labour can be added', rpLab.ok === true, JSON.stringify(rpLab));
+  check('labour counts toward the ticket total',
+    rpLab.data.labourTotal === 45 && rpLab.data.total === rpLab.data.labourTotal + rpLab.data.partsTotal,
+    JSON.stringify(rpLab.data));
+  check('labour needs a description',
+    req('/api/repairs/labour', { id: made.data.id, add: { amount: 20 } }, { session: rpCash }).status === 400);
+  check('labour cannot be negative',
+    req('/api/repairs/labour', { id: made.data.id, add: { description: 'Oops', amount: -5 } }, { session: rpCash }).status === 400);
+  check('labour can be removed',
+    req('/api/repairs/labour', { id: made.data.id, removeIndex: 0 }, { session: rpCash }).data.labourTotal === 0);
+
+  check('a ticket can move forward',
+    req('/api/repairs/status', { id: made.data.id, status: 'diagnosed' }, { session: rpCash }).data.status === 'diagnosed');
+  check('an unknown status is refused',
+    req('/api/repairs/status', { id: made.data.id, status: 'banana' }, { session: rpCash }).status === 400);
+  check('collected cannot be reached without an invoice',
+    req('/api/repairs/status', { id: made.data.id, status: 'collected' }, { session: rpCash }).status === 409);
+  check('voiding cannot be smuggled in as a status change',
+    req('/api/repairs/status', { id: made.data.id, status: 'voided' }, { session: rpCash }).status === 400);
+  check('a status change is audited',
+    req('/api/audit', {}, { session: rpAdm, params: { action: 'repair.status' } }).data.entries.length >= 1);
+
+  const rpCancelT = req('/api/repairs', {
+    customerName: 'Sam Okafor', customerPhone: '07700 900999',
+    deviceMake: 'Samsung', deviceModel: 'A54', reportedFault: 'Will not charge',
+  }, { session: rpCash }).data;
+  req('/api/repairs/parts', { id: rpCancelT.id, add: [{ productId: rpPart, quantity: 2, unitPrice: 120 }] }, { session: rpCash });
+  req('/api/repairs/parts', { id: rpCancelT.id, add: [{ productId: rpBat, quantity: 1, unitPrice: 35, serialNumber: 'BAT-B' }] }, { session: rpCash });
+  const rpPreCancel = onHandOf('RP-SCR');
+  const rpCancelled = req('/api/repairs/status', { id: rpCancelT.id, status: 'cancelled', note: 'Customer withdrew' }, { session: rpCash });
+  check('cancelling returns every part to stock',
+    onHandOf('RP-SCR') === rpPreCancel + 2, String(onHandOf('RP-SCR')));
+  check('and returns the serial too', onHandOf('RP-BAT') === 1, String(onHandOf('RP-BAT')));
+  check('the response says what came back', rpCancelled.data.returned === 3, String(rpCancelled.data.returned));
+  check('a cancelled ticket cannot be reopened',
+    req('/api/repairs/status', { id: rpCancelT.id, status: 'in_progress' }, { session: rpCash }).status === 409);
+  check('and cannot be cancelled twice',
+    req('/api/repairs/status', { id: rpCancelT.id, status: 'cancelled' }, { session: rpCash }).status === 409);
+  check('a closed ticket refuses new parts',
+    req('/api/repairs/parts', { id: rpCancelT.id, add: [{ productId: rpPart, quantity: 1, unitPrice: 120 }] }, { session: rpCash }).status === 409);
+  check('a closed ticket refuses new labour',
+    req('/api/repairs/labour', { id: rpCancelT.id, add: { description: 'x', amount: 1 } }, { session: rpCash }).status === 409);
+
+  const rpVoidT = req('/api/repairs', {
+    customerName: 'Mistake Entry', deviceMake: 'Nokia', deviceModel: '3310',
+    reportedFault: 'Entered twice by accident',
+  }, { session: rpCash }).data;
+  const rpMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  check('a cashier cannot void a ticket',
+    req('/api/repairs/void', { id: rpVoidT.id, reason: 'dupe' }, { session: rpCash }).status === 403);
+  check('nor can a manager',
+    req('/api/repairs/void', { id: rpVoidT.id, reason: 'dupe' }, { session: rpMgr }).status === 403);
+  check('voiding needs a reason',
+    req('/api/repairs/void', { id: rpVoidT.id }, { session: rpAdm }).status === 400);
+  check('an admin can void',
+    req('/api/repairs/void', { id: rpVoidT.id, reason: 'Entered twice' }, { session: rpAdm }).data.voided === true);
+  check('a voided ticket drops out of the working list',
+    req('/api/repairs', {}, { session: rpCash }).data.repairs
+      .filter((r) => r.id === rpVoidT.id).length === 0);
+  check('but is still there if you ask for it by name',
+    req('/api/repairs', {}, { session: rpAdm, params: { status: 'voided' } }).data.repairs.length === 1);
+  check('voiding is audited',
+    req('/api/audit', {}, { session: rpAdm, params: { action: 'repair.voided' } }).data.entries.length === 1);
 }
 
 
