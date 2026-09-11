@@ -9,6 +9,7 @@ import { saleTotals, round2 } from '../money.js';
 import { api } from '../api.js';
 import { publishCheckout, publishThanks, publishIdle } from '../customer-display.js';
 import { screenHead } from '../components.js';
+import { clearSaved } from '../cart.js';
 
 const TENDERS = [
   { id: 'cash', label: 'Cash' },
@@ -349,9 +350,11 @@ export const screen = {
         store: (state.store && state.store.name) || '',
       });
 
-      // Clear cart for the next sale.
+      // Clear cart for the next sale. The persisted copy goes with it - the
+      // sale is committed, so there is nothing left to recover.
       state.cart = new Map();
       state.cartVersion++;
+      await clearSaved().catch(() => {});
 
       showReceipt(clientTxId);
     }

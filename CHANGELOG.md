@@ -5,6 +5,50 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.0] — 2026-09-11
+
+First release of the operational-readiness program
+(`docs/superpowers/plans/2026-09-11-operational-readiness-program.md`), and the
+owner's first priority: **no sale is lost if a terminal is interrupted.**
+
+### Added
+
+- **`public/js/cart.js`** — the cart's own module: availability maths and
+  persistence. The cart is written to IndexedDB on every change (debounced to
+  one write per 200ms) and offered back on the next boot.
+- **Recovery prompt.** A terminal that died mid-sale opens with *"Recovered a
+  sale in progress — 6 items, $996.50"* and **Resume** or **Discard**. It is
+  offered, never silently restored: the cashier may have re-rung it already.
+- 24 unit checks in `tests/client-cart.mjs` covering the derived availability,
+  the save/restore round trip, a product deleted since saving, a corrupt record
+  that would otherwise produce a zero-quantity line, and that saving the cart
+  never disturbs the rest of the stored config.
+
+### Changed
+
+- **The catalog mirror is no longer mutated.** The register used to decrement
+  `product.onHand` and splice `product.serials` as lines went in. Availability
+  is now derived — `serverOnHand − quantityInCart` — and the shelf figure on
+  each tile repaints with the cart.
+- `productTile()` takes an `available` figure from the caller rather than
+  reading `onHand` itself.
+
+### Fixed
+
+- **A crash used to lose stock permanently.** Units were taken off the local
+  mirror when added to the cart and returned only by an explicit remove, which
+  a crashed tab never reaches. A serialized phone could disappear from the
+  terminal's stock entirely.
+- **A sync mid-cart could drift the figures.** `pull()` replaces product objects
+  wholesale; the open cart held stale references, so displayed stock and the
+  quantities the cart would restore could disagree. Deriving availability at
+  render time removes the class of bug rather than patching it.
+
+### Removed
+
+- `lineRemove()` and `inCartSerial()` — both existed only to undo mutations
+  that no longer happen.
+
 ## [1.20.0] — 2026-09-10
 
 Closes the last outstanding item from the interface-v2 spec: every screen now

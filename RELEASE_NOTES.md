@@ -7,7 +7,36 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.20.0 — shared components sweep
+## Latest: v1.21.0 — no sale is lost
+
+**2026-09-11.** First of the operational-readiness program, and the owner's
+first priority.
+
+A part-rung sale now survives the terminal dying. The cart is written to
+IndexedDB on every change and offered back on the next boot — *"Recovered a
+sale in progress — 6 items, $996.50"*, with **Resume** or **Discard**. It is
+offered rather than silently restored, because the cashier may have re-rung it.
+
+**The bug underneath it.** The register used to decrement the local catalog as
+lines went into the cart. A crash therefore lost those units for good — nothing
+ran to put them back — and a serialized phone could vanish from the terminal's
+stock entirely. Availability is now *derived* (`serverOnHand − quantityInCart`),
+which also fixes a second bug: a `pull()` mid-cart replaced the product objects
+under the open cart, so the displayed stock and the quantities the cart would
+restore could disagree.
+
+**Validation:** backend-sim **PASS 462 / FAIL 0** (untouched) · client units
+**PASS 350 / FAIL 0** (24 new). Verified in-browser: the shelf counts down live
+as items go in, the sixth of five is refused, and a hard reload mid-sale brings
+back all six lines including the exact IMEI.
+
+### Deploying
+
+Front-end only — `backend/Code.gs` untouched, no Apps Script redeploy.
+
+---
+
+## v1.20.0 — shared components sweep
 
 **2026-09-10.** Closes the last outstanding item from the interface-v2 spec, and
 adds the permanent project credit.

@@ -90,11 +90,15 @@ function lockedFlag(p) {
   return p && (p.locked === true || p.locked === 1 || String(p.locked) === '1');
 }
 
-export function productTile(product, { fmt } = {}) {
+export function productTile(product, { fmt, available } = {}) {
   const p = product || {};
   const money = fmt || ((v) => String(v));
   const isService = p.itemType === 'service';
-  const avail = p.isSerialized ? (p.serials || []).length : (Number(p.onHand) || 0);
+  /* the caller passes what the open cart leaves on the shelf; without it the
+     tile falls back to the raw server figure. */
+  const avail = available == null
+    ? (p.isSerialized ? (p.serials || []).length : (Number(p.onHand) || 0))
+    : available;
   const out = !isService && avail <= 0;
   const stock = isService
     ? '<span class="pt-stock pt-service">Service</span>'

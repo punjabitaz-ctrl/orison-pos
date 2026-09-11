@@ -11,6 +11,10 @@ import {
 import { SYNC_EVENT, getSyncState } from '../sync.js';
 import { saleTotals } from '../money.js';
 import { productTile, categoryChip, cartBar, screenHead } from '../components.js';
+import {
+  lineKey, availableFor, freeSerials, isSerialFree, persist, persistNow,
+  loadSaved, clearSaved, fromRecords, savedSummary,
+} from '../cart.js';
 import { publishCart } from '../customer-display.js';
 
 
@@ -92,7 +96,7 @@ export const screen = {
           || (p.upc || '').toLowerCase().includes(q)
           || (p.serials || []).join(',').includes(q);
       });
-      grid.innerHTML = list.map((p) => productTile(p, { fmt })).join('')
+      grid.innerHTML = list.map((p) => productTile(p, { fmt, available: availableFor(p, state.cart) })).join('')
         + (list.length ? '' : `<div class="empty"><p>No products match “${esc(term)}”.</p><button class="btn btn-ghost" id="resetSearch">Clear search</button></div>`);
       const reset = grid.querySelector('#resetSearch');
       if (reset) reset.addEventListener('click', () => { term = ''; searchInput.value = ''; renderGrid(); });
@@ -120,7 +124,7 @@ export const screen = {
         <div class="serial-dialog">
           <h3>Scan IMEI / Serial</h3>
           <p class="muted">${esc(product.name)}</p>
-          <div class="serial-avail">${(product.serials || []).length} available</div>
+          <div class="serial-avail">${freeSerials(product, state.cart).length} available</div>
           <div class="field">
             <input id="serialInput" type="text" inputmode="numeric" placeholder="Scan or type serial…"
                    autocomplete="off" autocapitalize="off" autocorrect="off" autocapitalize="none"
@@ -143,13 +147,16 @@ export const screen = {
       const submit = () => {
         const serial = input.value.trim();
         if (!serial) return;
-        const available = (product.serials || []).map((s) => s.trim());
-        if (!available.includes(serial)) { errEl.textContent = 'Serial not in stock for this product.'; beep('err'); return; }
-        if (inCartSerial(product.id, serial)) { errEl.textContent = 'That serial is already in the cart.'; beep('err'); return; }
+        if (!(product.serials || []).map((x) => String(x).trim()).includes(serial)) {
+          errEl.textContent = 'Serial not in stock for this product.'; beep('err'); return;
+        }
+        if (!isSerialFree(product, state.cart, serial)) {
+          errEl.textContent = 'That serial is already in the cart.'; beep('err'); return;
+        }
         closeModal();
         beep('ok');
         addCartLine(product, serial);
-        renderCart();
+        refreshView();
       };
       add.addEventListener('click', submit);
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
@@ -162,36 +169,44 @@ export const screen = {
       });
     }
 
-    function inCartSerial(productId, serial) {
-      for (const line of state.cart.values()) {
-        if (line.product.id === productId && (line.serials || []).includes(serial)) return true;
-      }
-      return false;
-    }
 
     // ---- Cart ----
-    function addToCart(product) {
-      if (!product) { toast('Product not found', 'warn'); beep('err'); return; }
-      if (isLocked(product)) { toast(`${product.name} is locked — release it in Inventory`, 'warn'); beep('err'); return; }
-      if (product.itemType === 'service') { addCartLine(product, null); renderCart(); return; }
-      if (product.isSerialized) { openSerialDialog(product, ''); return; }
-      if ((product.onHand || 0) <= 0) { toast(`${product.name} is out of stock`, 'warn'); beep('err'); return; }
-      addCartLine(product, null);
+    /* The shelf figure is derived from the cart, so both have to repaint
+       together or the tiles keep showing stock the cart already claimed. */
+    function refreshView() {
+      renderGrid();
       renderCart();
     }
 
+    function addToCart(product) {
+      if (!product) { toast('Product not found', 'warn'); beep('err'); return; }
+      if (isLocked(product)) { toast(`${product.name} is locked — release it in Inventory`, 'warn'); beep('err'); return; }
+      if (product.itemType === 'service') { addCartLine(product, null); refreshView(); return; }
+      if (product.isSerialized) { openSerialDialog(product, ''); return; }
+      if (availableFor(product, state.cart) <= 0) { toast(`${product.name} is out of stock`, 'warn'); beep('err'); return; }
+      addCartLine(product, null);
+      refreshView();
+    }
+
+    /* The catalog mirror is never touched. Availability is derived from the
+       server figure minus this cart, so a crash loses nothing and a mid-cart
+       pull() cannot drift the numbers. */
     function addCartLine(product, serial) {
       if (product.isSerialized) {
-        const key = product.id + '|' + serial;
-        state.cart.set(key, { product, qty: 1, serials: [serial], price: product.retailPrice, discountPct: 0, taxable: product.taxable !== false });
-        product.serials = (product.serials || []).filter((s) => s !== serial);
+        state.cart.set(lineKey(product.id, serial), {
+          product, qty: 1, serials: [serial], price: product.retailPrice,
+          discountPct: 0, taxable: product.taxable !== false,
+        });
       } else {
-        const existing = state.cart.get(product.id);
+        const existing = state.cart.get(lineKey(product.id));
         if (existing) { existing.qty++; existing.price = product.retailPrice; }
-        else state.cart.set(product.id, { product, qty: 1, serials: [], price: product.retailPrice, discountPct: 0, taxable: product.taxable !== false });
-        if (product.itemType !== 'service') product.onHand = Math.max(0, (product.onHand || 0) - 1);
+        else state.cart.set(lineKey(product.id), {
+          product, qty: 1, serials: [], price: product.retailPrice,
+          discountPct: 0, taxable: product.taxable !== false,
+        });
       }
       state.cartVersion++;
+      persist(state.cart);
     }
 
     function cartTotals() {
@@ -207,13 +222,6 @@ export const screen = {
       return { total: totals.total, count };
     }
 
-    function lineRemove(line) {
-      if (line.product.isSerialized) {
-        for (const s of line.serials) if (!line.product.serials.includes(s)) line.product.serials.push(s);
-      } else {
-        if (line.product.itemType !== 'service') line.product.onHand = (line.product.onHand || 0) + (line.qty || 1);
-      }
-    }
 
     function lineKeyOf(line) {
       for (const [k, v] of state.cart.entries()) if (v === line) return k;
@@ -321,13 +329,13 @@ export const screen = {
           const key = b.dataset.key || b.dataset.remove;
           const line = [...state.cart.values()].find((l) => lineKeyOf(l) === key);
           if (!line) return;
-          const isService = line.product.itemType === 'service';
-          if (b.hasAttribute('data-min') && line.qty > 1) { line.qty--; if (!isService) line.product.onHand++; }
-          if (b.hasAttribute('data-plus') && (isService || (line.product.onHand || 0) > 0)) { line.qty++; if (!isService) line.product.onHand--; }
-          if (b.hasAttribute('data-remove')) { lineRemove(line); state.cart.delete(key); }
+          if (b.hasAttribute('data-min') && line.qty > 1) line.qty--;
+          if (b.hasAttribute('data-plus') && availableFor(line.product, state.cart) > 0) line.qty++;
+          if (b.hasAttribute('data-remove')) state.cart.delete(key);
           if (b.hasAttribute('data-disc')) line.discountPct = Number(b.dataset.p) || 0;
           state.cartVersion++;
-          renderCart();
+          persist(state.cart);
+          refreshView();
         });
       });
       rootEl.querySelector('#chargeBtn').addEventListener('click', goToCheckout);
@@ -365,6 +373,38 @@ export const screen = {
     renderChips();
     renderGrid();
     renderCart();
+    offerRecovery();
+
+    /* A part-rung sale that survived the terminal dying. Offer it back rather
+       than silently restoring - the cashier may have re-rung it already. */
+    async function offerRecovery() {
+      if (state.cart.size) return;
+      const saved = await loadSaved().catch(() => null);
+      if (!saved) return;
+      const sum = savedSummary(saved, fmt);
+      const modal = openModal(`
+        <div class="form-modal">
+          <h3>Recovered a sale in progress</h3>
+          <p class="muted">This terminal was interrupted with ${esc(sum.text)} in the cart.</p>
+          <div class="row">
+            <button class="btn btn-ghost" id="recDiscard">Discard</button>
+            <button class="btn" id="recResume">Resume sale</button>
+          </div>
+        </div>`);
+      modal.querySelector('#recResume').addEventListener('click', async () => {
+        state.cart = fromRecords(saved.lines, screen._products);
+        state.cartVersion++;
+        await persistNow(state.cart);
+        closeModal();
+        refreshView();
+        toast('Sale restored', 'ok');
+      });
+      modal.querySelector('#recDiscard').addEventListener('click', async () => {
+        await clearSaved();
+        closeModal();
+        toast('Cart discarded', 'info');
+      });
+    }
     if (!('ontouchstart' in window)) searchInput.focus();
 
     const handleSync = () => { if (document.getElementById('searchInput')) { this.refreshProducts().then(renderGrid); } };
