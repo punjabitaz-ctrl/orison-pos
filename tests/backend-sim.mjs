@@ -3368,6 +3368,34 @@ check('statement carries the changer/cashier',
       .data.entry.clockIn.length > 0);
 }
 
+{
+  section('repair tickets (v1.31.0)');
+
+  check('ticket numbers are Orison-R padded to six',
+    sandbox.formatTicketNo_(1) === 'Orison-R000001', sandbox.formatTicketNo_(1));
+  check('ticket numbers keep their width at four digits',
+    sandbox.formatTicketNo_(1234) === 'Orison-R001234', sandbox.formatTicketNo_(1234));
+
+  const rpT1 = sandbox.reserveTicketNumber_();
+  const rpT2 = sandbox.reserveTicketNumber_();
+  check('reserved ticket numbers are sequential and gap-free',
+    rpT2 === sandbox.formatTicketNo_(Number(rpT1.slice(-6)) + 1), rpT1 + ' ' + rpT2);
+
+  check('every status in the flow is declared',
+    sandbox.REPAIR_STATUSES.length === 9
+    && sandbox.REPAIR_STATUSES.indexOf('intake') === 0
+    && sandbox.REPAIR_STATUSES.indexOf('collected') >= 0,
+    JSON.stringify(sandbox.REPAIR_STATUSES));
+  check('the four terminal statuses are marked terminal',
+    sandbox.REPAIR_TERMINAL.collected === 1
+    && sandbox.REPAIR_TERMINAL.unrepairable === 1
+    && sandbox.REPAIR_TERMINAL.cancelled === 1
+    && sandbox.REPAIR_TERMINAL.voided === 1
+    && !sandbox.REPAIR_TERMINAL.ready,
+    JSON.stringify(sandbox.REPAIR_TERMINAL));
+}
+
+
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);
 process.exit(failed ? 1 : 0);

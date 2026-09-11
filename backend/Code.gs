@@ -341,6 +341,21 @@ var PO_HEADERS = ['id', 'store_id', 'supplier_id', 'po_number', 'order_date', 'e
 var AUDIT_HEADERS = ['id', 'store_id', 'at', 'user_id', 'user_name', 'role', 'action', 'target_type', 'target_id', 'summary', 'device_id'];
 var STOCKTAKE_HEADERS = ['id', 'store_id', 'session_id', 'product_id', 'product_name', 'sku', 'expected', 'counted', 'variance', 'unit_cost', 'value_delta', 'counted_by', 'note', 'created_at'];
 var TIMECLOCK_HEADERS = ['id', 'store_id', 'user_id', 'device_id', 'clock_in', 'clock_out', 'minutes', 'note', 'status'];
+
+var REPAIR_HEADERS = ['id', 'store_id', 'ticket_no', 'customer_id', 'customer_name',
+  'customer_phone', 'device_make', 'device_model', 'device_serial', 'reported_fault',
+  'condition_note', 'accessories', 'status', 'parts_json', 'labour_json',
+  'estimate_total', 'deposit_total', 'final_total', 'assigned_to', 'note',
+  'created_by', 'created_at', 'updated_at', 'promised_at', 'closed_at', 'invoice_tx_id'];
+
+/* The flow a job actually walks. Order matters: the UI renders it in this
+ * order, and "can this move forward" is an index comparison. */
+var REPAIR_STATUSES = ['intake', 'diagnosed', 'awaiting_parts', 'in_progress',
+  'ready', 'collected', 'unrepairable', 'cancelled', 'voided'];
+
+/* Terminal means terminal: no reopening, no re-closing. A collected ticket has
+ * money against it and a customer holding the device. */
+var REPAIR_TERMINAL = { collected: 1, unrepairable: 1, cancelled: 1, voided: 1 };
 var PRICE_HISTORY_HEADERS = ['id', 'store_id', 'product_id', 'product_name', 'field', 'old_value', 'new_value', 'source', 'po_id', 'changed_by', 'created_at'];
 
 /* Append a price-change event (cost or retail) to the PriceHistory tab. Called
@@ -629,6 +644,29 @@ function formatReceiptNo_(n) {
   var digits = String(Math.max(0, Math.floor(num_(n))));
   while (digits.length < RECEIPT_PAD) digits = '0' + digits;
   return receiptPrefix_() + digits;
+}
+
+var TICKET_PREFIX_DEFAULT = 'Orison-R';
+
+function ticketPrefix_() {
+  var k = kv_();
+  return String(k.ticket_prefix == null || k.ticket_prefix === '' ? TICKET_PREFIX_DEFAULT : k.ticket_prefix);
+}
+
+function formatTicketNo_(n) {
+  var digits = String(Math.max(0, Math.floor(num_(n))));
+  while (digits.length < RECEIPT_PAD) digits = '0' + digits;
+  return ticketPrefix_() + digits;
+}
+
+/* One at a time: a ticket is created with the customer standing there, so
+ * there is never a batch to reserve. Caller must already hold the lock. */
+function reserveTicketNumber_() {
+  var k = kv_();
+  var last = num_(k.repair_seq);
+  if (!(last >= 0)) last = 0;
+  setKv_('repair_seq', last + 1);
+  return formatTicketNo_(last + 1);
 }
 
 function isDocumentKind_(kind) {
