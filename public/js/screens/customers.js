@@ -6,6 +6,7 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
+import { screenHead } from '../components.js';
 import { fmt, esc, openModal, closeModal, toast, beep, csvRows, downloadCsv, currencySymbol } from '../ui.js';
 import { createCollection } from '../money.js';
 
@@ -42,13 +43,11 @@ export const screen = {
 
     function draw() {
       root.innerHTML = `
-        <header class="scr-head">
-          <div class="scr-title">
-            <h2>Customers</h2>
-            <p>${list.length} with activity · total outstanding <strong class="gp">${fmt(totalOut)}</strong></p>
-          </div>
-          <button class="icon-btn" id="custRefresh" aria-label="Refresh">⟳</button>
-        </header>
+        ${screenHead({
+          title: 'Customers',
+          subHtml: `${list.length} with activity · total outstanding <strong class="gp">${fmt(totalOut)}</strong>`,
+          actions: '<button class="icon-btn" id="custRefresh" aria-label="Refresh">⟳</button>',
+        })}
         <div class="cust-toolbar">
           <input id="custQ" class="field" placeholder="Search name, phone, email…" autocomplete="off">
         </div>

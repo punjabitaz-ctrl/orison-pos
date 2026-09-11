@@ -7,7 +7,36 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.19.0 — three money-out kinds
+## Latest: v1.20.0 — shared components sweep
+
+**2026-09-10.** Closes the last outstanding item from the interface-v2 spec, and
+adds the permanent project credit.
+
+**What shipped**
+
+- **Every screen renders its structure from `components.js`.** `screenHead()`,
+  `sectionHead()`, `statRow()`, `rankRow()`, `rankList()` and `dataTable()`
+  replace markup that had been hand-written across the app: the same header
+  block appeared in **12** screens, plus 9 rank rows, 6 tables, 3 stat rows and
+  4 section heads.
+- **"An AYiN Advisors Project"** now appears permanently in the footer of the
+  app shell and the customer display.
+- Screens still build their own table rows. `dataTable()` owns the wrap, the
+  head and numeric alignment — the part that actually repeated. Forcing every
+  table through one row model would have made the code worse.
+
+**Validation:** backend-sim **PASS 462 / FAIL 0** (untouched) · client units
+**PASS 328 / FAIL 0** · `node --check` clean. All ten reachable screens walked
+in-browser after the sweep: every header renders, zero JS console errors.
+
+### Deploying
+
+1. **Front-end only** — `backend/Code.gs` is untouched.
+2. Push `public/` to Cloudflare Pages as usual.
+
+---
+
+## v1.19.0 — three money-out kinds
 
 **2026-09-10.** The last of the three interface-v2 releases. Cash leaving the
 drawer is now attributable by reason.

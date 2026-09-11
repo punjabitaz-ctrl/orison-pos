@@ -1407,3 +1407,17 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; le
 
 .kpi-split { font-style: normal; font-size: 10px; font-weight: 600; color: var(--muted); line-height: 1.3; }
 .dash-kpi .kpi-split { text-transform: none; letter-spacing: 0; }
+
+/* Permanent project credit. Sits below the screen in the scrolling column, so
+   it never covers a till control and never competes with the cart bar. */
+.app-credit {
+  flex: none;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .3px;
+  color: var(--muted);
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}

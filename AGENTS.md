@@ -101,6 +101,10 @@ npm run test:client               # client unit tests (money/sync/db/alerts/ui)
   through `fmt()` (store locale + currency, installed at boot/login/pull);
   a currency symbol in a label comes from `currencySymbol()`, a note or coin
   from `denomLabel()`, and the ladder itself from `store.denoms`.
+- **Screen structure comes from `components.js`.** Headers, section heads, stat
+  rows, rank rows and tables have shared builders; do not hand-roll that markup
+  in a screen. Text fields are escaped by default — use the explicit `*Html`
+  field when a screen genuinely composes markup.
 - **Navigation is data.** Add a destination to `public/js/nav.js`; never paste a
   button into `index.html`. Both navs and the launcher render from that model,
   and role gating comes from `isRestricted`, not a hard-coded id list.

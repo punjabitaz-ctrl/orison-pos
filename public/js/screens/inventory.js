@@ -9,7 +9,7 @@ import { fmt, esc, toast, beep, debounce, openModal, closeModal, openSheet, clos
 import { bulkPriceModal, stockTakeModal, labelsModal, reorderModal } from './inventory-tools.js';
 import { pull, mergeProductLocal, SYNC_EVENT, getSyncState } from '../sync.js';
 import { reorderThreshold } from '../alerts.js';
-import { catColor } from '../components.js';
+import { catColor, screenHead } from '../components.js';
 
 
 function isLocked(p) {
@@ -37,13 +37,11 @@ export const screen = {
     const stats = await getSyncState();
 
     root.innerHTML = `
-      <header class="scr-head">
-        <div class="scr-title">
-          <h2>Products</h2>
-          <p>${this._products.length} items${isAdmin ? ' · admin' : ''}</p>
-        </div>
-        ${isAdmin ? `<div class="btn-row"><button class="btn btn-ghost btn-sm" id="toolsBtn">Tools</button><button class="btn btn-ghost btn-sm" id="newProdBtn">+ New</button></div>` : ''}
-      </header>
+      ${screenHead({
+        title: 'Products',
+        sub: `${this._products.length} items${isAdmin ? ' · admin' : ''}`,
+        actions: isAdmin ? '<div class="btn-row"><button class="btn btn-ghost btn-sm" id="toolsBtn">Tools</button><button class="btn btn-ghost btn-sm" id="newProdBtn">+ New</button></div>' : '',
+      })}
       <div class="search-row">
         <div class="search-box">
           <input id="invSearch" type="search" placeholder="Search products…" autocomplete="off">

@@ -144,3 +144,13 @@ body {
   .cd-tick { animation: cd-pop .34s cubic-bezier(.22, .61, .36, 1); }
   @keyframes cd-pop { from { transform: scale(.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 }
+
+.cd-credit {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  padding: 10px 16px;
+  text-align: center;
+  font-size: clamp(10px, 1vw, 14px);
+  letter-spacing: .4px;
+  color: var(--muted);
+  opacity: .75;
+}

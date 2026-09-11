@@ -6,6 +6,7 @@
    action; stock changes happen in Inventory. */
 
 import { idb } from '../db.js';
+import { screenHead } from '../components.js';
 import { api } from '../api.js';
 import { fmt, esc, toast, beep } from '../ui.js';
 import { inventoryAlerts } from '../alerts.js';
@@ -81,13 +82,11 @@ export const screen = {
         .filter((g) => g.items.length);
 
       root.innerHTML = `
-        <header class="scr-head">
-          <div class="scr-title">
-            <h2>Alerts</h2>
-            <p>${alerts.length ? alerts.length + ' action needed' : 'All healthy'} · ${products.length} items tracked</p>
-          </div>
-          <button class="icon-btn" id="alRefresh" aria-label="Refresh">⟳</button>
-        </header>
+        ${screenHead({
+          title: 'Alerts',
+          sub: `${alerts.length ? alerts.length + ' action needed' : 'All healthy'} · ${products.length} items tracked`,
+          actions: '<button class="icon-btn" id="alRefresh" aria-label="Refresh">⟳</button>',
+        })}
         ${!alerts.length ? `<div class="empty"><p>No inventory alerts. Everything is stocked and selling.</p></div>` : ''}
         ${section('out', 'Out of stock', out)}
         ${section('low', 'Low stock', low, 'at or below reorder point')}

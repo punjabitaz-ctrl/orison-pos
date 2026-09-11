@@ -5,6 +5,7 @@
    its kind (sale / refund / payout), and refundable sales open a refund modal. */
 
 import { idb } from '../db.js';
+import { screenHead } from '../components.js';
 import { api } from '../api.js';
 import { fmt, esc, openModal, closeModal, toast } from '../ui.js';
 import { kindInfo, createRefund } from '../money.js';
@@ -62,13 +63,11 @@ export const screen = {
       };
 
       root.innerHTML = `
-        <header class="scr-head">
-          <div class="scr-title">
-            <h2>History</h2>
-            <p>${local.length} local · ${stat.synced} synced · <span class="warn-text">${stat.pending} pending · ${stat.voided} voided</span></p>
-          </div>
-          <button class="icon-btn" id="refreshH">⟳</button>
-        </header>
+        ${screenHead({
+          title: 'History',
+          subHtml: `${local.length} local · ${stat.synced} synced · <span class="warn-text">${stat.pending} pending · ${stat.voided} voided</span>`,
+          actions: '<button class="icon-btn" id="refreshH" aria-label="Refresh">⟳</button>',
+        })}
         <div class="hx-list">
           ${all.length ? all.map((t) => {
             const k = kindInfo(t.kind);

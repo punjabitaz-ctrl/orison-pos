@@ -127,3 +127,63 @@ export function cartBar({ count, total, fmt } = {}) {
     </button>
     <button class="btn cb-charge" data-charge type="button">Charge</button>`;
 }
+
+/* ---- Structural pieces every screen was hand-rolling ----
+   Each takes escaped-by-default text fields, plus an explicit *Html field for
+   the cases where a screen composes its own markup. Keeping the two apart is
+   what stops "it needed markup here" from quietly turning into an unescaped
+   value somewhere else. */
+
+export function screenHead({ title, sub, subHtml, actions } = {}) {
+  const line = subHtml || (sub ? esc(sub) : '');
+  return `
+    <header class="scr-head">
+      <div class="scr-title">
+        <h2>${esc(title)}</h2>
+        ${line ? `<p>${line}</p>` : ''}
+      </div>
+      ${actions || ''}
+    </header>`;
+}
+
+export function sectionHead({ title, aside, asideHtml } = {}) {
+  const right = asideHtml || (aside ? `<span class="muted">${esc(aside)}</span>` : '');
+  return `<div class="sect-head"><h3>${esc(title)}</h3>${right}</div>`;
+}
+
+export function statRow(stats, extraCls) {
+  return `<div class="stat-row${extraCls ? ' ' + esc(extraCls) : ''}">${(stats || []).map((s) => `
+    <div class="stat"><span>${esc(s.label)}</span><strong${s.cls ? ` class="${esc(s.cls)}"` : ''}>${s.valueHtml || esc(s.value)}</strong></div>`).join('')}</div>`;
+}
+
+export function rankRow({ idx, idxCls, name, meta, metaHtml, rightHtml } = {}) {
+  const metaLine = metaHtml || (meta ? esc(meta) : '');
+  return `
+    <div class="rank-row">
+      ${idx == null ? '' : `<span class="rank-idx${idxCls ? ' ' + esc(idxCls) : ''}">${esc(idx)}</span>`}
+      <div class="rank-main">
+        <div class="rank-name">${esc(name)}</div>
+        ${metaLine ? `<div class="muted">${metaLine}</div>` : ''}
+      </div>
+      ${rightHtml || ''}
+    </div>`;
+}
+
+export function rankList(rows, extraCls) {
+  return `<div class="rank-list${extraCls ? ' ' + esc(extraCls) : ''}">${(rows || []).map((r) => rankRow(r)).join('')}</div>`;
+}
+
+/* The table boilerplate only. Screens keep building their own <tr>s, because
+   that is where every per-screen decision lives; what repeated was the wrap,
+   the thead and the right-alignment of numeric columns. */
+export function dataTable({ head, bodyHtml, footHtml, extraCls } = {}) {
+  const cols = (head || []).map((h) => `<th${h.num ? ' class="num"' : ''}>${esc(h.label)}</th>`).join('');
+  return `
+    <div class="table-wrap">
+      <table class="data-table${extraCls ? ' ' + esc(extraCls) : ''}">
+        ${cols ? `<thead><tr>${cols}</tr></thead>` : ''}
+        <tbody>${bodyHtml || ''}</tbody>
+        ${footHtml ? `<tfoot>${footHtml}</tfoot>` : ''}
+      </table>
+    </div>`;
+}

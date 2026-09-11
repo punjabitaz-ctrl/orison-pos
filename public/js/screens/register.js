@@ -10,7 +10,7 @@ import {
 } from '../ui.js';
 import { SYNC_EVENT, getSyncState } from '../sync.js';
 import { saleTotals } from '../money.js';
-import { productTile, categoryChip, cartBar } from '../components.js';
+import { productTile, categoryChip, cartBar, screenHead } from '../components.js';
 import { publishCart } from '../customer-display.js';
 
 
@@ -41,12 +41,10 @@ export const screen = {
     root.innerHTML = `
       <div class="reg-wrap">
         <div class="reg-catalog">
-      <header class="scr-head">
-        <div class="scr-title">
-          <h2>Register</h2>
-          <p>${esc(syncState.deviceId ? 'Terminal ' + syncState.deviceId.slice(0, 8).toUpperCase() : '')} · ${esc((state.user && state.user.firstName) || '')}</p>
-        </div>
-      </header>
+      ${screenHead({
+        title: 'Register',
+        sub: `${syncState.deviceId ? 'Terminal ' + syncState.deviceId.slice(0, 8).toUpperCase() : ''} · ${(state.user && state.user.firstName) || ''}`,
+      })}
       <div class="search-row">
         <div class="search-box">
           <svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>

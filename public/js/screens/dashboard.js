@@ -12,6 +12,7 @@ import { fmt, esc, toast, beep, openModal, closeModal, skeleton, emptyState, cur
 import { SYNC_EVENT, getDeviceId } from '../sync.js';
 import { inventoryAlerts } from '../alerts.js';
 import { openPayoutDialog } from '../money-dialogs.js';
+import { screenHead, sectionHead, statRow, dataTable, rankList, rankRow } from '../components.js';
 import {
   dayKey, shiftDayKey, dayTotals, trend, baselineAverage, hourlyBuckets,
   tradingWindow, busiestHour, topSellers, withinDays, signedNet, kindOf,
@@ -95,13 +96,11 @@ export const screen = {
       const aAging = alerts.filter((a) => a.aging).length;
 
       root.innerHTML = `
-        <header class="scr-head">
-          <div class="scr-title">
-            <h2>Dashboard</h2>
-            <p>${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${esc(role)}</p>
-          </div>
-          <button class="icon-btn" id="dashRefresh" aria-label="Refresh">⟳</button>
-        </header>
+        ${screenHead({
+          title: 'Dashboard',
+          sub: `${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${role}`,
+          actions: '<button class="icon-btn" id="dashRefresh" aria-label="Refresh">⟳</button>',
+        })}
 
         <div class="dash-kpis">
           <div class="dash-kpi">
@@ -149,10 +148,7 @@ export const screen = {
 
         ${isManager ? `
         <section class="dash-section">
-          <div class="sect-head">
-            <h3>Today by hour</h3>
-            <span class="muted">${peak ? 'busiest ' + hourLabel(peak.hour) + ' · ' + money(peak.sales) : 'no sales yet today'}</span>
-          </div>
+          ${sectionHead({ title: 'Today by hour', aside: peak ? 'busiest ' + hourLabel(peak.hour) + ' · ' + money(peak.sales) : 'no sales yet today' })}
           <div class="dash-chart">${hourChart(hours)}</div>
         </section>
 
@@ -175,24 +171,20 @@ export const screen = {
         <section class="dash-section">
           <details class="dash-details">
             <summary>Reviewed conflicts (${conflicts.filter((c) => c.status !== 'OPEN').length})</summary>
-            ${conflicts.filter((c) => c.status !== 'OPEN').slice(0, 10).map((c) => `
-              <div class="rank-row">
-                <div class="rank-main"><div class="rank-name">${esc(c.type)}</div><div class="muted">${esc(c.summary)}</div></div>
-                <span class="tag-warn">${esc(c.status)}</span>
-              </div>`).join('')}
+            ${conflicts.filter((c) => c.status !== 'OPEN').slice(0, 10).map((c) => rankRow({
+              name: c.type,
+              meta: c.summary,
+              rightHtml: `<span class="tag-warn">${esc(c.status)}</span>`,
+            })).join('')}
           </details>
         </section>` : ''}
 
         <section class="dash-section">
-          <div class="sect-head">
-            <h3>Top sellers</h3>
-            <span class="muted">last 30 days · ${sellerWindow} sale${sellerWindow === 1 ? '' : 's'}</span>
-          </div>
+          ${sectionHead({ title: 'Top sellers', aside: `last 30 days · ${sellerWindow} sale${sellerWindow === 1 ? '' : 's'}` })}
           ${sellers.length
-            ? `<div class="table-wrap">
-                <table class="data-table">
-                  <thead><tr><th>#</th><th>Item</th><th class="num">Units</th><th class="num">Revenue</th><th class="num">Margin</th></tr></thead>
-                  <tbody>
+            ? dataTable({
+                head: [{ label: '#' }, { label: 'Item' }, { label: 'Units', num: true }, { label: 'Revenue', num: true }, { label: 'Margin', num: true }],
+                bodyHtml: `
                     ${sellers.map((t, i) => `
                       <tr>
                         <td class="rank-cell">${i + 1}</td>
@@ -200,10 +192,8 @@ export const screen = {
                         <td class="num">${t.units}</td>
                         <td class="num">${money(t.rev)}</td>
                         <td class="num ${t.gp < 0 ? 'neg' : 'gp'}">${money(t.gp)}${t.rev ? ' <em class="muted">' + t.margin.toFixed(0) + '%</em>' : ''}</td>
-                      </tr>`).join('')}
-                  </tbody>
-                </table>
-              </div>`
+                      </tr>`).join('')}`,
+              })
             : emptyState({ icon: '🏷', title: 'No sales synced yet', body: 'Top sellers appear once sales reach the server.' })}
         </section>
 
@@ -211,10 +201,12 @@ export const screen = {
           <h3>Inventory alerts</h3>
           ${(aOut + aLow + aLocked + aAging)
             ? `<div class="rank-list">
-                <div class="rank-row"><span class="rank-idx warn">${aOut}</span><div class="rank-main"><div class="rank-name">Out of stock</div><div class="muted">need re-supply</div></div></div>
-                <div class="rank-row"><span class="rank-idx warn">${aLow}</span><div class="rank-main"><div class="rank-name">Low stock</div><div class="muted">at or below reorder point</div></div></div>
-                <div class="rank-row"><span class="rank-idx">${aLocked}</span><div class="rank-main"><div class="rank-name">Locked</div><div class="muted">held from sale by admin</div></div></div>
-                <div class="rank-row"><span class="rank-idx warn">${aAging}</span><div class="rank-main"><div class="rank-name">Paying dust</div><div class="muted">not sold in 30+ days</div></div></div>
+                ${[
+                  { idx: aOut, idxCls: 'warn', name: 'Out of stock', meta: 'need re-supply' },
+                  { idx: aLow, idxCls: 'warn', name: 'Low stock', meta: 'at or below reorder point' },
+                  { idx: aLocked, name: 'Locked', meta: 'held from sale by admin' },
+                  { idx: aAging, idxCls: 'warn', name: 'Paying dust', meta: 'not sold in 30+ days' },
+                ].map((r) => rankRow(r)).join('')}
               </div>
               <div class="row dash-actions">
                 <button class="btn" id="dashAlerts">Open alerts</button>
@@ -240,10 +232,7 @@ export const screen = {
         </div>
 
         <section class="dash-section">
-          <div class="sect-head">
-            <h3>My day by hour</h3>
-            <span class="muted">${peak ? 'busiest ' + hourLabel(peak.hour) : 'no sales yet today'}</span>
-          </div>
+          ${sectionHead({ title: 'My day by hour', aside: peak ? 'busiest ' + hourLabel(peak.hour) : 'no sales yet today' })}
           <div class="dash-chart">${hourChart(hours)}</div>
         </section>
 
@@ -456,9 +445,7 @@ export const screen = {
     }
 
     root.innerHTML = `
-      <header class="scr-head">
-        <div class="scr-title"><h2>Dashboard</h2><p>Loading today’s numbers…</p></div>
-      </header>
+      ${screenHead({ title: 'Dashboard', sub: 'Loading today’s numbers…' })}
       ${skeleton('kpis', isManager ? 8 : 4)}
       ${skeleton('chart', 1)}
       ${skeleton('rows', 3)}`;
@@ -630,17 +617,15 @@ function shiftSummary(shifts, today) {
   const net = closedToday.reduce((sum, s) => sum + (Number(s.overShort) || 0), 0);
   const recent = rows.filter((s) => s.status === 'CLOSED').slice(0, 3);
   return `
-    <div class="stat-row shift-stats">
-      <div class="stat"><span>Open now</span><strong>${open.length}</strong></div>
-      <div class="stat"><span>Closed today</span><strong>${closedToday.length}</strong></div>
-      <div class="stat"><span>Over / short today</span><strong class="${net === 0 ? '' : (net > 0 ? 'gp' : 'neg')}">${net > 0 ? '+' : ''}${money(net)}</strong></div>
-    </div>
-    ${recent.length ? `<div class="rank-list">
-      ${recent.map((s) => `
-        <div class="rank-row">
-          <div class="rank-main"><div class="rank-name">${esc(s.userName)}</div><div class="muted">${humanDate(s.closedAt)} \u00b7 expected ${money(s.expectedCash)}</div></div>
-          <b class="${Number(s.overShort) === 0 ? 'gp' : 'neg'}">${Number(s.overShort) > 0 ? '+' : ''}${money(s.overShort)}</b>
-        </div>`).join('')}
-    </div>` : '<p class="muted">No closed shifts yet.</p>'}
+    ${statRow([
+      { label: 'Open now', value: open.length },
+      { label: 'Closed today', value: closedToday.length },
+      { label: 'Over / short today', valueHtml: `${net > 0 ? '+' : ''}${money(net)}`, cls: net === 0 ? '' : (net > 0 ? 'gp' : 'neg') },
+    ], 'shift-stats')}
+    ${recent.length ? rankList(recent.map((s) => ({
+      name: s.userName,
+      meta: `${humanDate(s.closedAt)} \u00b7 expected ${money(s.expectedCash)}`,
+      rightHtml: `<b class="${Number(s.overShort) === 0 ? 'gp' : 'neg'}">${Number(s.overShort) > 0 ? '+' : ''}${money(s.overShort)}</b>`,
+    }))) : '<p class="muted">No closed shifts yet.</p>'}
     <div class="row dash-actions"><button class="btn btn-ghost btn-sm" id="dashStaff">Staff &amp; time clock</button></div>`;
 }

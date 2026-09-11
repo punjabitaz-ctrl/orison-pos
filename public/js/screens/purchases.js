@@ -8,6 +8,7 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
+import { screenHead } from '../components.js';
 import { fmt, esc, toast, beep, openModal, closeModal } from '../ui.js';
 
 const STATUS_META = {
@@ -68,13 +69,14 @@ export const screen = {
 
     function draw() {
       root.innerHTML = `
-        <header class="scr-head">
-          <div class="scr-title"><h2>Purchases</h2><p>Suppliers and stock-in orders</p></div>
-          <div class="scr-actions">
+        ${screenHead({
+          title: 'Purchases',
+          sub: 'Suppliers and stock-in orders',
+          actions: `<div class="scr-actions">
             <button class="btn btn-sm" id="poAddSupplier">+ Supplier</button>
             <button class="btn btn-sm btn-primary" id="poNew">New PO</button>
-          </div>
-        </header>
+          </div>`,
+        })}
 
         ${loadErr ? `<div class="empty"><p>${esc(loadErr)}</p></div>` : `
         <section class="po-block">

@@ -6,7 +6,7 @@
 
 import { esc } from '../ui.js';
 import { menuTiles } from '../nav.js';
-import { tileGrid } from '../components.js';
+import { tileGrid, screenHead } from '../components.js';
 import { openCashOutDialog } from '../money-dialogs.js';
 
 export const screen = {
@@ -21,12 +21,7 @@ export const screen = {
     const tiles = menuTiles(role);
 
     root.innerHTML = `
-      <header class="scr-head">
-        <div class="scr-title">
-          <h2>Menu</h2>
-          <p>${esc(String(role))}</p>
-        </div>
-      </header>
+      ${screenHead({ title: 'Menu', sub: String(role) })}
       ${tileGrid(tiles)}`;
 
     const onTap = (e) => {

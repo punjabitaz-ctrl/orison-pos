@@ -7,6 +7,7 @@
    something useful on a terminal that just lost its connection. */
 
 import { api } from '../api.js';
+import { screenHead, sectionHead, statRow, dataTable, rankList } from '../components.js';
 import { fmt, esc, toast, beep, skeleton, emptyState } from '../ui.js';
 import { getDeviceId, SYNC_EVENT } from '../sync.js';
 import { hoursFromEntries, fmtDuration, shiftDayKey, dayKey } from '../stats.js';
@@ -50,13 +51,11 @@ export const screen = {
     }
 
     root.innerHTML = `
-      <header class="scr-head">
-        <div class="scr-title">
-          <h2>Staff</h2>
-          <p>${esc([user.firstName, user.lastName].filter(Boolean).join(' ') || 'Signed in')} · ${esc(user.role || 'cashier')}</p>
-        </div>
-        <button class="icon-btn" id="staffRefresh" aria-label="Refresh">⟳</button>
-      </header>
+      ${screenHead({
+        title: 'Staff',
+        sub: `${[user.firstName, user.lastName].filter(Boolean).join(' ') || 'Signed in'} · ${user.role || 'cashier'}`,
+        actions: '<button class="icon-btn" id="staffRefresh" aria-label="Refresh">⟳</button>',
+      })}
       <div id="staffBody">${skeleton('rows', 4)}</div>`;
 
     const body = root.querySelector('#staffBody');
@@ -102,11 +101,11 @@ export const screen = {
             </div>
             <button class="btn ${open ? 'btn-danger' : ''}" id="punchBtn" ${offline ? 'disabled' : ''}>${open ? 'Punch out' : 'Punch in'}</button>
           </div>
-          <div class="stat-row">
-            <div class="stat"><span>Today</span><strong>${esc(fmtDuration(todayHours))}</strong></div>
-            <div class="stat"><span>Last 7 days</span><strong>${esc(fmtDuration(weekHours))}</strong></div>
-            <div class="stat"><span>Punches</span><strong>${entriesFor(user.id, shiftDayKey(6)).length}</strong></div>
-          </div>
+          ${statRow([
+            { label: 'Today', value: fmtDuration(todayHours) },
+            { label: 'Last 7 days', value: fmtDuration(weekHours) },
+            { label: 'Punches', value: entriesFor(user.id, shiftDayKey(6)).length },
+          ])}
         </section>`;
     }
 
@@ -115,14 +114,11 @@ export const screen = {
       return `
         <section class="dash-section">
           <h3>Recent punches</h3>
-          ${mine.length ? `<div class="rank-list">${mine.map((e) => `
-            <div class="rank-row">
-              <div class="rank-main">
-                <div class="rank-name">${esc(when(e.clockIn))}${e.clockOut ? ' → ' + esc(when(e.clockOut, false)) : ''}</div>
-                <div class="muted">${e.status === 'OPEN' ? 'On the floor now' : esc(fmtDuration((Number(e.minutes) || 0) / 60))}${e.note ? ' · ' + esc(e.note) : ''}</div>
-              </div>
-              <span class="tag ${e.status === 'OPEN' ? 'tag-live' : ''}">${esc(e.status)}</span>
-            </div>`).join('')}</div>`
+          ${mine.length ? rankList(mine.map((e) => ({
+            name: `${when(e.clockIn)}${e.clockOut ? ' → ' + when(e.clockOut, false) : ''}`,
+            meta: `${e.status === 'OPEN' ? 'On the floor now' : fmtDuration((Number(e.minutes) || 0) / 60)}${e.note ? ' · ' + e.note : ''}`,
+            rightHtml: `<span class="tag ${e.status === 'OPEN' ? 'tag-live' : ''}">${esc(e.status)}</span>`,
+          })))
             : emptyState({ icon: '⏱', title: 'No punches yet', body: 'Your clock-in and clock-out times will show up here.' })}
         </section>`;
     }
@@ -132,14 +128,11 @@ export const screen = {
       return `
         <section class="dash-section">
           <h3>On the floor <span class="muted">· ${open.length} clocked in</span></h3>
-          ${open.length ? `<div class="rank-list">${open.map((e) => `
-            <div class="rank-row">
-              <div class="rank-main">
-                <div class="rank-name">${esc(e.userName)}</div>
-                <div class="muted">since ${esc(when(e.clockIn, false))}${e.deviceId ? ' · terminal ' + esc(e.deviceId.slice(0, 8).toUpperCase()) : ''}</div>
-              </div>
-              <b>${esc(fmtDuration(hoursFromEntries([e])))}</b>
-            </div>`).join('')}</div>`
+          ${open.length ? rankList(open.map((e) => ({
+            name: e.userName,
+            meta: `since ${when(e.clockIn, false)}${e.deviceId ? ' · terminal ' + e.deviceId.slice(0, 8).toUpperCase() : ''}`,
+            rightHtml: `<b>${esc(fmtDuration(hoursFromEntries([e])))}</b>`,
+          })))
             : emptyState({ icon: '🏪', title: 'Nobody is clocked in', body: 'Staff punches show up here the moment someone starts a shift.' })}
         </section>`;
     }
@@ -153,17 +146,17 @@ export const screen = {
       }
       return `
         <section class="dash-section">
-          <div class="sect-head">
-            <h3>Team performance</h3>
-            <div class="seg seg-sm">
-              ${PERIODS.map((p) => `<button class="seg-btn ${p.id === period ? 'on' : ''}" data-period="${p.id}">${esc(p.label)}</button>`).join('')}
-            </div>
-          </div>
-          ${!report ? skeleton('table', 3) : (rows.length ? `
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Cashier</th><th class="num">Sales</th><th class="num">Tickets</th><th class="num">Avg ticket</th><th class="num">Margin</th><th class="num">Hours</th><th class="num">Per hour</th></tr></thead>
-                <tbody>
+          ${sectionHead({
+            title: 'Team performance',
+            asideHtml: `<div class="seg seg-sm">${PERIODS.map((p) => `<button class="seg-btn ${p.id === period ? 'on' : ''}" data-period="${p.id}">${esc(p.label)}</button>`).join('')}</div>`,
+          })}
+          ${!report ? skeleton('table', 3) : (rows.length ? dataTable({
+              head: [
+                { label: 'Cashier' }, { label: 'Sales', num: true }, { label: 'Tickets', num: true },
+                { label: 'Avg ticket', num: true }, { label: 'Margin', num: true },
+                { label: 'Hours', num: true }, { label: 'Per hour', num: true },
+              ],
+              bodyHtml: `
                   ${rows.map((r) => {
                     const hrs = hoursByName[r.userName] || 0;
                     return `<tr>
@@ -175,10 +168,8 @@ export const screen = {
                       <td class="num">${hrs ? esc(fmtDuration(hrs)) : '—'}</td>
                       <td class="num">${hrs ? fmt(r.sales / hrs) : '—'}</td>
                     </tr>`;
-                  }).join('')}
-                </tbody>
-              </table>
-            </div>`
+                  }).join('')}`,
+            })
             : emptyState({ icon: '📊', title: 'No sales in this window', body: 'Performance fills in as the team rings sales.' }))}
         </section>`;
     }
@@ -190,22 +181,21 @@ export const screen = {
       return `
         <section class="dash-section">
           <h3>${isManager ? 'Till reconciliation' : 'My shifts'}</h3>
-          ${closed.length ? `
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Cashier</th><th>Closed</th><th class="num">Declared</th><th class="num">Expected</th><th class="num">Over / short</th></tr></thead>
-                <tbody>
+          ${closed.length ? dataTable({
+              head: [
+                { label: 'Cashier' }, { label: 'Closed' }, { label: 'Declared', num: true },
+                { label: 'Expected', num: true }, { label: 'Over / short', num: true },
+              ],
+              bodyHtml: `
                   ${closed.map((s) => `<tr>
                     <td>${esc(s.userName)}</td>
                     <td>${esc(when(s.closedAt))}</td>
                     <td class="num">${fmt(s.declaredCash)}</td>
                     <td class="num">${fmt(s.expectedCash)}</td>
                     <td class="num ${Number(s.overShort) === 0 ? '' : (Number(s.overShort) > 0 ? 'gp' : 'neg')}">${Number(s.overShort) > 0 ? '+' : ''}${fmt(s.overShort)}</td>
-                  </tr>`).join('')}
-                </tbody>
-                <tfoot><tr><td colspan="4">Net over / short</td><td class="num ${net === 0 ? '' : (net > 0 ? 'gp' : 'neg')}">${net > 0 ? '+' : ''}${fmt(net)}</td></tr></tfoot>
-              </table>
-            </div>`
+                  </tr>`).join('')}`,
+              footHtml: `<tr><td colspan="4">Net over / short</td><td class="num ${net === 0 ? '' : (net > 0 ? 'gp' : 'neg')}">${net > 0 ? '+' : ''}${fmt(net)}</td></tr>`,
+            })
             : emptyState({ icon: '🧾', title: 'No closed shifts yet', body: 'Close a shift from the dashboard to reconcile the drawer.' })}
         </section>`;
     }

@@ -5,6 +5,41 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0] — 2026-09-10
+
+Closes the last outstanding item from the interface-v2 spec: every screen now
+renders its structure from `components.js` instead of hand-rolling it. Adds the
+permanent project credit.
+
+### Added
+
+- **`screenHead()`, `sectionHead()`, `statRow()`, `rankRow()`, `rankList()` and
+  `dataTable()`** in `components.js`. Each takes escaped-by-default text fields
+  plus an explicit `*Html` field for the cases where a screen composes its own
+  markup — keeping the two apart is what stops "it needed markup here" from
+  quietly becoming an unescaped value somewhere else.
+- **"An AYiN Advisors Project"** as a permanent footer on the app shell and on
+  the customer display.
+- 27 unit checks for the new components, including that a `rankRow` index of
+  **zero** still renders (zero is a real count on the inventory-alert rows).
+
+### Changed
+
+- **All 12 screens now use `screenHead()`.** The same header block had been
+  written out twelve times.
+- `staff.js`, `dashboard.js`, `reports.js` and `inventory-tools.js` use
+  `dataTable()`, `statRow()`, `rankList()` and `sectionHead()` in place of their
+  own copies — 9 rank rows, 6 tables, 3 stat rows and 4 section heads
+  consolidated.
+- Screens keep building their own `<tr>`s: `dataTable()` owns only the wrap, the
+  head and the numeric alignment, which is what actually repeated. Forcing every
+  table through one row model would have made the code worse, not better.
+
+### Verified
+
+Every one of the ten reachable screens was walked in-browser after the sweep and
+renders with its header and zero JS console errors.
+
 ## [1.19.0] — 2026-09-10
 
 Last of the three interface-v2 releases. Cash leaving the drawer is now

@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.19.0** — three money-out kinds (`2026-09-10`) |
-| Validation bar | `backend-sim` **PASS 462 / FAIL 0** · client units **PASS 301 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
+| Current version | **v1.20.0** — shared components sweep (`2026-09-10`) |
+| Validation bar | `backend-sim` **PASS 462 / FAIL 0** · client units **PASS 326 / FAIL 0** · pdf-smoke **PASS 19 / FAIL 0** · `node --check` clean |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~4,220 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,13 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.20.0** Shared components sweep — closes the last interface-v2 item.
+  `screenHead`, `sectionHead`, `statRow`, `rankRow`, `rankList` and `dataTable`
+  added to `components.js`; all 12 screens use `screenHead`, and
+  staff/dashboard/reports/inventory-tools use the rest (9 rank rows, 6 tables,
+  3 stat rows, 4 section heads consolidated). Each component escapes text by
+  default with an explicit `*Html` field for composed markup. Adds the permanent
+  **"An AYiN Advisors Project"** footer to the shell and the customer display.
 - **v1.19.0** Three money-out kinds — last of the interface-v2 releases.
   **`pickup`** (cash pick-up) and **`expense`** (staff expense) join `payout`;
   `processPayout_` generalised to `processCashOut_(…, kind)` behind a new

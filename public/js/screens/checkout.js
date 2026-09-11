@@ -8,6 +8,7 @@ import { enqueueTransaction, pushImmediate } from '../sync.js';
 import { saleTotals, round2 } from '../money.js';
 import { api } from '../api.js';
 import { publishCheckout, publishThanks, publishIdle } from '../customer-display.js';
+import { screenHead } from '../components.js';
 
 const TENDERS = [
   { id: 'cash', label: 'Cash' },
@@ -126,13 +127,11 @@ export const screen = {
       });
 
       root.innerHTML = `
-        <header class="scr-head">
-          <div class="scr-title">
-            <h2>Charge Sale</h2>
-            <p>${esc(state.user && state.user.firstName)} · ${fmt(sale.total)}</p>
-          </div>
-          <button class="icon-btn" id="backBtn">✕</button>
-        </header>
+        ${screenHead({
+          title: 'Charge Sale',
+          sub: `${(state.user && state.user.firstName) || ''} · ${fmt(sale.total)}`,
+          actions: '<button class="icon-btn" id="backBtn" aria-label="Cancel">✕</button>',
+        })}
 
         <div class="checkout">
           <section class="co-cust">

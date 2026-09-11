@@ -263,3 +263,101 @@ test('the three money-out reasons are separate destinations (v1.19.0)', async (t
     }
   });
 });
+
+import { screenHead, sectionHead, statRow, rankRow, rankList, dataTable } from '../public/js/components.js';
+
+test('screenHead()', async (t) => {
+  await t.test('renders the title and an escaped subtitle', () => {
+    const html = screenHead({ title: 'Reports', sub: 'Manager analytics' });
+    assert.ok(html.includes('<h2>Reports</h2>'));
+    assert.ok(html.includes('<p>Manager analytics</p>'));
+  });
+  await t.test('escapes both the title and the plain subtitle', () => {
+    const html = screenHead({ title: '<b>T', sub: '<i>S' });
+    assert.ok(!html.includes('<b>T'));
+    assert.ok(!html.includes('<i>S'));
+    assert.ok(html.includes('&lt;b&gt;T'));
+  });
+  await t.test('subHtml is the explicit opt-in for composed markup', () => {
+    assert.ok(screenHead({ title: 'X', subHtml: '<strong class="gp">$5</strong>' }).includes('<strong class="gp">'));
+  });
+  await t.test('omits the subtitle line entirely when there is none', () => {
+    assert.ok(!screenHead({ title: 'Settings' }).includes('<p>'));
+  });
+  await t.test('passes screen actions through as markup', () => {
+    assert.ok(screenHead({ title: 'X', actions: '<button id="go">Go</button>' }).includes('id="go"'));
+  });
+});
+
+test('sectionHead()', async (t) => {
+  await t.test('escapes the title and the plain aside', () => {
+    const html = sectionHead({ title: '<b>T', aside: '<i>A' });
+    assert.ok(!html.includes('<b>T'));
+    assert.ok(!html.includes('<i>A'));
+  });
+  await t.test('asideHtml carries composed markup such as a segment control', () => {
+    assert.ok(sectionHead({ title: 'X', asideHtml: '<div class="seg"></div>' }).includes('class="seg"'));
+  });
+  await t.test('renders without an aside', () => {
+    assert.ok(sectionHead({ title: 'Shift' }).includes('<h3>Shift</h3>'));
+  });
+});
+
+test('statRow()', async (t) => {
+  await t.test('renders one stat per entry with escaped labels', () => {
+    const html = statRow([{ label: 'Open now', value: 2 }, { label: '<b>x', value: 'y' }]);
+    assert.equal((html.match(/class="stat"/g) || []).length, 2);
+    assert.ok(!html.includes('<b>x'));
+  });
+  await t.test('carries a class onto the figure for gp/neg colouring', () => {
+    assert.ok(statRow([{ label: 'Over', value: '+5', cls: 'gp' }]).includes('class="gp"'));
+  });
+  await t.test('survives an empty set', () => {
+    assert.ok(!statRow([]).includes('undefined'));
+    assert.ok(!statRow(null).includes('undefined'));
+  });
+});
+
+test('rankRow() and rankList()', async (t) => {
+  await t.test('renders name and meta, both escaped', () => {
+    const html = rankRow({ name: '<b>N', meta: '<i>M' });
+    assert.ok(!html.includes('<b>N'));
+    assert.ok(!html.includes('<i>M'));
+    assert.ok(html.includes('rank-name'));
+  });
+  await t.test('the index is optional, and takes a class when present', () => {
+    assert.ok(!rankRow({ name: 'x' }).includes('rank-idx'));
+    const html = rankRow({ idx: 3, idxCls: 'warn', name: 'x' });
+    assert.ok(html.includes('rank-idx warn'));
+    assert.ok(html.includes('>3<'));
+  });
+  await t.test('an index of zero still renders, because zero is a real count', () => {
+    assert.ok(rankRow({ idx: 0, name: 'Out of stock' }).includes('rank-idx'));
+  });
+  await t.test('rightHtml carries the screen-built trailing figure', () => {
+    assert.ok(rankRow({ name: 'x', rightHtml: '<b class="neg">-5</b>' }).includes('class="neg"'));
+  });
+  await t.test('rankList renders one row per entry and survives empty', () => {
+    assert.equal((rankList([{ name: 'a' }, { name: 'b' }]).match(/class="rank-row"/g) || []).length, 2);
+    assert.ok(!rankList([]).includes('undefined'));
+  });
+});
+
+test('dataTable()', async (t) => {
+  await t.test('wraps the table and right-aligns numeric columns', () => {
+    const html = dataTable({ head: [{ label: 'Item' }, { label: 'Units', num: true }], bodyHtml: '<tr><td>a</td></tr>' });
+    assert.ok(html.includes('class="table-wrap"'));
+    assert.ok(html.includes('<th>Item</th>'));
+    assert.ok(html.includes('<th class="num">Units</th>'));
+  });
+  await t.test('escapes column labels', () => {
+    assert.ok(!dataTable({ head: [{ label: '<b>x' }] }).includes('<b>x'));
+  });
+  await t.test('the footer is optional', () => {
+    assert.ok(!dataTable({ head: [], bodyHtml: '' }).includes('<tfoot>'));
+    assert.ok(dataTable({ bodyHtml: '', footHtml: '<tr><td>t</td></tr>' }).includes('<tfoot>'));
+  });
+  await t.test('renders without a head, for a table that is all body', () => {
+    assert.ok(!dataTable({ bodyHtml: '<tr></tr>' }).includes('<thead>'));
+  });
+});

@@ -6,6 +6,7 @@
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
+import { screenHead, rankList } from '../components.js';
 import { fmt, esc, toast, beep, csvCell, downloadCsv } from '../ui.js';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -96,13 +97,11 @@ export const screen = {
       const sum = data ? data.summary : null;
       const range = rangeFor(preset, from, to);
       root.innerHTML = `
-        <header class="scr-head">
-          <div class="scr-title">
-            <h2>Reports</h2>
-            <p>${sum ? `${range.from} → ${range.to} · ${data.period.days} day${data.period.days === 1 ? '' : 's'}` : 'Manager analytics'}</p>
-          </div>
-          ${data ? `<button class="icon-btn" id="repExport" aria-label="Export CSV">⤓</button>` : ''}
-        </header>
+        ${screenHead({
+          title: 'Reports',
+          sub: sum ? `${range.from} → ${range.to} · ${data.period.days} day${data.period.days === 1 ? '' : 's'}` : 'Manager analytics',
+          actions: data ? '<button class="icon-btn" id="repExport" aria-label="Export CSV">⤓</button>' : '',
+        })}
 
         <div class="rep-chips">
           ${PRESETS.map((p) => `<button class="rep-chip ${p.id === preset ? 'on' : ''}" data-p="${p.id}">${p.label}</button>`).join('')}
@@ -153,12 +152,12 @@ export const screen = {
 
         <section class="dash-section">
           <h3>Top products</h3>
-          ${data.topProducts.length ? `<div class="rank-list">${data.topProducts.map((p, i) => `
-            <div class="rank-row">
-              <span class="rank-idx">${i + 1}</span>
-              <div class="rank-main"><div class="rank-name">${esc(p.name)}</div><div class="muted">${esc(p.sku || '—')} · ${p.units} unit${p.units === 1 ? '' : 's'}</div></div>
-              <b>${money(p.sales)}<span class="gp muted">&nbsp;·&nbsp;gp ${money(p.gp)}</span></b>
-            </div>`).join('')}</div>`
+          ${data.topProducts.length ? rankList(data.topProducts.map((p, i) => ({
+            idx: i + 1,
+            name: p.name,
+            meta: `${p.sku || '—'} · ${p.units} unit${p.units === 1 ? '' : 's'}`,
+            rightHtml: `<b>${money(p.sales)}<span class="gp muted">&nbsp;·&nbsp;gp ${money(p.gp)}</span></b>`,
+          })))
             : `<p class="empty">No sales in this window.</p>`}
         </section>
         `}`;

@@ -13,6 +13,7 @@ import {
   csvRows, downloadCsv,
 } from '../ui.js';
 import { labelsFor, labelSheetHtml, labelCode } from '../labels.js';
+import { dataTable, statRow } from '../components.js';
 import { printSheet } from '../print-sheet.js';
 
 function fmtMoney(v) {
@@ -109,20 +110,17 @@ export function bulkPriceModal({ products, onDone }) {
       return;
     }
     body.innerHTML = `
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>Item</th><th>SKU</th><th class="num">Now</th><th class="num">After</th></tr></thead>
-          <tbody>
+      ${dataTable({
+        head: [{ label: 'Item' }, { label: 'SKU' }, { label: 'Now', num: true }, { label: 'After', num: true }],
+        bodyHtml: `
             ${res.changes.slice(0, 200).map((c) => `
               <tr>
                 <td>${esc(c.name)}</td>
                 <td>${esc(c.sku)}</td>
                 <td class="num">${fmtMoney(c.oldValue)}</td>
                 <td class="num ${c.newValue > c.oldValue ? 'gp' : 'neg'}">${fmtMoney(c.newValue)}</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
+              </tr>`).join('')}`,
+      })}
       <p class="muted">${res.changed} of ${res.matched} matched product${res.matched === 1 ? '' : 's'} would change${res.changes.length > 200 ? ' (first 200 shown)' : ''}.</p>`;
   }
 
@@ -209,10 +207,10 @@ export function stockTakeModal({ products, onDone }) {
     const variance = rows.reduce((n, r) => n + (r.counted - (Number(r.product.onHand) || 0)), 0);
     const value = rows.reduce((n, r) => n + (r.counted - (Number(r.product.onHand) || 0)) * (Number(r.product.costPrice) || 0), 0);
     sheet.innerHTML = `
-      <div class="table-wrap">
-        <table class="data-table st-table">
-          <thead><tr><th>Item</th><th class="num">Book</th><th class="num">Counted</th><th class="num">Variance</th><th></th></tr></thead>
-          <tbody>
+      ${dataTable({
+        extraCls: 'st-table',
+        head: [{ label: 'Item' }, { label: 'Book', num: true }, { label: 'Counted', num: true }, { label: 'Variance', num: true }, { label: '' }],
+        bodyHtml: `
             ${rows.map((r) => {
               const book = Number(r.product.onHand) || 0;
               const v = r.counted - book;
@@ -223,15 +221,13 @@ export function stockTakeModal({ products, onDone }) {
                 <td class="num ${v === 0 ? '' : (v > 0 ? 'gp' : 'neg')}">${v > 0 ? '+' : ''}${v}</td>
                 <td><button class="cl-remove" data-drop="${esc(r.product.id)}" aria-label="Remove line">✕</button></td>
               </tr>`;
-            }).join('')}
-          </tbody>
-          <tfoot><tr>
+            }).join('')}`,
+        footHtml: `<tr>
             <td colspan="3">${rows.length} line${rows.length === 1 ? '' : 's'} · net variance</td>
             <td class="num ${variance === 0 ? '' : (variance > 0 ? 'gp' : 'neg')}">${variance > 0 ? '+' : ''}${variance}</td>
             <td class="num ${value === 0 ? '' : (value > 0 ? 'gp' : 'neg')}">${fmtMoney(value)}</td>
-          </tr></tfoot>
-        </table>
-      </div>`;
+          </tr>`,
+      })}`;
     commit.disabled = false;
 
     sheet.querySelectorAll('.st-count').forEach((inp) => {
@@ -355,21 +351,17 @@ export function labelsModal({ products, storeName }) {
 
   function render() {
     const rows = shown().slice(0, 60);
-    list.innerHTML = rows.length ? `
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>Item</th><th>Code</th><th class="num">Price</th><th class="num">Labels</th></tr></thead>
-          <tbody>
+    list.innerHTML = rows.length ? dataTable({
+          head: [{ label: 'Item' }, { label: 'Code' }, { label: 'Price', num: true }, { label: 'Labels', num: true }],
+          bodyHtml: `
             ${rows.map((p) => `
               <tr>
                 <td>${esc(p.name)}</td>
                 <td>${esc(labelCode(p))}</td>
                 <td class="num">${fmtMoney(p.retailPrice)}</td>
                 <td class="num"><input class="field lb-qty" data-id="${esc(p.id)}" type="number" inputmode="numeric" min="0" max="200" step="1" value="${qty[p.id] || 0}"></td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`
+              </tr>`).join('')}`,
+        })
       : emptyState({ icon: '🏷', title: 'Nothing to label', body: 'Only products with a UPC or SKU can carry a barcode.' });
 
     list.querySelectorAll('.lb-qty').forEach((inp) => {
@@ -443,11 +435,13 @@ export function reorderModal() {
   let data = null;
 
   function tableHtml(items) {
-    return `
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>Item</th><th>Supplier</th><th class="num">On hand</th><th class="num">Sold</th><th class="num">Cover</th><th class="num">Order</th><th class="num">Est. cost</th></tr></thead>
-          <tbody>
+    return dataTable({
+          head: [
+            { label: 'Item' }, { label: 'Supplier' }, { label: 'On hand', num: true },
+            { label: 'Sold', num: true }, { label: 'Cover', num: true },
+            { label: 'Order', num: true }, { label: 'Est. cost', num: true },
+          ],
+          bodyHtml: `
             ${items.map((it) => `
               <tr>
                 <td>${esc(it.name)}<br><span class="muted">${esc(it.sku || '')}</span></td>
@@ -457,15 +451,13 @@ export function reorderModal() {
                 <td class="num">${it.daysOfCover == null ? '—' : it.daysOfCover + 'd'}</td>
                 <td class="num"><strong>${it.suggested}</strong></td>
                 <td class="num">${fmtMoney(it.lineCost)}</td>
-              </tr>`).join('')}
-          </tbody>
-          <tfoot><tr>
+              </tr>`).join('')}`,
+          footHtml: `<tr>
             <td colspan="5">${items.length} line${items.length === 1 ? '' : 's'}</td>
             <td class="num">${items.reduce((n, x) => n + x.suggested, 0)}</td>
             <td class="num">${fmtMoney(items.reduce((n, x) => n + x.lineCost, 0))}</td>
-          </tr></tfoot>
-        </table>
-      </div>`;
+          </tr>`,
+        });
   }
 
   async function run() {
@@ -481,11 +473,11 @@ export function reorderModal() {
         return;
       }
       body.innerHTML = `
-        <div class="stat-row">
-          <div class="stat"><span>Lines</span><strong>${data.summary.lines}</strong></div>
-          <div class="stat"><span>Units</span><strong>${data.summary.units}</strong></div>
-          <div class="stat"><span>Est. cost</span><strong>${fmtMoney(data.summary.cost)}</strong></div>
-        </div>
+        ${statRow([
+          { label: 'Lines', value: data.summary.lines },
+          { label: 'Units', value: data.summary.units },
+          { label: 'Est. cost', value: fmtMoney(data.summary.cost) },
+        ])}
         ${tableHtml(data.items)}`;
       csvBtn.disabled = false;
       printBtn.disabled = false;

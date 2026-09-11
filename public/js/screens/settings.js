@@ -3,6 +3,7 @@
 /* Settings: session, sync health, server endpoint, sign out. */
 
 import { idb } from '../db.js';
+import { screenHead } from '../components.js';
 import { api } from '../api.js';
 import { esc, toast, beep, fmt, denomLabel } from '../ui.js';
 import { openModal, closeModal } from '../ui.js';
@@ -28,12 +29,7 @@ export const screen = {
     }
 
     root.innerHTML = `
-      <header class="scr-head">
-        <div class="scr-title">
-          <h2>Settings</h2>
-          <p>Terminal &amp; account</p>
-        </div>
-      </header>
+      ${screenHead({ title: 'Settings', sub: 'Terminal & account' })}
 
       <section class="set-card">
         <div class="set-user">
