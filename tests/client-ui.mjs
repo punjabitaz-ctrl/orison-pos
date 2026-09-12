@@ -251,3 +251,39 @@ describe('dialog wiring (v1.33.0 regression guard)', async () => {
     assert.deepEqual(offenders, []);
   });
 });
+
+describe('offline shell (v1.34.0 regression guard)', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+
+  it('precaches every module the app can import', () => {
+    // Activating a new service worker deletes the old cache, and the new one
+    // holds only SHELL. A module that is imported but not listed is missing
+    // offline, the import fails, and the till does not start - exactly when
+    // offline-first is supposed to matter. repairs.js shipped in v1.31.0
+    // without being listed.
+    const pub = path.join(process.cwd(), 'public');
+    const sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8');
+    const shell = new Set([...sw.matchAll(/'\.\/([^']+)'/g)].map((m) => m[1]));
+
+    const seen = new Set();
+    const walk = (rel) => {
+      if (seen.has(rel)) return;
+      seen.add(rel);
+      const src = fs.readFileSync(path.join(pub, rel), 'utf8');
+      const specs = [
+        ...[...src.matchAll(/\bfrom\s+'(\.{1,2}\/[^']+)'/g)].map((m) => m[1]),
+        ...[...src.matchAll(/\bimport\(\s*'(\.{1,2}\/[^']+)'\s*\)/g)].map((m) => m[1]),
+      ];
+      for (const spec of specs) {
+        const next = path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec));
+        walk(next);
+      }
+    };
+    walk('js/app.js');
+    walk('js/display.js');
+
+    const missing = [...seen].filter((f) => !shell.has(f)).sort();
+    assert.deepEqual(missing, []);
+  });
+});
