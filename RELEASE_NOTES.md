@@ -7,7 +7,37 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.31.0 — repair tickets
+## Latest: v1.32.0 — repair deposits and collection
+
+**2026-09-12.** Repairs can now take money.
+
+- **Take a deposit** at the counter — held against the job, not counted as a
+  sale.
+- **Collect & charge** turns the job into a real sale with a receipt number.
+  The deposit comes off automatically; the customer pays the balance by cash
+  or card.
+- **Give a deposit back** — managers and admins, in full or in part.
+- **Deposits held** now shows in reports, the day export and the emailed
+  report, so the owner can see what the shop is holding for customers.
+
+**Seven ways a deposit would have gone wrong, caught before release.** The
+biggest: a terminal could push a sale "paid" by deposit and walk goods out
+with nothing in the drawer; shifts would have closed over by every deposit
+taken; the export counted deposits as sales; and the dashboard's "Net revenue
+today" would have shown them as revenue. Each was reproduced by a failing test
+first. Full list in the CHANGELOG.
+
+**Validation:** backend-sim **PASS 705 / FAIL 0** (64 new) · client units
+**PASS 363 / FAIL 0** (4 new). Collect flow verified in-browser: a job of
+159.50 including tax, less a 50.00 deposit, quotes and charges 109.50.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.31.0 — repair tickets
 
 **2026-09-12.** The shop takes repairs in every day and the POS never knew
 about them. That was the largest remaining hole in the stock figure.

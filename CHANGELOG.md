@@ -5,6 +5,75 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.32.0] — 2026-09-12
+
+Repair deposits and collection. The money half of repairs, and the reason it
+was split from v1.31.0: a deposit is cash in the drawer that is **not earned
+revenue**, and almost every place the code classified money would have counted
+it as a sale.
+
+### Added
+
+- **Take a deposit** when a device is booked in — cash, card or transfer.
+  Written as a `deposit` ledger row: drawer cash, never sales.
+- **Collect & charge.** The job is invoiced as a real sale for its full value
+  (parts at the cost captured when fitted, labour, tax), with an `Orison-S`
+  receipt number. The deposit held is applied as a `deposit` tender that the
+  **server** adds — a client-supplied one is refused — and the customer pays
+  the balance. The screen quotes the balance from the same function that
+  charges it, so the two cannot drift.
+- **Give a deposit back** (manager/admin), in full or in part, with a reason.
+  Written as a `deposit_refund`: drawer cash out.
+- **Deposits held** — the liability — in reports, the Drive export and the
+  emailed scheduled report. Read from the tickets, because a balance is not
+  something you sum over a date range.
+
+### Fixed before it could ship
+
+Each was found by reading the code before building, reproduced by a failing
+test, then fixed:
+
+- **A device could push a sale "paid" with a deposit tender.** It was accepted,
+  took the stock off the shelf, and put nothing in the drawer. A pushed row of
+  kind `deposit` fell through to the sale path and became a numbered sale.
+  Deposit kinds are now server-only and a `deposit` tender is refused from any
+  device.
+- **The drawer ignored deposit cash.** A shift with a repair deposit would have
+  closed over by the deposit amount.
+- **The day export folded deposits into SALES** through a catch-all branch
+  (`else if (k !== 'purchase') sales += v`).
+- **History would have shown every deposit as a "Sale"** and printed it as a
+  sale receipt: `kindInfo()` falls back to Sale for any kind it does not list.
+- **"Net revenue today" would have counted deposits as revenue** — and deposit
+  refunds as revenue too, with the wrong sign.
+- **The screen would have quoted the wrong balance on a taxed store**, because
+  the ticket total excluded tax while collection charged it.
+- **Repair labour showed as a nameless "Item"** in the product breakdown.
+
+### Rules
+
+- Collection writes its sale directly under the lock, **not** through
+  `/api/sync/push` — the sync sale path takes stock off the shelf, and the
+  parts already left when they were fitted. A test pins that collection moves
+  no stock.
+- A deposit larger than the job must be refunded down before collecting.
+- A ticket holding a deposit cannot be voided; that would orphan the liability.
+
+### Known limits
+
+- Refunding a repair invoice uses the normal refund screen: part lines refund
+  and restock, but an ad-hoc labour line is rejected as `unknown_product`.
+  Repair refunds are a warranty/rework policy and belong with warranty tracking.
+- "Net revenue today" already counted collections (payments against account
+  sales) as revenue before this release. Spotted while mapping deposits; not
+  changed here.
+
+### Tests
+
+64 new sim checks and 4 new client units. The endpoint tests were written after
+the endpoints, so the two key guards were deliberately mutated out and the suite
+re-run — both mutants were caught. Backend **705 / 0**, client **363 / 0**.
+
 ## [1.31.0] — 2026-09-12
 
 Repairs. The largest remaining hole in the stock figure: a screen fitted to a

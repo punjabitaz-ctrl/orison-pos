@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.31.0** — repair tickets (`2026-09-12`) |
-| Validation bar | `backend-sim` **PASS 641 / FAIL 0** · client units **PASS 359 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.32.0** — repair deposits and collection (`2026-09-12`) |
+| Validation bar | `backend-sim` **PASS 705 / FAIL 0** · client units **PASS 363 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~5,110 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,16 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.32.0** Repair deposits and collection. `deposit` / `deposit_refund`
+  ledger kinds (server-only) and a server-applied `deposit` tender. **Collection
+  writes its sale directly under the lock, not via `/api/sync/push`**, because
+  the sync sale path decrements stock and the parts already left at fitting.
+  `repairInvoice_` prices a ticket for both the detail quote and the charge.
+  Deposits held is point-in-time from the `Repairs` sheet. Fixed before shipping:
+  forged deposit tenders/kinds via sync push, drawer ignoring deposit cash,
+  export folding deposits into SALES, `kindInfo()` showing deposits as Sales,
+  `signedNet()` counting them as revenue, untaxed balance quote, labour as
+  "Item". 64 new sim checks, 4 new client units.
 - **v1.31.0** Repair tickets. Device intake (make/model/IMEI/fault/condition/
   accessories, **no passcode field** - the Sheet is copied nightly to Drive),
   `Orison-R000001` sequential ticket numbers, a guarded status flow, and a
@@ -365,7 +375,7 @@ admin/manager.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **641 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **705 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -375,7 +385,7 @@ admin/manager.
   the guards that now read under the lock).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  **359 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  **363 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
   ui `fmt`/`esc`/`debounce`/`csvCell`/`emptyState`/`skeleton`, (v1.15.0)
@@ -466,7 +476,7 @@ The approved roadmap (v1.8–v1.16), the interface-v2 rebuild (v1.17–v1.20) an
 the operational-readiness program (v1.21–v1.30) are all complete. What is left
 is below, in the order it should be picked up.
 
-1. **Deploy v1.31.0 — both halves.** The backend has changed in nearly every
+1. **Deploy v1.32.0 — both halves.** The backend has changed in nearly every
    release since v1.16.0, so a frontend-only push ships a client that calls
    endpoints the server does not have.
    - Paste `backend/Code.gs` into Apps Script and **deploy a new Web App
@@ -477,18 +487,14 @@ is below, in the order it should be picked up.
    - Run **`installReportTriggers()`** once, then set recipients in
      Settings → *Scheduled reports*. **Every cadence ships off**; nobody
      starts receiving mail because a release landed.
-   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.31.0 shell
+   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.32.0 shell
      on next load (`sw.js` VERSION is bumped).
    - Sign in as an admin once and complete the store setup dialog (language,
      country, currency) if this is a fresh deployment.
-2. **v1.32.0 — repair deposits and collection.** Designed and specced
-   (`docs/superpowers/specs/2026-09-12-repairs-design.md`), not built. A deposit
-   is cash in the drawer that is **not earned revenue**, so it gets the card-
-   tender treatment from v1.29.0: a `deposit` ledger kind that counts toward the
-   drawer but never toward sales, a `deposit` **tender** applied at collection
-   so the same pound never touches the drawer twice, an admin/manager-gated
-   `deposit_refund`, and a deposits-held liability figure in reports and the
-   export. v1.31.0's `collected` guard stays until this lands.
+2. **Repairs follow-ups, unscheduled.** Warranty per serial (cheap now that
+   fitted serials point at their invoice), and a repair-refund policy — today
+   a labour line cannot be refunded through the normal refund screen because
+   it has no product row. Both need an owner decision on warranty terms.
 3. **Cash drawer + thermal printer — v1.28.0, parked.** Held at the owner's
    request until they speak to the business owners. **The version number is
    deliberately left unused** so the release can land under it. It is blocked
