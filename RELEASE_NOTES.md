@@ -7,7 +7,32 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.32.0 — repair deposits and collection
+## Latest: v1.33.0 — no refunds on services, and refunds that work
+
+**2026-09-12.**
+
+- **Services are not refunded.** Phone setup, repair labour and any other
+  service line is locked in the refund picker, and the server refuses it too.
+- **Refunds work again for everyday stock.** Cables, cases, chargers — anything
+  without a serial number — could not be refunded: the total stayed at zero and
+  Confirm never enabled.
+- **Five dead buttons fixed:** Refund in History; Collect payment, Statement,
+  Print and CSV in Customers.
+- **Dialogs no longer close when you tap inside them.**
+
+The last three were in the code from the very first version. None was ever
+live, since nothing from this rebuild has been deployed.
+
+**Validation:** backend-sim **PASS 710 / FAIL 0** · client units **PASS 370 /
+FAIL 0**. Verified in-browser.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.32.0 — repair deposits and collection
 
 **2026-09-12.** Repairs can now take money.
 

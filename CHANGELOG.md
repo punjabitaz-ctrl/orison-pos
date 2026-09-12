@@ -5,6 +5,38 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.0] — 2026-09-12
+
+### Changed
+
+- **Services are not refunded.** Owner decision. The server refuses any refund
+  that includes a service product or repair labour, before anything else and as
+  a whole, with the reason `service_not_refundable`. Before this, refunding a
+  phone-setup service was accepted and issued a receipt number. The refund
+  picker still lists service lines so the whole sale is visible, but locks them.
+
+### Fixed
+
+Three defects found while wiring that change, all present since the first
+commit and all in screens the backend tests cannot see:
+
+- **Items without a serial number could not be refunded from the screen.** The
+  refund total used a dangling `else` that bound to the serial check, so plain
+  items never counted: selecting two cables left the total at 0 and Confirm
+  disabled. A mixed refund showed 400 while actually refunding 425.
+- **Five buttons did nothing:** Refund in History; Collect payment and
+  Statement on a customer; Print and CSV on a statement. Each dialog looked for
+  the backdrop from inside it, got nothing, and threw before those buttons were
+  wired.
+- **Tapping anywhere inside those dialogs closed them** — including tapping
+  the customer's name, or a refund quantity button.
+
+### Tests
+
+4 new sim checks, 7 new client units, including a guard that keeps both dialog
+patterns out of every screen. Backend **710 / 0**, client **370 / 0**. Every
+flow verified in-browser against current code with the service worker cleared.
+
 ## [1.32.0] — 2026-09-12
 
 Repair deposits and collection. The money half of repairs, and the reason it
