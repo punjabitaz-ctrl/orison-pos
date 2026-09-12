@@ -105,6 +105,9 @@ function dispatch_(action, session, payload, params) {
     case '/api/repairs/labour':  return repairLabour_(session, payload);
     case '/api/repairs/status':  return repairStatus_(session, payload);
     case '/api/repairs/void':    return repairVoid_(session, payload);
+    case '/api/repairs/deposit': return repairDeposit_(session, payload);
+    case '/api/repairs/collect': return repairCollect_(session, payload);
+    case '/api/repairs/deposit-refund': return repairDepositRefund_(session, payload);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
@@ -4502,6 +4505,7 @@ function repairVoid_(session, payload) {
     if (!row) throw statusError_(404, 'Repair not found');
     if (String(row.status) === 'voided') throw statusError_(409, 'Already voided');
     if (String(row.invoice_tx_id || '')) throw statusError_(409, 'This ticket has been invoiced - refund it instead');
+    if (cents_(row.deposit_total) > 0) throw statusError_(409, 'A deposit is held on this ticket - give it back before voiding');
 
     var stamp = new Date().toISOString();
     var back = repairReturnParts_(row, stamp);
@@ -4518,6 +4522,263 @@ function repairVoid_(session, payload) {
       String(row.ticket_no || '') + ' voided: ' + reason
       + (back.returned ? ' (' + back.returned + ' part(s) returned)' : ''), '');
     return { id: id, voided: true, returned: back.returned };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Repair money (v1.32.0)
+ *
+ *  A deposit is cash in the drawer that is NOT earned revenue. So:
+ *    - taking one writes a 'deposit' row: drawer cash, never sales;
+ *    - collecting the job writes a real 'sale' for the full value and
+ *      settles part of it with a 'deposit' tender, which is money but not
+ *      drawer cash at that moment - it arrived earlier;
+ *    - giving one back writes a 'deposit_refund' row: drawer cash out.
+ *  Cash touches the drawer exactly once.
+ *
+ *  None of this goes through /api/sync/push. The sale path there takes
+ *  stock off the shelf, and a repair's parts already left when they were
+ *  fitted - routing collection through it would remove them twice.
+ * ------------------------------------------------------------------ */
+
+var DEPOSIT_TENDER_TYPES = { cash: 1, card: 1, transfer: 1 };
+
+function tenderCents_(tenders) {
+  var c = 0;
+  for (var i = 0; i < tenders.length; i++) c += cents_(tenders[i].amount);
+  return c;
+}
+
+function cleanTenders_(raw, fallbackAmount) {
+  var list = Array.isArray(raw) ? raw : [];
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var t = list[i] || {};
+    var amt = round2_(num_(t.amount));
+    if (!(amt > 0)) continue;
+    out.push({ type: String(t.type || 'cash'), amount: amt });
+  }
+  if (!out.length && fallbackAmount > 0) out.push({ type: 'cash', amount: round2_(fallbackAmount) });
+  return out;
+}
+
+function repairDeposit_(session, payload) {
+  requireRole_(session, REPAIR_ROLES_ANY);
+  var id = String((payload || {}).id || '');
+  var amount = round2_(num_((payload || {}).amount));
+  if (!(amount > 0)) throw statusError_(400, 'A deposit has to be more than nothing');
+
+  var tenders = cleanTenders_(payload.tenders, amount);
+  for (var i = 0; i < tenders.length; i++) {
+    if (!DEPOSIT_TENDER_TYPES[tenders[i].type]) {
+      throw statusError_(400, 'A deposit is taken in cash, by card or by transfer');
+    }
+  }
+  if (tenderCents_(tenders) !== cents_(amount)) throw statusError_(400, 'The payment does not add up to the deposit');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = repairFind_(id);
+    if (!row) throw statusError_(404, 'Repair not found');
+    if (REPAIR_TERMINAL[String(row.status)]) throw statusError_(409, 'This ticket is closed');
+
+    var store = getStore_();
+    var now = new Date().toISOString();
+    var txId = Utilities.getUuid();
+    appendRows_('Transactions', TX_HEADERS, [{
+      id: txId, store_id: store.id, user_id: String(session.uid || ''), device_id: 'server',
+      client_tx_id: 'rdep-' + txId.slice(0, 8), kind: 'deposit', original_client_tx: '',
+      counterparty: String(row.ticket_no || ''), grand_total: amount, status: 'COMPLETED',
+      tenders_json: JSON.stringify(tenders), items_json: '[]',
+      note: 'Deposit on ' + String(row.ticket_no || ''), created_at: now,
+      subtotal: '', tax_amount: '', discount_pct: '', customer_id: String(row.customer_id || ''),
+      receipt_no: '', channel: 'in_store', external_ref: String(row.ticket_no || ''),
+    }]);
+    var held = round2_(num_(row.deposit_total) + amount);
+    applyPatches_('Repairs', REPAIR_HEADERS, 'id', { [id]: { deposit_total: held, updated_at: now } });
+    logAudit_(session, 'repair.deposit', 'repair', id,
+      'Deposit ' + amount.toFixed(2) + ' on ' + String(row.ticket_no || '') + ' (held ' + held.toFixed(2) + ')', '');
+    return { id: id, transactionId: txId, amount: amount, depositTotal: held };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* Build the invoice lines from what is on the ticket. Parts carry the cost
+ * captured when they were fitted, so gross profit is the profit on the job. */
+function repairInvoiceItems_(row, prodById) {
+  var items = [];
+  var parts = itobjs_(row.parts_json);
+  var labour = itobjs_(row.labour_json);
+  var i;
+  for (i = 0; i < parts.length; i++) {
+    var p = parts[i];
+    var prod = prodById[String(p.productId)];
+    var it = {
+      productId: String(p.productId), name: String(p.name || (prod ? prod.name : 'Part')),
+      quantity: Math.max(1, num_(p.quantity) || 1), unitPrice: round2_(num_(p.unitPrice)),
+      serialNumber: p.serialNumber ? String(p.serialNumber) : null,
+    };
+    if (prod && String(prod.taxable) === '0') it.taxable = false;
+    var uc = round2_(num_(p.unitCost));
+    if (uc > 0) it.unitCost = uc;
+    items.push(it);
+  }
+  for (i = 0; i < labour.length; i++) {
+    var l = labour[i];
+    var lp = prodById[String(l.productId || '')];
+    var li = {
+      productId: lp ? String(lp.id) : 'repair-labour',
+      name: String(l.description || 'Repair labour'),
+      quantity: 1, unitPrice: round2_(num_(l.amount)), serialNumber: null,
+      category: 'Repairs',
+    };
+    if (lp && String(lp.taxable) === '0') li.taxable = false;
+    items.push(li);
+  }
+  return items;
+}
+
+function repairCollect_(session, payload) {
+  requireRole_(session, REPAIR_ROLES_ANY);
+  var id = String((payload || {}).id || '');
+  var raw = Array.isArray((payload || {}).tenders) ? payload.tenders : [];
+  if (hasDepositTender_(raw)) throw statusError_(400, 'The deposit is applied automatically');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = repairFind_(id);
+    if (!row) throw statusError_(404, 'Repair not found');
+    if (REPAIR_TERMINAL[String(row.status)]) throw statusError_(409, 'This ticket is closed');
+
+    var prodRows = readRows_('Products', PRODUCT_HEADERS);
+    var prodById = {};
+    for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
+
+    var items = repairInvoiceItems_(row, prodById);
+    if (!items.length) throw statusError_(409, 'There is nothing on this ticket to charge for');
+
+    var store = getStore_();
+    var totals = saleTotals_(items.map(function (it) {
+      return { unitPrice: it.unitPrice, quantity: it.quantity, discountPct: 0, taxable: it.taxable !== false };
+    }), 0, num_(store.taxRate));
+    var totalC = totals.grandC;
+    var heldC = cents_(row.deposit_total);
+
+    /* A deposit bigger than the job would leave the ledger holding money that
+       no longer secures anything. Give the difference back first. */
+    if (heldC > totalC) {
+      throw statusError_(409, 'The deposit is more than the job. Refund the difference before collecting.');
+    }
+    var balanceC = totalC - heldC;
+    var tenders = cleanTenders_(raw, 0);
+    if (tenderCents_(tenders) !== balanceC) {
+      throw statusError_(400, 'Payment must cover the balance of ' + (balanceC / 100).toFixed(2));
+    }
+    if (heldC > 0) tenders.push({ type: 'deposit', amount: heldC / 100 });
+
+    var now = new Date().toISOString();
+    var txId = Utilities.getUuid();
+    var receiptNo = reserveReceiptNumbers_(1)[0];
+    appendRows_('Transactions', TX_HEADERS, [{
+      id: txId, store_id: store.id, user_id: String(session.uid || ''), device_id: 'server',
+      client_tx_id: 'rcol-' + txId.slice(0, 8), kind: 'sale', original_client_tx: '',
+      counterparty: '', grand_total: totals.total, status: 'COMPLETED',
+      tenders_json: JSON.stringify(tenders), items_json: JSON.stringify(items),
+      note: 'Repair ' + String(row.ticket_no || '') + ' collected', created_at: now,
+      subtotal: totals.subtotal, tax_amount: totals.tax, discount_pct: 0,
+      customer_id: String(row.customer_id || ''), receipt_no: receiptNo,
+      channel: 'in_store', external_ref: String(row.ticket_no || ''),
+    }]);
+
+    /* The serials were marked SOLD against the ticket when fitted. Point them at
+       the invoice so a later refund of that line finds a consistent record.
+       No stock moves here: it already moved at the bench. */
+    var parts = itobjs_(row.parts_json);
+    var serialPatches = {};
+    var productPatches = {};
+    if (parts.length) {
+      var serialRows = readRows_('Serials', SERIAL_HEADERS);
+      for (var i = 0; i < parts.length; i++) {
+        var pp = parts[i];
+        if (prodById[String(pp.productId)]) {
+          productPatches[String(pp.productId)] = { last_sold_at: now, updated_at: now };
+        }
+        if (!pp.serialNumber) continue;
+        for (var s = 0; s < serialRows.length; s++) {
+          if (String(serialRows[s].serial_number) === String(pp.serialNumber)
+            && String(serialRows[s].product_id) === String(pp.productId)
+            && String(serialRows[s].tx_id) === 'repair:' + id) {
+            serialPatches[String(serialRows[s].id)] = { tx_id: txId, updated_at: now };
+            break;
+          }
+        }
+      }
+    }
+    if (Object.keys(serialPatches).length) applyPatches_('Serials', SERIAL_HEADERS, 'id', serialPatches);
+    if (Object.keys(productPatches).length) applyPatches_('Products', PRODUCT_HEADERS, 'id', productPatches);
+
+    applyPatches_('Repairs', REPAIR_HEADERS, 'id', {
+      [id]: {
+        status: 'collected', final_total: totals.total, invoice_tx_id: txId,
+        deposit_total: 0, closed_at: now, updated_at: now,
+      },
+    });
+    logAudit_(session, 'repair.collected', 'repair', id,
+      String(row.ticket_no || '') + ' collected on ' + receiptNo + ': ' + totals.total.toFixed(2)
+      + (heldC ? ' (deposit ' + (heldC / 100).toFixed(2) + ' applied)' : ''), '');
+
+    return {
+      id: id, transactionId: txId, receiptNo: receiptNo, total: totals.total,
+      depositApplied: heldC / 100, balance: balanceC / 100, tenders: tenders,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function repairDepositRefund_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  var id = String((payload || {}).id || '');
+  var reason = String((payload || {}).reason || '').trim().slice(0, 200);
+  if (!reason) throw statusError_(400, 'Giving a deposit back needs a reason');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = repairFind_(id);
+    if (!row) throw statusError_(404, 'Repair not found');
+    if (String(row.status) === 'collected') throw statusError_(409, 'This job has been collected - refund the invoice instead');
+    var heldC = cents_(row.deposit_total);
+    if (heldC <= 0) throw statusError_(409, 'There is no deposit held on this ticket');
+
+    var wantC = payload.amount === undefined || payload.amount === null || payload.amount === ''
+      ? heldC : cents_(payload.amount);
+    if (wantC <= 0) throw statusError_(400, 'A refund has to be more than nothing');
+    if (wantC > heldC) throw statusError_(400, 'That is more than the deposit held');
+    var amount = wantC / 100;
+
+    var store = getStore_();
+    var now = new Date().toISOString();
+    var txId = Utilities.getUuid();
+    appendRows_('Transactions', TX_HEADERS, [{
+      id: txId, store_id: store.id, user_id: String(session.uid || ''), device_id: 'server',
+      client_tx_id: 'rdrf-' + txId.slice(0, 8), kind: 'deposit_refund', original_client_tx: '',
+      counterparty: String(row.ticket_no || ''), grand_total: amount, status: 'COMPLETED',
+      tenders_json: JSON.stringify([{ type: 'cash', amount: amount }]), items_json: '[]',
+      note: 'Deposit refund on ' + String(row.ticket_no || '') + ': ' + reason, created_at: now,
+      subtotal: '', tax_amount: '', discount_pct: '', customer_id: String(row.customer_id || ''),
+      receipt_no: '', channel: 'in_store', external_ref: String(row.ticket_no || ''),
+    }]);
+    var left = (heldC - wantC) / 100;
+    applyPatches_('Repairs', REPAIR_HEADERS, 'id', { [id]: { deposit_total: left, updated_at: now } });
+    logAudit_(session, 'repair.deposit_refund', 'repair', id,
+      'Refunded ' + amount.toFixed(2) + ' deposit on ' + String(row.ticket_no || '') + ': ' + reason, '');
+    return { id: id, transactionId: txId, amount: amount, depositTotal: left };
   } finally {
     lock.releaseLock();
   }

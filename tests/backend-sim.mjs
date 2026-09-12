@@ -3610,6 +3610,98 @@ check('statement carries the changer/cashier',
   }, { session: dpAdm });
   check('nor a deposit refund, even as an admin',
     forgedRefund.data.results[0].accepted === false, JSON.stringify(forgedRefund.data.results[0]));
+
+  /* clean arithmetic for the money checks */
+  req('/api/admin/store', { taxRate: 0 }, { session: dpAdm });
+
+  const dpT = req('/api/repairs', {
+    customerName: 'Nadia Rahman', customerPhone: '07700 900321',
+    deviceMake: 'Google', deviceModel: 'Pixel 7', reportedFault: 'Cracked screen',
+  }, { session: dpCash }).data;
+
+  /* ---- Task 2: take a deposit ---- */
+  const dep = req('/api/repairs/deposit', { id: dpT.id, amount: 50 }, { session: dpCash });
+  check('a cashier can take a deposit', dep.ok === true, JSON.stringify(dep));
+  check('the ticket records the deposit held', dep.data.depositTotal === 50, String(dep.data.depositTotal));
+  check('a deposit of nothing is refused',
+    req('/api/repairs/deposit', { id: dpT.id, amount: 0 }, { session: dpCash }).status === 400);
+  check('a deposit cannot be taken on store credit',
+    req('/api/repairs/deposit', { id: dpT.id, amount: 10, tenders: [{ type: 'store_credit', amount: 10 }] }, { session: dpCash }).status === 400);
+  check('a deposit whose payment does not add up is refused',
+    req('/api/repairs/deposit', { id: dpT.id, amount: 10, tenders: [{ type: 'cash', amount: 7 }] }, { session: dpCash }).status === 400);
+  check('taking a deposit is audited',
+    req('/api/audit', {}, { session: dpAdm, params: { action: 'repair.deposit' } }).data.entries.length === 1);
+
+  const depRow = req('/api/transactions', {}, { session: dpAdm, params: { q: dpT.ticketNo } }).data.transactions
+    .find((t) => t.kind === 'deposit');
+  check('the deposit is in the ledger as a deposit, not a sale', !!depRow, 'no deposit row');
+  check('a deposit is not a numbered customer document', depRow && !depRow.receiptNo, depRow && depRow.receiptNo);
+
+  /* ---- Task 3: collect ---- */
+  req('/api/repairs/parts', { id: dpT.id, add: [{ productId: dpScreen, quantity: 1, unitPrice: 100 }] }, { session: dpCash });
+  req('/api/repairs/labour', { id: dpT.id, add: { description: 'Screen fit', amount: 45 } }, { session: dpCash });
+  const dpShelfBeforeCollect = dpOnHand('DP-SCR');
+
+  check('collection refuses a payment that does not cover the balance',
+    req('/api/repairs/collect', { id: dpT.id, tenders: [{ type: 'cash', amount: 145 }] }, { session: dpCash }).status === 400);
+  check('collection refuses a client-supplied deposit tender',
+    req('/api/repairs/collect', { id: dpT.id, tenders: [{ type: 'deposit', amount: 50 }, { type: 'cash', amount: 95 }] }, { session: dpCash }).status === 400);
+
+  const col = req('/api/repairs/collect', { id: dpT.id, tenders: [{ type: 'cash', amount: 95 }] }, { session: dpCash });
+  check('a job is collected when the balance is paid', col.ok === true, JSON.stringify(col));
+  check('the invoice is for the whole job', col.data.total === 145, String(col.data.total));
+  check('the deposit is applied against it', col.data.depositApplied === 50 && col.data.balance === 95, JSON.stringify(col.data));
+  check('the invoice is a numbered receipt', /^Orison-S[0-9]{6}$/.test(col.data.receiptNo), col.data.receiptNo);
+  check('the server added the deposit tender itself',
+    col.data.tenders.some((t) => t.type === 'deposit' && t.amount === 50), JSON.stringify(col.data.tenders));
+  check('collecting takes nothing off the shelf a second time',
+    dpOnHand('DP-SCR') === dpShelfBeforeCollect, String(dpOnHand('DP-SCR')));
+
+  const dpDet = req('/api/repairs/detail', {}, { session: dpCash, params: { id: dpT.id } }).data;
+  check('the ticket is now collected', dpDet.status === 'collected', dpDet.status);
+  check('it points at its invoice', dpDet.invoiceTxId === col.data.transactionId);
+  check('and no longer holds a deposit', dpDet.depositTotal === 0, String(dpDet.depositTotal));
+  check('a collected job cannot be collected again',
+    req('/api/repairs/collect', { id: dpT.id, tenders: [] }, { session: dpCash }).status === 409);
+  check('a collected job cannot be voided',
+    req('/api/repairs/void', { id: dpT.id, reason: 'x' }, { session: dpAdm }).status === 409);
+
+  const dpEmpty = req('/api/repairs', { customerName: 'E', deviceMake: 'X', reportedFault: 'y' }, { session: dpCash }).data;
+  check('an empty ticket cannot be collected',
+    req('/api/repairs/collect', { id: dpEmpty.id, tenders: [] }, { session: dpCash }).status === 409);
+
+  /* a deposit bigger than the job */
+  const dpBig = req('/api/repairs', { customerName: 'Over', deviceMake: 'Apple', reportedFault: 'Button' }, { session: dpCash }).data;
+  req('/api/repairs/labour', { id: dpBig.id, add: { description: 'Button clean', amount: 20 } }, { session: dpCash });
+  req('/api/repairs/deposit', { id: dpBig.id, amount: 60 }, { session: dpCash });
+  check('a deposit larger than the job must be refunded down before collecting',
+    req('/api/repairs/collect', { id: dpBig.id, tenders: [] }, { session: dpCash }).status === 409);
+
+  /* ---- Task 4: refund a deposit ---- */
+  check('a cashier cannot give a deposit back',
+    req('/api/repairs/deposit-refund', { id: dpBig.id, amount: 40, reason: 'over' }, { session: dpCash }).status === 403);
+  check('a refund needs a reason',
+    req('/api/repairs/deposit-refund', { id: dpBig.id, amount: 40 }, { session: dpMgr }).status === 400);
+  check('a refund cannot exceed what is held',
+    req('/api/repairs/deposit-refund', { id: dpBig.id, amount: 61, reason: 'x' }, { session: dpMgr }).status === 400);
+  const dpPart = req('/api/repairs/deposit-refund', { id: dpBig.id, amount: 40, reason: 'Job cheaper than quoted' }, { session: dpMgr });
+  check('a manager can give part of a deposit back', dpPart.ok === true && dpPart.data.depositTotal === 20, JSON.stringify(dpPart));
+  const dpExact = req('/api/repairs/collect', { id: dpBig.id, tenders: [] }, { session: dpCash });
+  check('and then the job collects with the deposit covering it exactly',
+    dpExact.ok === true && dpExact.data.balance === 0, JSON.stringify(dpExact));
+
+  const dpVoidDep = req('/api/repairs', { customerName: 'Held', deviceMake: 'Sony', reportedFault: 'Speaker' }, { session: dpCash }).data;
+  req('/api/repairs/deposit', { id: dpVoidDep.id, amount: 25 }, { session: dpCash });
+  check('a ticket holding a deposit cannot be voided',
+    req('/api/repairs/void', { id: dpVoidDep.id, reason: 'mistake' }, { session: dpAdm }).status === 409);
+  req('/api/repairs/status', { id: dpVoidDep.id, status: 'cancelled' }, { session: dpCash });
+  const dpFull = req('/api/repairs/deposit-refund', { id: dpVoidDep.id, reason: 'Customer withdrew' }, { session: dpAdm });
+  check('a cancelled job gives its whole deposit back by default',
+    dpFull.ok === true && dpFull.data.amount === 25 && dpFull.data.depositTotal === 0, JSON.stringify(dpFull));
+  check('a ticket with nothing held refuses a refund',
+    req('/api/repairs/deposit-refund', { id: dpVoidDep.id, reason: 'again' }, { session: dpAdm }).status === 409);
+  check('a deposit refund is audited',
+    req('/api/audit', {}, { session: dpAdm, params: { action: 'repair.deposit_refund' } }).data.entries.length === 2);
 }
 
 
