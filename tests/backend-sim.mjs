@@ -3816,6 +3816,54 @@ check('statement carries the changer/cashier',
       .every((r) => typeof r.depositTotal === 'number'));
   req('/api/admin/store', { taxRate: 0 }, { session: dpAdm });
 }
+{
+  section('no refunds on services (v1.33.0)');
+
+  const svAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const svCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const svCashId = req('/api/admin/users/list', {}, { session: svAdm }).data.users
+    .find((u) => u.email === 'amara@example.com').id;
+
+  const svCable = req('/api/admin/products', {
+    name: 'SV Cable', sku: 'SV-CAB', category: 'SV', costPrice: 2, retailPrice: 10, onHand: 20,
+  }, { session: svAdm }).data.id;
+  const svSetup = req('/api/admin/products', {
+    name: 'SV Phone setup', sku: 'SV-SET', category: 'SV', costPrice: 0, retailPrice: 25, itemType: 'service',
+  }, { session: svAdm }).data.id;
+
+  req('/api/sync/push', {
+    deviceId: 'dev-sv',
+    batch: [{ clientTxId: 'tx-sv-sale', userId: svCashId, grandTotal: 45, createdAt: new Date().toISOString(),
+      tenders: [{ type: 'cash', amount: 45 }],
+      items: [{ productId: svCable, quantity: 2, unitPrice: 10 }, { productId: svSetup, quantity: 1, unitPrice: 25 }] }],
+  }, { session: svCash });
+
+  const svRefund = (clientTxId, items, total) => req('/api/sync/push', {
+    deviceId: 'dev-sv',
+    batch: [{ clientTxId, kind: 'refund', originalClientTx: 'tx-sv-sale', userId: svCashId, grandTotal: total,
+      createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: total }], items }],
+  }, { session: svAdm }).data.results[0];
+
+  const svOnlyService = svRefund('tx-sv-rf1', [{ productId: svSetup, quantity: 1, unitPrice: 25 }], 25);
+  check('a service line cannot be refunded', svOnlyService.accepted === false, JSON.stringify(svOnlyService));
+  check('and the reason says so, rather than a generic failure',
+    svOnlyService.conflicts.some((c) => c.reason === 'service_not_refundable'), JSON.stringify(svOnlyService.conflicts));
+
+  const svMixed = svRefund('tx-sv-rf2', [
+    { productId: svCable, quantity: 1, unitPrice: 10 },
+    { productId: svSetup, quantity: 1, unitPrice: 25 },
+  ], 35);
+  check('a refund that includes a service is refused whole, not partly applied',
+    svMixed.accepted === false, JSON.stringify(svMixed));
+
+  const svGoods = svRefund('tx-sv-rf3', [{ productId: svCable, quantity: 2, unitPrice: 10 }], 20);
+  check('goods on the same sale still refund normally', svGoods.accepted === true, JSON.stringify(svGoods));
+
+  const svLabour = svRefund('tx-sv-rf4', [{ productId: 'repair-labour', name: 'Screen fit', quantity: 1, unitPrice: 45 }], 45);
+  check('repair labour is a service and cannot be refunded',
+    svLabour.accepted === false && svLabour.conflicts.some((c) => c.reason === 'service_not_refundable'),
+    JSON.stringify(svLabour));
+}
 
 
 console.log('\n-------------------------------------');

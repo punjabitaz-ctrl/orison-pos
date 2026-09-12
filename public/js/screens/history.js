@@ -8,7 +8,7 @@ import { idb } from '../db.js';
 import { screenHead } from '../components.js';
 import { api } from '../api.js';
 import { fmt, esc, openModal, closeModal, toast, debounce } from '../ui.js';
-import { kindInfo, createRefund } from '../money.js';
+import { kindInfo, createRefund, refundGroups, refundTotal } from '../money.js';
 
 export const screen = {
   id: 'history',
@@ -187,8 +187,6 @@ export const screen = {
           <div id="txSend" class="receipt-send-host"></div>
         </div>`);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
-      modalEl.addEventListener('click', (e) => { if (e.target.classList.contains('modal-backdrop') || e.target.closest('[data-close]')) closeModal(); });
-      modalEl.parentElement.querySelector('.modal-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeModal(); });
 
       const refundBtn = modalEl.querySelector('#refundBtn');
       if (refundBtn) refundBtn.addEventListener('click', () => openRefundModal(t));
@@ -206,20 +204,13 @@ export const screen = {
       }
     }
 
-    function openRefundModal(t) {
-      const groups = [];
-      const byProduct = new Map();
-      for (const i of t.items || []) {
-        const key = String(i.productId || i.name || 'line');
-        const g = byProduct.get(key) || { productId: i.productId || '', name: i.name || 'Item', unitPrice: i.unitPrice || 0, serialized: !!i.productId && null, qty: 0, serials: [] };
-        g.serialized = g.serialized === null ? false : g.serialized;
-        if (!g.serialized && !i.serialNumber) g.serialized = false;
-        if (i.serialNumber) { g.serialized = true; g.serials.push(i.serialNumber); }
-        else { g.qty += i.quantity || 1; }
-        if (!byProduct.has(key)) byProduct.set(key, g);
-      }
-      groups.push(...byProduct.values());
-      groups.forEach((g) => { g.serials = [...new Set(g.serials)]; g.qtySel = g.serialized ? 0 : g.qty; });
+    async function openRefundModal(t) {
+      /* Services provided are not refunded. The picker still lists them so the
+         customer can see the whole sale, but they cannot be selected. */
+      const productsById = {};
+      for (const p of (await idb.getAll('products')) || []) productsById[String(p.id)] = p;
+      const groups = refundGroups(t.items || [], productsById);
+      const anyRefundable = groups.some((g) => g.refundable);
       const pickedSerial = new Set();
       let method = 'cash';
 
@@ -231,8 +222,13 @@ export const screen = {
           <h3>Refund</h3>
           <p class="muted">${esc(humanDate(t.createdAt))} · ${esc(t.receiptNo || t.clientTxId || t.id)}</p>
           <div class="refund-lines">
+            ${anyRefundable ? '' : '<p class="muted">Everything on this sale is a service, and services are not refunded.</p>'}
             ${groups.map((g, gi) => `
-              ${g.serialized ? `
+              ${!g.refundable ? `
+                <div class="rf-group rf-locked">
+                  <div>${esc(g.name)} <em>×${fmt(g.unitPrice)}</em></div>
+                  <span class="muted">Service — not refundable</span>
+                </div>` : g.serialized ? `
                 <div class="rf-group">
                   <div class="rf-gname">${esc(g.name)}</div>
                   ${g.serials.map((sn, si) => `
@@ -278,6 +274,7 @@ export const screen = {
       confirm.addEventListener('click', async () => {
         const items = [];
         groups.forEach((g, gi) => {
+          if (!g.refundable) return;
           if (g.serialized) {
             for (const sn of g.serials) if (pickedSerial.has(sn)) items.push({ productId: g.productId, name: g.name, quantity: 1, unitPrice: g.unitPrice, serialNumber: sn });
           } else if (g.qtySel > 0) {
@@ -297,15 +294,15 @@ export const screen = {
         }
       });
 
+      /* The total used to be computed with a dangling else that bound to the
+         serial check, so plain items never counted and Confirm stayed disabled.
+         refundTotal() is unit-tested for exactly that case. */
       function updateTotal() {
-        let total = 0;
-        groups.forEach((g) => {
-          if (g.serialized) for (const sn of g.serials) if (pickedSerial.has(sn)) total += g.unitPrice;
-          else total += g.unitPrice * g.qtySel;
-        });
-        modalEl.querySelector('#rf-total').textContent = fmt(Math.round(total * 100) / 100);
+        const total = refundTotal(groups, pickedSerial);
+        modalEl.querySelector('#rf-total').textContent = fmt(total);
         confirm.disabled = Math.round(total * 100) <= 0;
       }
+      updateTotal();
     }
 
     function txReceiptLines(t) {

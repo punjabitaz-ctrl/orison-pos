@@ -131,8 +131,6 @@ export const screen = {
           </div>
         </div>`);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
-      modalEl.addEventListener('click', (e) => { if (e.target.classList.contains('modal-backdrop') || e.target.closest('[data-close]')) closeModal(); });
-      modalEl.parentElement.querySelector('.modal-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeModal(); });
 
       const collectBtn = modalEl.querySelector('#collectBtn');
       if (collectBtn) collectBtn.addEventListener('click', () => openCollectModal(l));
@@ -180,8 +178,6 @@ export const screen = {
           </div>
         </div>`);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
-      modalEl.addEventListener('click', (e) => { if (e.target.classList.contains('modal-backdrop') || e.target.closest('[data-close]')) closeModal(); });
-      modalEl.parentElement.querySelector('.modal-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeModal(); });
 
       modalEl.querySelector('#stmtPrint').addEventListener('click', () => printStatement(s));
       modalEl.querySelector('#stmtCsv').addEventListener('click', () => statementCsv(s));

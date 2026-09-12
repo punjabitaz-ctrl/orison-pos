@@ -218,3 +218,36 @@ describe('denomLabel()', () => {
     assert.equal(denomLabel('abc'), '$0');
   });
 });
+
+describe('dialog wiring (v1.33.0 regression guard)', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+
+  it('no screen looks for the backdrop from the panel openModal returns', () => {
+    // openModal() returns the .modal panel, whose parent IS the backdrop, so
+    // `modalEl.parentElement.querySelector('.modal-backdrop')` searches inside
+    // the backdrop for itself, gets null, and throws - before the buttons below
+    // it are wired. Present since the first commit, it silently killed Refund in
+    // History and Collect / Statement / Print / CSV in Customers. armDialog
+    // already closes on a backdrop click, so the line was never needed.
+    const dir = path.join(process.cwd(), 'public', 'js', 'screens');
+    const offenders = fs.readdirSync(dir)
+      .filter((f) => f.endsWith('.js'))
+      .filter((f) => fs.readFileSync(path.join(dir, f), 'utf8')
+        .includes("parentElement.querySelector('.modal-backdrop')"));
+    assert.deepEqual(offenders, []);
+  });
+
+  it('no screen closes a dialog on a click anywhere inside it', () => {
+    // The backdrop carries data-close and CONTAINS the dialog, so
+    // `e.target.closest('[data-close]')` matches every click inside it: tapping
+    // a customer's name closed their ledger. armDialog closes on a click on the
+    // backdrop itself (e.target === el), which is the only click that should.
+    const dir = path.join(process.cwd(), 'public', 'js', 'screens');
+    const offenders = fs.readdirSync(dir)
+      .filter((f) => f.endsWith('.js'))
+      .filter((f) => fs.readFileSync(path.join(dir, f), 'utf8')
+        .includes("e.target.closest('[data-close]')"));
+    assert.deepEqual(offenders, []);
+  });
+});

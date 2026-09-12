@@ -346,3 +346,55 @@ describe('cash-out kinds (v1.19.0)', async () => {
     assert.equal(kindInfo('nonsense').label, 'Sale');
   });
 });
+
+describe('refund lines (v1.33.0)', async () => {
+  const { refundGroups, refundTotal, isServiceLine } = await import('../public/js/money.js');
+
+  const products = {
+    cable: { id: 'cable', itemType: 'product' },
+    phone: { id: 'phone', itemType: 'product', isSerialized: true },
+    setup: { id: 'setup', itemType: 'service' },
+  };
+  const sale = [
+    { productId: 'cable', name: 'USB-C cable', quantity: 3, unitPrice: 12.5 },
+    { productId: 'phone', name: 'Pixel 7', quantity: 1, unitPrice: 400, serialNumber: 'IMEI-1' },
+    { productId: 'setup', name: 'Phone setup', quantity: 1, unitPrice: 20 },
+    { productId: 'repair-labour', name: 'Screen fit', quantity: 1, unitPrice: 45 },
+  ];
+
+  it('knows a service product and repair labour are services', () => {
+    assert.equal(isServiceLine(sale[2], products.setup), true);
+    assert.equal(isServiceLine(sale[3], undefined), true, 'repair labour has no product row');
+    assert.equal(isServiceLine(sale[0], products.cable), false);
+  });
+
+  it('marks service lines as not refundable, and starts them unselected', () => {
+    const g = refundGroups(sale, products);
+    const setup = g.find((x) => x.productId === 'setup');
+    const labour = g.find((x) => x.productId === 'repair-labour');
+    assert.equal(setup.refundable, false);
+    assert.equal(labour.refundable, false);
+    assert.equal(setup.qtySel, 0);
+    assert.equal(labour.qtySel, 0);
+  });
+
+  it('counts items with no serial number toward the total', () => {
+    // The bug this replaces: a dangling else meant plain items never counted,
+    // so a refund of two cables totalled 0 and Confirm stayed disabled.
+    const g = refundGroups(sale, products);
+    g.find((x) => x.productId === 'cable').qtySel = 2;
+    assert.equal(refundTotal(g, new Set()), 25);
+  });
+
+  it('adds picked serials and plain items together', () => {
+    const g = refundGroups(sale, products);
+    g.find((x) => x.productId === 'cable').qtySel = 2;
+    assert.equal(refundTotal(g, new Set(['IMEI-1'])), 425);
+  });
+
+  it('never counts a service line, even if one is forced selected', () => {
+    const g = refundGroups(sale, products);
+    g.forEach((x) => { x.qtySel = x.qty; });
+    assert.equal(refundTotal(g, new Set(['IMEI-1'])), 37.5 + 400);
+  });
+});

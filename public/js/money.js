@@ -164,3 +164,59 @@ export async function createCollection({ customerId, grandTotal, method, note, u
   pushImmediate().catch(() => {});
   return clientTxId;
 }
+/* ---------- refund lines ---------- */
+
+/* Services provided are not refunded: the work was done. That covers service
+   products sold at the register and repair labour, which has no product row. */
+export function isServiceLine(item, product) {
+  if (item && String(item.productId || '') === 'repair-labour') return true;
+  return !!(product && product.itemType === 'service');
+}
+
+/* Group a sale's lines for the refund picker. Serialized lines are grouped by
+   product with their serials; plain lines sum their quantities. Service lines
+   are kept, so the customer can see them, but marked not refundable and never
+   pre-selected. */
+export function refundGroups(items, productsById) {
+  const byKey = new Map();
+  for (const i of items || []) {
+    const key = String(i.productId || i.name || 'line');
+    const product = productsById ? productsById[String(i.productId || '')] : undefined;
+    let g = byKey.get(key);
+    if (!g) {
+      g = {
+        productId: i.productId || '',
+        name: i.name || 'Item',
+        unitPrice: Number(i.unitPrice) || 0,
+        serialized: false,
+        qty: 0,
+        serials: [],
+        refundable: !isServiceLine(i, product),
+      };
+      byKey.set(key, g);
+    }
+    if (i.serialNumber) { g.serialized = true; g.serials.push(i.serialNumber); }
+    else g.qty += Number(i.quantity) || 1;
+  }
+  const groups = [...byKey.values()];
+  for (const g of groups) {
+    g.serials = [...new Set(g.serials)];
+    g.qtySel = g.serialized || !g.refundable ? 0 : g.qty;
+  }
+  return groups;
+}
+
+export function refundTotal(groups, pickedSerials) {
+  let cents = 0;
+  for (const g of groups || []) {
+    if (!g.refundable) continue;
+    if (g.serialized) {
+      for (const sn of g.serials) {
+        if (pickedSerials && pickedSerials.has(sn)) cents += Math.round(g.unitPrice * 100);
+      }
+    } else {
+      cents += Math.round(g.unitPrice * 100) * (Number(g.qtySel) || 0);
+    }
+  }
+  return cents / 100;
+}

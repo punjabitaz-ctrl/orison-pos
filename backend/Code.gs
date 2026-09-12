@@ -2321,6 +2321,22 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
   if (role !== 'admin' && role !== 'manager') {
     return { errors: [{ reason: 'unauthorized_role' }] };
   }
+  /* Services provided are not refunded - the work was done. Checked first, so
+     the refusal says why rather than surfacing as some later arithmetic error,
+     and a refund that includes a service is refused whole. */
+  var serviceIds = {};
+  for (var sv = 0; sv < prodRows.length; sv++) {
+    if (String(prodRows[sv].item_type) === 'service') serviceIds[String(prodRows[sv].id)] = true;
+  }
+  var refundItems = Array.isArray(tx.items) ? tx.items : [];
+  var serviceErrors = [];
+  for (var si = 0; si < refundItems.length; si++) {
+    var sid = String((refundItems[si] || {}).productId || '');
+    if (sid === 'repair-labour' || serviceIds[sid]) {
+      serviceErrors.push({ productId: sid, reason: 'service_not_refundable' });
+    }
+  }
+  if (serviceErrors.length) return { errors: serviceErrors };
   var errors = [];
   var originalClientTx = String(tx.originalClientTx || '');
   /* A sale and its refund can arrive in the same batch (an offline terminal
