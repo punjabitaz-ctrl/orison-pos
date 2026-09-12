@@ -179,6 +179,20 @@ describe('kindInfo()', async () => {
     assert.equal(info.sign, 1);
   });
 
+  it('names a repair deposit, rather than falling back to Sale', () => {
+    // The fallback below is why this matters: an unlisted kind renders as a
+    // Sale in History and prints as a sale receipt.
+    const info = kindInfo('deposit');
+    assert.equal(info.label, 'Repair deposit');
+    assert.equal(info.sign, 1);
+  });
+
+  it('names a deposit refund, with money going out', () => {
+    const info = kindInfo('deposit_refund');
+    assert.equal(info.label, 'Deposit refund');
+    assert.equal(info.sign, -1);
+  });
+
   it('defaults to sale for unknown kind', () => {
     const info = kindInfo('unknown');
     assert.equal(info.label, 'Sale');

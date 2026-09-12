@@ -55,6 +55,8 @@ export function kindInfo(kind) {
     pickup: { label: 'Cash pick-up', cls: 'k-payout', sign: -1 },
     expense: { label: 'Staff expense', cls: 'k-payout', sign: -1 },
     payment: { label: 'Payment', cls: 'k-sale', sign: 1 },
+    deposit: { label: 'Repair deposit', cls: 'k-deposit', sign: 1 },
+    deposit_refund: { label: 'Deposit refund', cls: 'k-payout', sign: -1 },
   };
   return map[kind || 'sale'] || map.sale;
 }

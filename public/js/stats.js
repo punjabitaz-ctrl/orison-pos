@@ -28,12 +28,16 @@ export function shiftDayKey(offsetDays = 0, from = new Date()) {
 
 export const CASH_OUT = ['payout', 'pickup', 'expense'];
 
+/* Held for a repair, not earned. Money moves, but revenue does not. */
+export const DEPOSIT_KINDS = ['deposit', 'deposit_refund'];
+
 /* Money in minus money out for one row: sales and collections are cash in;
    refunds and all three cash-out reasons are cash out. Mirrors the server's
    export lines. */
 export function signedNet(tx) {
   const v = Number(tx && tx.grandTotal) || 0;
   const k = kindOf(tx);
+  if (DEPOSIT_KINDS.includes(k)) return 0;
   return (k === 'refund' || CASH_OUT.includes(k)) ? -v : v;
 }
 
@@ -42,7 +46,7 @@ export function unitsOf(tx) {
 }
 
 export function dayTotals(txs, key) {
-  const out = { key, net: 0, sales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, cashOut: 0, collections: 0, count: 0, units: 0, gp: 0, tickets: 0 };
+  const out = { key, net: 0, sales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, cashOut: 0, collections: 0, deposits: 0, depositRefunds: 0, count: 0, units: 0, gp: 0, tickets: 0 };
   for (const t of txs || []) {
     if (dayKey(t.createdAt) !== key) continue;
     const k = kindOf(t);
@@ -55,6 +59,8 @@ export function dayTotals(txs, key) {
     else if (k === 'pickup') { out.pickups += v; out.cashOut += v; }
     else if (k === 'expense') { out.expenses += v; out.cashOut += v; }
     else if (k === 'payment') out.collections += v;
+    else if (k === 'deposit') out.deposits += v;
+    else if (k === 'deposit_refund') out.depositRefunds += v;
     out.net += signedNet(t);
   }
   out.avgTicket = out.tickets ? out.sales / out.tickets : 0;

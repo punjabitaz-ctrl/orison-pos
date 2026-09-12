@@ -63,6 +63,13 @@ test('signedNet() — money in minus money out', () => {
   assert.equal(signedNet({ grandTotal: 10 }), 10, 'legacy blank kind counts as a sale');
 });
 
+test('signedNet() — a repair deposit is not revenue, in either direction', () => {
+  // The dashboard labels this sum "Net revenue today". A deposit is held
+  // money, and giving one back is not a loss of revenue either.
+  assert.equal(signedNet({ kind: 'deposit', grandTotal: 50 }), 0);
+  assert.equal(signedNet({ kind: 'deposit_refund', grandTotal: 50 }), 0);
+});
+
 test('unitsOf() defaults a missing quantity to one', () => {
   assert.equal(unitsOf({ items: [{ quantity: 3 }, { quantity: 2 }] }), 5);
   assert.equal(unitsOf({ items: [{}, {}] }), 2);
@@ -97,6 +104,21 @@ test('dayTotals()', async (t) => {
 
   await t.test('gross profit sums the server figure, refunds included', () => {
     assert.equal(dayTotals(txs, today).gp, 50);
+  });
+
+  await t.test('a repair deposit is counted as a deposit and nothing else', () => {
+    const withDeposits = txs.concat([
+      { kind: 'deposit', grandTotal: 70, createdAt: localIso(0), items: [] },
+      { kind: 'deposit_refund', grandTotal: 25, createdAt: localIso(0), items: [] },
+    ]);
+    const d = dayTotals(withDeposits, today);
+    const plain = dayTotals(txs, today);
+    assert.equal(d.deposits, 70);
+    assert.equal(d.depositRefunds, 25);
+    assert.equal(d.sales, plain.sales, 'a deposit is not a sale');
+    assert.equal(d.tickets, plain.tickets, 'a deposit is not a ticket');
+    assert.equal(d.net, plain.net, 'a deposit is not revenue');
+    assert.equal(d.refunds, plain.refunds, 'a deposit refund is not a sales refund');
   });
 
   await t.test('avgTicket divides by tickets, not by every row', () => {

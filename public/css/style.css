@@ -760,6 +760,7 @@ background: var(--card);
 .k-sale { background: #e3eefb; color: #1c5d99; }
 .k-refund { background: #fdecec; color: #c62828; }
 .k-payout { background: #fbe9e7; color: #b35500; }
+.k-deposit { background: #eef4ea; color: #3f6b2f; }
 
 .dash-kpi.warn strong { color: #c62828; }
 .dash-kpi.dash-gp strong { color: #2e7d32; }
