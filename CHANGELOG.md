@@ -5,6 +5,65 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.0] — 2026-09-12
+
+Printing and the cash drawer. Owner decision: support Bluetooth and standard
+computer printers as well as the receipt printer and drawer first planned for
+v1.28.0. That number is not reused — it would sit behind v1.33.0 and make the
+app's version go backwards.
+
+### Added
+
+- **Printer & cash drawer settings, per terminal.** Three ways to print:
+  - **Receipt printer** — through the computer's print dialog at 58 or 80 mm.
+    Any receipt printer installed on the computer, USB or network.
+  - **Standard printer** — a full page on an office or home printer, with
+    A4, Letter or the printer's default.
+  - **Bluetooth printer** — straight to a Bluetooth receipt printer with no
+    dialog. The only way to open a cash drawer from a browser.
+- **One receipt for every printer.** The screen, the paper and the Bluetooth
+  printer render the same model, so they cannot disagree.
+- **Receipts that print any currency and any script over Bluetooth.** Plain
+  English receipts go as fast text; anything with `£`, `€`, `₨`,
+  `د.إ` or Arabic/Urdu goes as a printed image, because printers mangle
+  those through their code pages. Right-to-left receipts mirror their columns.
+- **The cash drawer** opens on a cash sale when set to, pin 2 or pin 5. An
+  **Open Drawer** tile for managers takes a reason and records every no-sale
+  open in the audit log with the terminal.
+- **Print receipt** in History (reprints) and after collecting a repair.
+- An automatic receipt waits up to three seconds for the server's receipt
+  number, so it does not always print "pending". The drawer does not wait.
+
+### Fixed
+
+- **The app could fail to start offline after an update.** Activating a new
+  version deletes the old cache and keeps only the precache list, and
+  `screens/repairs.js` had been left off it since v1.31.0. A guard test now
+  follows every import from the app and fails on anything not precached.
+- **History reprints showed the internal transaction id** instead of the
+  receipt number.
+
+### Before buying hardware
+
+- Bluetooth printing needs **Chrome or Edge** on Windows, macOS, ChromeOS or
+  Android. **Not an iPhone or iPad**, and not Firefox.
+- The printer must support **Bluetooth Low Energy**. Browsers cannot reach
+  Bluetooth Classic-only printers.
+- The drawer opens only through the **Bluetooth** printer, with the drawer
+  cable in the printer's drawer port. With the print dialog or a standard
+  printer, the drawer opens with its key.
+
+### Verification limits
+
+No physical printer was available. ESC/POS bytes are tested exactly and
+mutation-checked; the Bluetooth transport is tested against a fake printer; the
+dialog, page and canvas output were checked in-browser. The first print on the
+shop's own hardware is still the real test.
+
+### Tests
+
+5 new sim checks, 57 new client units. Backend **715 / 0**, client **427 / 0**.
+
 ## [1.33.0] — 2026-09-12
 
 ### Changed

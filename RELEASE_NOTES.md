@@ -7,7 +7,35 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.33.0 — no refunds on services, and refunds that work
+## Latest: v1.34.0 — printing and the cash drawer
+
+**2026-09-12.** Receipts print, and the drawer opens.
+
+- **Pick the printer in Settings → Printer & cash drawer**, per till:
+  a receipt printer through the print dialog, an ordinary office printer, or a
+  Bluetooth receipt printer.
+- **Bluetooth prints with no dialog** and can open the cash drawer on a cash
+  sale. It prints pounds, euros, rupees, dirhams and Arabic or Urdu correctly,
+  by sending anything a printer's character set would mangle as an image.
+- **Open Drawer** for managers, with a reason, recorded in the audit log.
+- **Print receipt** from History, and after collecting a repair.
+- **Fixed:** after an update, an offline till could fail to start.
+
+**Before buying a printer:** Bluetooth needs Chrome or Edge — not an iPhone or
+iPad — and a printer that supports Bluetooth Low Energy. The drawer opens
+only through the Bluetooth printer.
+
+**Validation:** backend-sim **PASS 715 / FAIL 0** · client units **PASS 427 /
+FAIL 0**. Every mode verified in-browser against a fake Bluetooth printer. No
+physical printer was available.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.33.0 — no refunds on services, and refunds that work
 
 **2026-09-12.**
 

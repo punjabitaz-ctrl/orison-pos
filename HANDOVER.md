@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.33.0** — no refunds on services (`2026-09-12`) |
-| Validation bar | `backend-sim` **PASS 710 / FAIL 0** · client units **PASS 370 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.34.0** — printing and the cash drawer (`2026-09-12`) |
+| Validation bar | `backend-sim` **PASS 715 / FAIL 0** · client units **PASS 427 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~5,110 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,17 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.34.0** Printing and the cash drawer (owner decision: Bluetooth and
+  standard printers too; replaces the parked v1.28.0, number not reused).
+  `receipt-doc.js` (one model) → `receipt-render.js` (roll HTML, full-page
+  HTML, direction-aware canvas) and `escpos.js` (pure bytes: text, `GS v 0`
+  raster in 200-row bands, drawer kick pin 2/5). `printer.js` holds every
+  decision (settings, BLE transport, text-vs-raster, drawer) with no DOM;
+  `printing.js` wires the browser. Settings per terminal in IndexedDB
+  `meta/printer`. `POST /api/drawer/open` audits no-sale opens. **Fixed:**
+  SW `SHELL` missed `screens/repairs.js` since v1.31.0, so an offline till
+  could fail to boot after an update; guard test walks every import. **Not
+  hardware-tested.** 5 sim checks, 57 client units.
 - **v1.33.0** No refunds on services (owner decision): `processRefund_` refuses
   any refund containing an `item_type === 'service'` product or
   `repair-labour`, first and whole, `service_not_refundable`. Client refund
@@ -384,7 +395,7 @@ admin/manager.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **710 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **715 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -394,7 +405,7 @@ admin/manager.
   the guards that now read under the lock).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  **370 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  **427 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
   ui `fmt`/`esc`/`debounce`/`csvCell`/`emptyState`/`skeleton`, (v1.15.0)
@@ -485,7 +496,7 @@ The approved roadmap (v1.8–v1.16), the interface-v2 rebuild (v1.17–v1.20) an
 the operational-readiness program (v1.21–v1.30) are all complete. What is left
 is below, in the order it should be picked up.
 
-1. **Deploy v1.33.0 — both halves.** The backend has changed in nearly every
+1. **Deploy v1.34.0 — both halves.** The backend has changed in nearly every
    release since v1.16.0, so a frontend-only push ships a client that calls
    endpoints the server does not have.
    - Paste `backend/Code.gs` into Apps Script and **deploy a new Web App
@@ -496,22 +507,20 @@ is below, in the order it should be picked up.
    - Run **`installReportTriggers()`** once, then set recipients in
      Settings → *Scheduled reports*. **Every cadence ships off**; nobody
      starts receiving mail because a release landed.
-   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.33.0 shell
+   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.34.0 shell
      on next load (`sw.js` VERSION is bumped).
    - Sign in as an admin once and complete the store setup dialog (language,
      country, currency) if this is a fresh deployment.
 2. **Warranty per serial, unscheduled.** Cheap now that fitted serials point at
    their invoice. Needs the owner's warranty terms. (Repair refunds are settled:
    services are not refunded, v1.33.0.)
-3. **Cash drawer + thermal printer — v1.28.0, parked.** Held at the owner's
-   request until they speak to the business owners. **The version number is
-   deliberately left unused** so the release can land under it. It is blocked
-   on one decision, not on effort: **USB, network or Bluetooth** are
-   materially different builds (a USB drawer kicks through the printer; a
-   network printer is an IP and a raw 9100 socket; Bluetooth needs pairing per
-   terminal). Picking wrong means rewriting rather than configuring, which is
-   why it was not guessed at. See D1 in
-   `docs/superpowers/plans/2026-09-11-operational-readiness-program.md`.
+3. **First print on real hardware.** v1.34.0 is tested against exact bytes and
+   a fake Bluetooth printer, not a physical one. Before go-live, on the shop's
+   own till: connect the printer, press *Print a test receipt*, and *Test the
+   drawer*. If a Bluetooth printer connects but reports no writable channel,
+   it uses a GATT service missing from `PRINTER_SERVICES` in `printer.js` —
+   add its UUID. Buy a **Bluetooth Low Energy** printer; Web Bluetooth needs
+   **Chrome or Edge** and does not exist on iPhone or iPad.
 4. **Re-run `pdf-smoke`** somewhere Edge will launch headless — see §6.
 5. **Translation — needs a decision from the owner.** The one open review
    finding; see §10.
