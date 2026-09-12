@@ -3702,6 +3702,101 @@ check('statement carries the changer/cashier',
     req('/api/repairs/deposit-refund', { id: dpVoidDep.id, reason: 'again' }, { session: dpAdm }).status === 409);
   check('a deposit refund is audited',
     req('/api/audit', {}, { session: dpAdm, params: { action: 'repair.deposit_refund' } }).data.entries.length === 2);
+
+  /* ---- Task 5: a deposit is never revenue, and cash touches the drawer once ---- */
+  const dpRep = () => req('/api/reports', {}, { session: dpAdm }).data;
+
+  const r0 = dpRep();
+  const dpRev = req('/api/repairs', { customerName: 'Revenue Check', deviceMake: 'OnePlus', reportedFault: 'Camera' }, { session: dpCash }).data;
+  req('/api/repairs/deposit', { id: dpRev.id, amount: 70 }, { session: dpCash });
+  const r1 = dpRep();
+  check('taking a deposit does not move gross sales',
+    r1.summary.grossSales === r0.summary.grossSales, JSON.stringify([r0.summary.grossSales, r1.summary.grossSales]));
+  check('nor net revenue',
+    r1.summary.netRevenue === r0.summary.netRevenue, JSON.stringify([r0.summary.netRevenue, r1.summary.netRevenue]));
+  check('nor gross profit',
+    r1.summary.grossProfit === r0.summary.grossProfit, JSON.stringify([r0.summary.grossProfit, r1.summary.grossProfit]));
+  check('nor the sales count', r1.summary.salesCount === r0.summary.salesCount);
+  check('it is reported as a deposit taken',
+    r1.summary.depositsIn === r0.summary.depositsIn + 70, JSON.stringify([r0.summary.depositsIn, r1.summary.depositsIn]));
+  check('and the liability rises by the same amount',
+    r1.summary.depositsHeld === r0.summary.depositsHeld + 70, JSON.stringify([r0.summary.depositsHeld, r1.summary.depositsHeld]));
+
+  req('/api/repairs/labour', { id: dpRev.id, add: { description: 'Camera module fit', amount: 120 } }, { session: dpCash });
+  req('/api/repairs/collect', { id: dpRev.id, tenders: [{ type: 'card', amount: 50 }] }, { session: dpCash });
+  const r2 = dpRep();
+  check('collection books the whole job as sales',
+    r2.summary.grossSales === r1.summary.grossSales + 120, JSON.stringify([r1.summary.grossSales, r2.summary.grossSales]));
+  check('the deposit is reported as applied',
+    r2.summary.depositsApplied === r1.summary.depositsApplied + 70, JSON.stringify([r1.summary.depositsApplied, r2.summary.depositsApplied]));
+  check('and the liability falls back',
+    r2.summary.depositsHeld === r1.summary.depositsHeld - 70, JSON.stringify([r1.summary.depositsHeld, r2.summary.depositsHeld]));
+  const dpApplied = (r2.byTender || []).find((t) => t.type === 'deposit');
+  check('the tender breakdown names it, rather than showing a bare key',
+    !!dpApplied && dpApplied.label === 'Deposit applied', JSON.stringify(dpApplied));
+  const dpLabour = (r2.topProducts || []).find((p) => p.name === 'Repair labour' || p.name === 'Camera module fit');
+  check('labour shows by name in the product breakdown, not as "Item"',
+    !!dpLabour, JSON.stringify((r2.topProducts || []).map((p) => p.name)));
+
+  /* the drawer: cash in once, not twice */
+  const dpShift = req('/api/shifts/open', { openingFloat: 200 }, { session: dpCash }).data.shift.id;
+  const dpDr = req('/api/repairs', { customerName: 'Drawer Check', deviceMake: 'Motorola', reportedFault: 'Mic' }, { session: dpCash }).data;
+  req('/api/repairs/deposit', { id: dpDr.id, amount: 30 }, { session: dpCash });
+  req('/api/repairs/labour', { id: dpDr.id, add: { description: 'Mic replace', amount: 80 } }, { session: dpCash });
+  req('/api/repairs/collect', { id: dpDr.id, tenders: [{ type: 'cash', amount: 50 }] }, { session: dpCash });
+  const dpClose = req('/api/shifts/close', { shiftId: dpShift, denoms: {} }, { session: dpCash }).data.shift;
+  check('cash touches the drawer once: float + deposit + balance, not the deposit twice',
+    dpClose.expectedCash === 200 + 30 + 50, JSON.stringify({ expected: dpClose.expectedCash, wanted: 280 }));
+
+  /* a deposit refund takes the cash back out of the drawer */
+  const dpMgrShift = req('/api/shifts/open', { openingFloat: 100 }, { session: dpMgr }).data.shift.id;
+  const dpRf = req('/api/repairs', { customerName: 'Refund Check', deviceMake: 'HTC', reportedFault: 'Power' }, { session: dpMgr }).data;
+  req('/api/repairs/deposit', { id: dpRf.id, amount: 40 }, { session: dpMgr });
+  req('/api/repairs/status', { id: dpRf.id, status: 'unrepairable' }, { session: dpMgr });
+  const r3 = dpRep();
+  req('/api/repairs/deposit-refund', { id: dpRf.id, reason: 'Board is dead' }, { session: dpMgr });
+  const r4 = dpRep();
+  const dpMgrClose = req('/api/shifts/close', { shiftId: dpMgrShift, denoms: {} }, { session: dpMgr }).data.shift;
+  check('a deposit taken and given back leaves the drawer where it started',
+    dpMgrClose.expectedCash === 100, JSON.stringify({ expected: dpMgrClose.expectedCash }));
+  check('a deposit refund is not reported as a sales refund',
+    r4.summary.refunds === r3.summary.refunds, JSON.stringify([r3.summary.refunds, r4.summary.refunds]));
+  check('it is reported as a deposit refunded',
+    r4.summary.depositsRefunded === r3.summary.depositsRefunded + 40);
+  check('and the liability clears',
+    r4.summary.depositsHeld === r3.summary.depositsHeld - 40);
+
+  /* the export must not count a deposit as sales */
+  const dpDay = new Date().toISOString().slice(0, 10);
+  const dpExp = req('/api/drive/export', { date: dpDay }, { session: dpAdm });
+  const dpFile = driveFiles.find((f) => f.id === (dpExp.data || {}).fileId);
+  const dpCsv = (dpFile && dpFile.content) || '';
+  const dpLine = (label) => {
+    const row = dpCsv.split(String.fromCharCode(10)).find((l) => l.indexOf(',,' + label + ',,') === 0);
+    return row ? Number(row.split(',')[4]) : null;
+  };
+  const dpDepositRows = dpCsv.split(String.fromCharCode(10)).filter((l) => l.split(',')[2] === 'deposit');
+  check('the export still lists deposit rows in the detail', dpDepositRows.length > 0, String(dpDepositRows.length));
+  check('the export has a DEPOSITS IN line', dpLine('DEPOSITS IN') !== null && dpLine('DEPOSITS IN') > 0, String(dpLine('DEPOSITS IN')));
+  check('the export has a DEPOSITS APPLIED line', dpLine('DEPOSITS APPLIED') !== null);
+  check('the export has a DEPOSITS REFUNDED line', dpLine('DEPOSITS REFUNDED') !== null && dpLine('DEPOSITS REFUNDED') >= 40);
+
+  const exportSalesRows = dpCsv.split(String.fromCharCode(10))
+    .filter((l) => l.split(',')[2] === 'sale')
+    .reduce((n, l) => n + Number(l.split(',')[5] || 0), 0);
+  check('the export SALES line is sales only, with no deposits folded in',
+    Math.abs(dpLine('SALES') - exportSalesRows) < 0.005,
+    JSON.stringify({ salesLine: dpLine('SALES'), saleRows: exportSalesRows }));
+
+  /* the scheduled report names the liability */
+  req('/api/reports/schedule', { recipients: 'owner@example.com' }, { session: dpAdm });
+  req('/api/reports/schedule', { sendNow: 'daily' }, { session: dpAdm });
+  check('the emailed report shows deposits held',
+    /Deposits held/.test(mails[mails.length - 1].body), mails[mails.length - 1].body.slice(0, 400));
+
+  /* a deposit never creates a customer debt */
+  const dpRec = req('/api/customers/receivables', {}, { session: dpAdm }).data;
+  check('receivables are untouched by deposits', Array.isArray(dpRec.customers));
 }
 
 

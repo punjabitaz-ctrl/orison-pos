@@ -1007,6 +1007,7 @@ function reportEmailBody_(cadence, win, data, store) {
   lines.push('  cash pick-up   ' + money_(s.pickups, store));
   lines.push('  staff expense  ' + money_(s.expenses, store));
   lines.push('Collections      ' + money_(s.collections, store));
+  lines.push('Deposits held    ' + money_(s.depositsHeld, store));
   lines.push('Net revenue      ' + money_(s.netRevenue, store));
   lines.push('Gross profit     ' + money_(s.grossProfit, store));
   lines.push('Sales            ' + s.salesCount + '   units ' + s.units);
@@ -2999,7 +3000,17 @@ function agingBuckets_(txRows) {
  *  refunds + payouts down per method, so a manager can see *where* cash lives.
  * ------------------------------------------------------------------ */
 
-var REPORT_DENOM_LABELS = { cash: 'Cash', card: 'Card', transfer: 'Transfer', store_credit: 'Store credit', net30: 'On account', account: 'On account' };
+var REPORT_DENOM_LABELS = { cash: 'Cash', card: 'Card', transfer: 'Transfer', store_credit: 'Store credit', net30: 'On account', account: 'On account', deposit: 'Deposit applied' };
+
+/* What the shop is holding for customers right now. A liability is a balance,
+ * not a flow, so it is read from the tickets rather than summed over whatever
+ * date range the report happens to cover. */
+function depositsHeld_() {
+  var rows = readRows_('Repairs', REPAIR_HEADERS);
+  var c = 0;
+  for (var i = 0; i < rows.length; i++) c += cents_(rows[i].deposit_total);
+  return c / 100;
+}
 
 function reports_(session, params) {
   requireRole_(session, ['admin', 'manager']);
@@ -3047,7 +3058,7 @@ function reports_(session, params) {
   var byProduct = Object.create(null);
   var byCustomerTx = Object.create(null);
   var byChannel = Object.create(null);
-  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0 };
+  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0 };
 
   function costOf_(t) {
     var items = itobjs_(t.items_json);
@@ -3107,11 +3118,12 @@ function reports_(session, params) {
         var e = byTender[ty] || (byTender[ty] = { amount: 0, count: 0 });
         e.amount += num_(tc.amount);
         e.count += 1;
+        if (ty === 'deposit') summary.depositsApplied += num_(tc.amount);
       }
       for (var it1 = 0; it1 < items.length; it1++) {
         var it = items[it1];
         var prod = prodById[String(it.productId || '')];
-        var cat = prod ? String(prod.category || 'Uncategorized') : 'Uncategorized';
+        var cat = prod ? String(prod.category || 'Uncategorized') : String(it.category || 'Uncategorized');
         var qty = it.quantity || 1;
         /* revenue per line: line unitPrice × qty, minus the line's own
            discountPct, then the order-level discount, both in rounded cents. */
@@ -3127,7 +3139,8 @@ function reports_(session, params) {
         ce.units += qty;
         ce.sales += lineRev;
         ce.gp += lineGp;
-        var pe = byProduct[String(it.productId || '')] || (byProduct[String(it.productId || '')] = { name: prod ? String(prod.name || 'Item') : 'Item', sku: prod ? String(prod.sku || '') : '', units: 0, sales: 0, gp: 0 });
+        var peKey = prod ? String(it.productId) : 'nameonly:' + String(it.name || 'Item');
+        var pe = byProduct[peKey] || (byProduct[peKey] = { name: prod ? String(prod.name || 'Item') : String(it.name || 'Item'), sku: prod ? String(prod.sku || '') : '', units: 0, sales: 0, gp: 0 });
         pe.units += qty;
         pe.sales += lineRev;
         pe.gp += lineGp;
@@ -3155,6 +3168,21 @@ function reports_(session, params) {
       c.sales -= outAmt;
       var pe2 = byTender['cash'] || (byTender['cash'] = { amount: 0, count: 0 });
       pe2.amount -= outAmt;
+    } else if (kind === 'deposit') {
+      /* Money in, not revenue: never gross sales, GP or a cashier's sales. */
+      summary.depositsIn += num_(t.grand_total);
+      for (var di = 0; di < tenders.length; di++) {
+        var de = byTender[String(tenders[di].type || 'cash')] || (byTender[String(tenders[di].type || 'cash')] = { amount: 0, count: 0 });
+        de.amount += num_(tenders[di].amount);
+        de.count += 1;
+      }
+    } else if (kind === 'deposit_refund') {
+      summary.depositsRefunded += num_(t.grand_total);
+      for (var dj = 0; dj < tenders.length; dj++) {
+        var dje = byTender[String(tenders[dj].type || 'cash')] || (byTender[String(tenders[dj].type || 'cash')] = { amount: 0, count: 0 });
+        dje.amount -= num_(tenders[dj].amount);
+        dje.count += 1;
+      }
     } else if (kind === 'payment') {
       summary.collections += num_(t.grand_total);
       c.sales += num_(t.grand_total); c.count += 0;
@@ -3204,6 +3232,10 @@ function reports_(session, params) {
       expenses: summary.expenses,
       cashOut: summary.payouts + summary.pickups + summary.expenses,
       collections: summary.collections,
+      depositsIn: round2_(summary.depositsIn),
+      depositsApplied: round2_(summary.depositsApplied),
+      depositsRefunded: round2_(summary.depositsRefunded),
+      depositsHeld: depositsHeld_(),
       netRevenue: summary.grossSales - summary.refunds - summary.payouts - summary.pickups - summary.expenses,
       salesCount: summary.salesCount,
       units: summary.units,
@@ -4899,6 +4931,17 @@ function shiftClose_(session, payload) {
         for (var m = 0; m < tenders.length; m++) {
           if (String(tenders[m].type || '') === 'cash') expected -= num_(tenders[m].amount);
         }
+      } else if (kind === 'deposit') {
+        /* Repair deposit: real cash in the drawer, though not revenue. The
+           'deposit' tender on the later collection sale is not cash, so the
+           same money is never counted twice. */
+        for (var dq = 0; dq < tenders.length; dq++) {
+          if (String(tenders[dq].type || '') === 'cash') expected += num_(tenders[dq].amount);
+        }
+      } else if (kind === 'deposit_refund') {
+        for (var dr = 0; dr < tenders.length; dr++) {
+          if (String(tenders[dr].type || '') === 'cash') expected -= num_(tenders[dr].amount);
+        }
       } else if (kind === 'payment') {
         for (var p = 0; p < tenders.length; p++) {
           if (String(tenders[p].type || '') === 'cash') expected += num_(tenders[p].amount);
@@ -5721,6 +5764,7 @@ function driveExport_(session, payload, params) {
   var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note' + (isStore ? ',cost,gross_profit' : '') + '\n';
   var sales = 0, refunds = 0, payouts = 0, pickups = 0, expenses = 0, collections = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
   var cashDrawer = 0, cardTotal = 0;
+  var depositsIn = 0, depositsApplied = 0, depositsRefunded = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
     var k = String(t.kind || 'sale');
@@ -5730,6 +5774,8 @@ function driveExport_(session, payload, params) {
     else if (k === 'pickup') pickups += v;
     else if (k === 'expense') expenses += v;
     else if (k === 'payment') collections += v;
+    else if (k === 'deposit') depositsIn += v;
+    else if (k === 'deposit_refund') depositsRefunded += v;
     else if (k !== 'purchase') sales += v;
 
     /* What the drawer should actually hold is a TENDER question, not a kind
@@ -5739,10 +5785,11 @@ function driveExport_(session, payload, params) {
     for (var dt = 0; dt < dayTenders.length; dt++) {
       var dty = String(dayTenders[dt].type || 'cash');
       var dta = num_(dayTenders[dt].amount);
-      if (dty === 'card') cardTotal += (k === 'refund' ? -dta : dta);
+      if (dty === 'card') cardTotal += (k === 'refund' || k === 'deposit_refund' ? -dta : dta);
+      if (dty === 'deposit' && k === 'sale') depositsApplied += dta;
       if (dty !== 'cash') continue;
-      if (k === 'refund') cashDrawer -= dta;
-      else if (k === 'sale' || k === 'payment') cashDrawer += dta;
+      if (k === 'refund' || k === 'deposit_refund') cashDrawer -= dta;
+      else if (k === 'sale' || k === 'payment' || k === 'deposit') cashDrawer += dta;
     }
     if (isCashOutKind_(k)) cashDrawer -= v;
     if (String(t.tax_amount || '') !== '') taxTotal += num_(t.tax_amount);
@@ -5771,7 +5818,7 @@ function driveExport_(session, payload, params) {
     if (isStore) {
       var gp = null;
       if (k === 'refund') gp = -costTotal;
-      else if (isCashOutKind_(k)) gp = 0;
+      else if (isCashOutKind_(k) || SERVER_ONLY_KINDS[k]) gp = 0;
       else if (String(t.subtotal || '') !== '') gp = num_(t.subtotal) - Math.round(num_(t.subtotal) * num_(t.discount_pct) / 100) - costTotal;
       if (gp != null) gpDay += gp;
       row.push(String(costTotal));
@@ -5792,6 +5839,9 @@ function driveExport_(session, payload, params) {
   csv += ',,CASH PICK-UP,,' + String(pickups) + ',\n';
   csv += ',,STAFF EXPENSE,,' + String(expenses) + ',\n';
   csv += ',,COLLECTIONS,,' + String(collections) + ',\n';
+  csv += ',,DEPOSITS IN,,' + String(round2_(depositsIn)) + ',\n';
+  csv += ',,DEPOSITS APPLIED,,' + String(round2_(depositsApplied)) + ',\n';
+  csv += ',,DEPOSITS REFUNDED,,' + String(round2_(depositsRefunded)) + ',\n';
   csv += ',,CARD,,' + String(round2_(cardTotal)) + ',\n';
   csv += ',,CASH IN DRAWER,,' + String(round2_(cashDrawer)) + ',\n';
   csv += ',,NET CASH,,' + String(net) + ',\n';
