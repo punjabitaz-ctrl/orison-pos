@@ -3569,6 +3569,49 @@ check('statement carries the changer/cashier',
     req('/api/audit', {}, { session: rpAdm, params: { action: 'repair.voided' } }).data.entries.length === 1);
 }
 
+{
+  section('repair deposits and collection (v1.32.0)');
+
+  const dpAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const dpCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const dpMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const dpCashId = req('/api/admin/users/list', {}, { session: dpAdm }).data.users
+    .find((u) => u.email === 'amara@example.com').id;
+  const dpOnHand = (sku) => req('/api/products', {}, { session: dpAdm }).data.find((x) => x.sku === sku).onHand;
+
+  const dpScreen = req('/api/admin/products', {
+    name: 'Pixel 7 Screen', sku: 'DP-SCR', category: 'Parts',
+    costPrice: 30, retailPrice: 100, onHand: 10,
+  }, { session: dpAdm }).data.id;
+
+  /* ---- Task 1: the sync boundary refuses forged deposits ---- */
+  const dpBefore = dpOnHand('DP-SCR');
+  const forgedTender = req('/api/sync/push', {
+    deviceId: 'dev-dp',
+    batch: [{ clientTxId: 'tx-dp-forge', userId: dpCashId, grandTotal: 100,
+      createdAt: new Date().toISOString(), tenders: [{ type: 'deposit', amount: 100 }],
+      items: [{ productId: dpScreen, quantity: 1, unitPrice: 100 }] }],
+  }, { session: dpCash });
+  check('a device cannot push a sale paid with a deposit tender',
+    forgedTender.data.results[0].accepted === false, JSON.stringify(forgedTender.data.results[0]));
+  check('and the refused sale takes nothing off the shelf', dpOnHand('DP-SCR') === dpBefore, String(dpOnHand('DP-SCR')));
+
+  const forgedKind = req('/api/sync/push', {
+    deviceId: 'dev-dp',
+    batch: [{ clientTxId: 'tx-dp-kind', kind: 'deposit', userId: dpCashId, grandTotal: 40,
+      createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 40 }], items: [] }],
+  }, { session: dpCash });
+  check('a device cannot push a deposit row directly',
+    forgedKind.data.results[0].accepted === false, JSON.stringify(forgedKind.data.results[0]));
+  const forgedRefund = req('/api/sync/push', {
+    deviceId: 'dev-dp',
+    batch: [{ clientTxId: 'tx-dp-kind2', kind: 'deposit_refund', userId: dpCashId, grandTotal: 40,
+      createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 40 }], items: [] }],
+  }, { session: dpAdm });
+  check('nor a deposit refund, even as an admin',
+    forgedRefund.data.results[0].accepted === false, JSON.stringify(forgedRefund.data.results[0]));
+}
+
 
 console.log('\n-------------------------------------');
 console.log(`PASS ${passed}  FAIL ${failed}`);

@@ -1848,6 +1848,20 @@ function syncPush_(session, payload) {
       var reuseId = (existing && String(existing.status) === 'VOIDED') ? String(existing.id) : '';
 
       var kind = String(tx.kind || 'sale');
+      /* Deposits are written only by the repair endpoints, under the lock, against
+         a ticket. A device pushing one directly would otherwise fall through to
+         the sale path and be recorded as revenue. */
+      if (SERVER_ONLY_KINDS[kind]) {
+        pushResult_(results, tx, { errors: [{ reason: 'server_only_kind' }] });
+        continue;
+      }
+      /* A 'deposit' tender settles a sale against money already held on a repair
+         ticket. Accepting one from a device would let goods leave with nothing
+         in the drawer and the report showing the sale as paid. */
+      if (hasDepositTender_(tx.tenders)) {
+        pushResult_(results, tx, { errors: [{ reason: 'deposit_tender_not_allowed' }] });
+        continue;
+      }
       if (isCashOutKind_(kind)) {
         pushResult_(results, tx, processCashOut_(session, store, newTxRows, tx, deviceId, userRows, kind));
         indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows);
@@ -2209,6 +2223,17 @@ function indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows) {
  * is the whole point: an owner can ask "how much went out as staff expense?"
  * without reading every note by hand. */
 var CASH_OUT_KINDS = { payout: 'Paid out', pickup: 'Cash pick-up', expense: 'Staff expense' };
+
+/* Ledger kinds that only the server writes. Never accepted from a device. */
+var SERVER_ONLY_KINDS = { deposit: 1, deposit_refund: 1 };
+
+function hasDepositTender_(tenders) {
+  if (!Array.isArray(tenders)) return false;
+  for (var i = 0; i < tenders.length; i++) {
+    if (tenders[i] && String(tenders[i].type || '') === 'deposit') return true;
+  }
+  return false;
+}
 
 function isCashOutKind_(kind) {
   return Object.prototype.hasOwnProperty.call(CASH_OUT_KINDS, String(kind));
