@@ -108,6 +108,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/repairs/deposit': return repairDeposit_(session, payload);
     case '/api/repairs/collect': return repairCollect_(session, payload);
     case '/api/repairs/deposit-refund': return repairDepositRefund_(session, payload);
+    case '/api/drawer/open':     return drawerOpen_(session, payload);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
@@ -4813,6 +4814,18 @@ function repairCollect_(session, payload) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/* A cash drawer opened without a sale is the classic till-theft move, so the
+ * terminal records every manual open here: who, which till, and why. The pulse
+ * itself goes from the terminal to its printer; this is the paper trail. */
+function drawerOpen_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  var reason = String((payload || {}).reason || '').trim().slice(0, 200);
+  if (!reason) throw statusError_(400, 'Opening the drawer without a sale needs a reason');
+  logAudit_(session, 'drawer.open', 'drawer', '', 'No-sale drawer open: ' + reason,
+    String((payload || {}).deviceId || '').slice(0, 80));
+  return { recorded: true };
 }
 
 function repairDepositRefund_(session, payload) {

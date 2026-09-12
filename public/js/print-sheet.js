@@ -48,7 +48,9 @@ const SHEET_CSS = `
   @media print { body { padding: 0; } }
 `;
 
-export function printSheet(html, title = '') {
+/* pageSize: 'auto' lets the printer driver decide; 'A4' or 'letter' forces it,
+   for a terminal whose office printer defaults to the wrong paper. */
+export function printSheet(html, title = '', pageSize = 'auto') {
   const win = window.open('', 'orisonPrintSheet', 'popup=yes,width=980,height=760');
   if (!win) return false;
   const doc = win.document;
@@ -58,7 +60,9 @@ export function printSheet(html, title = '') {
 
   doc.title = title || 'Orison POS';
   const style = doc.createElement('style');
-  style.textContent = SHEET_CSS;
+  style.textContent = SHEET_CSS
+    + (pageSize === 'A4' || pageSize === 'letter' ? `@page { size: ${pageSize}; margin: 12mm; }` : '')
+    + 'tfoot tr.strong td { font-size: 11pt; }';
   doc.head.appendChild(style);
 
   if (title) {

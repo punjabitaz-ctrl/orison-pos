@@ -9,6 +9,7 @@ import { esc, toast, beep, fmt, denomLabel } from '../ui.js';
 import { openModal, closeModal } from '../ui.js';
 import { getSyncState, syncNow, push, pull, setServerUrl, setAppToken, setSyncInterval, outboxStats } from '../sync.js';
 import { displayEnabled, setDisplayEnabled, openDisplay, publishIdle } from '../customer-display.js';
+import { printerCardHtml, mountPrinterCard } from './printer-settings.js';
 
 export const screen = {
   id: 'settings',
@@ -74,6 +75,8 @@ export const screen = {
         <div class="row"><button class="btn" id="cdOpen">Open display window</button></div>
         <p id="cdMsg" class="muted" role="status"></p>
       </section>
+
+      ${printerCardHtml()}
 
       <section class="set-card">
         <h3>Sync</h3>
@@ -264,6 +267,8 @@ export const screen = {
         msg.textContent = 'Mirroring off — any open display goes back to the welcome screen.';
       }
     });
+
+    mountPrinterCard(root, { storeName: (m.store && m.store.name) || '' });
 
     root.querySelector('#cdOpen').addEventListener('click', async () => {
       const msg = root.querySelector('#cdMsg');

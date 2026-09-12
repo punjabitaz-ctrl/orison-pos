@@ -10,6 +10,8 @@ import { api } from '../api.js';
 import { publishCheckout, publishThanks, publishIdle } from '../customer-display.js';
 import { screenHead } from '../components.js';
 import { clearSaved } from '../cart.js';
+import { receiptDoc } from '../receipt-doc.js';
+import { rollHtml } from '../receipt-render.js';
 
 /* Card is recorded, not authorised: the terminal beside the till does the
    authorising and the POS records the amount. Crucially it is not cash, so it
@@ -347,12 +349,27 @@ export const screen = {
       // Ship the sale immediately when connected; offline terminals queue it
       // and catch up on the online event / periodic window. When the push lands
       // while the receipt is still on screen, repaint it with the real number.
-      pushImmediate()
-        .then((res) => {
-          const hit = ((res && res.results) || []).find((r) => r.clientTxId === clientTxId);
-          if (hit && hit.receiptNo) showReceipt(clientTxId, hit.receiptNo);
-        })
-        .catch(() => {});
+      const numbered = new Promise((resolve) => {
+        pushImmediate()
+          .then((res) => {
+            const hit = ((res && res.results) || []).find((r) => r.clientTxId === clientTxId);
+            if (hit && hit.receiptNo) showReceipt(clientTxId, hit.receiptNo);
+            resolve((hit && hit.receiptNo) || '');
+          })
+          .catch(() => resolve(''));
+        /* Offline, or a slow line: print with the pending note rather than
+           keeping the customer waiting at the counter. */
+        setTimeout(() => resolve(''), 3000);
+      });
+
+      /* The drawer opens now; the receipt prints once it has its number. */
+      import('../printing.js').then(async (pr) => {
+        const kicked = await pr.maybeKickForSale(cleanTenders);
+        if (!kicked.ok && kicked.message) toast(kicked.message, 'warn', 3200);
+        const receiptNo = await numbered;
+        const printed = await pr.maybeAutoPrint(saleDoc(clientTxId, receiptNo));
+        if (!printed.ok && printed.message) toast(printed.message, 'warn', 3200);
+      }).catch(() => {});
 
       publishThanks({
         total: sale.total,
@@ -373,6 +390,7 @@ export const screen = {
        its client id and says so. Once the push lands, the receipt is repainted
        with the real number. */
     function showReceipt(clientTxId, receiptNo) {
+      shownReceiptNo = receiptNo || '';
       const cashier = `${state.user.firstName} ${(state.user.lastName || '').trim()}`.trim();
       root.innerHTML = `
         <div class="receipt-wrap">
@@ -397,9 +415,10 @@ export const screen = {
       });
 
       root.querySelector('#doneBtn').addEventListener('click', () => router.show('register'));
-      root.querySelector('#printBtn').addEventListener('click', () => {
-        document.body.classList.add('printing');
-        requestAnimationFrame(() => { window.print(); setTimeout(() => document.body.classList.remove('printing'), 500); });
+      root.querySelector('#printBtn').addEventListener('click', async () => {
+        const pr = await import('../printing.js');
+        const r = await pr.printDoc(saleDoc(clientTxId, shownReceiptNo));
+        if (!r.ok) toast(r.message, 'warn', 3600);
       });
       root.querySelector('#shareBtn').addEventListener('click', async () => {
         const text = receiptText(cashier, clientTxId, receiptNo);
@@ -412,38 +431,31 @@ export const screen = {
       });
     }
 
+    /* One model for the screen, the paper and the Bluetooth printer. The
+       change line comes from the tenders, so it matches what was handed over. */
+    let shownReceiptNo = '';
+    function saleDoc(clientTxId, receiptNo) {
+      return receiptDoc({
+        createdAt: new Date().toISOString(),
+        cashier: `${state.user.firstName} ${(state.user.lastName || '').trim()}`.trim(),
+        customerName: customer ? customer.name : '',
+        items: sale.items.map((i) => ({
+          name: i.name, quantity: i.quantity, unitPrice: i.unitPrice,
+          discountPct: i.discountPct, serialNumber: i.serialNumber,
+        })),
+        subtotal: sale.totals.subtotal,
+        discount: sale.totals.discount,
+        taxAmount: sale.totals.tax,
+        taxRate: store.taxRate || 0,
+        total: sale.total,
+        tenders: tenders.filter((t) => t.amount > 0).map((t) => ({ type: t.type, amount: t.amount })),
+        receiptNo,
+        clientTxId,
+      }, { storeName: (state.store && state.store.name) || '' });
+    }
+
     function receiptHtml(cashier, clientTxId, receiptNo) {
-      const now = new Date();
-      const dateStr = now.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
-      const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      const lines = sale.items.map((i) => ({
-        name: i.serialNumber ? `${i.name} [${i.serialNumber}]` : i.name,
-        amt: saleTotals([{ unitPrice: i.unitPrice, quantity: i.quantity, discountPct: i.discountPct, taxable: i.taxable }], 0, 0).total,
-        qty: i.quantity > 1 ? `${i.quantity} × ${fmt(i.unitPrice)}` : '',
-        disc: i.discountPct ? `${i.discountPct}%` : '',
-      }));
-      return `
-        <div class="receipt">
-          <h1>ORISON ELECTRONICS</h1>
-          <p class="r-store">${esc((state.store && state.store.name) || '')}</p>
-          <p class="r-mid">${dateStr} ${timeStr}</p>
-          <p class="r-mid">Cashier: ${esc(cashier)}</p>
-          ${customer ? `<p class="r-mid">Customer: ${esc(customer.name)}</p>` : ''}
-          <div class="r-rule"></div>
-          ${lines.map((l) => `<div class="r-line"><span>${esc(l.name)}${l.qty ? ` <em>${esc(l.qty)}</em>` : ''}${l.disc ? ` <em>${esc(l.disc)} off</em>` : ''}</span><b>${fmt(l.amt)}</b></div>`).join('')}
-          <div class="r-rule"></div>
-          <div class="r-line"><span>Subtotal</span><b>${fmt(sale.totals.subtotal)}</b></div>
-          ${sale.totals.discount > 0 ? `<div class="r-line"><span>Discount</span><b>−${fmt(sale.totals.discount)}</b></div>` : ''}
-          ${store.taxRate != null && store.taxRate > 0 ? `<div class="r-line"><span>Tax (${store.taxRate}%)</span><b>${fmt(sale.totals.tax)}</b></div>` : ''}
-          <div class="r-line total"><span>Total</span><b>${fmt(sale.total)}</b></div>
-          ${tenders.filter((t) => t.amount > 0).map((t) => `
-            <div class="r-line"><span>${esc(t.label)}</span><b>${fmt(t.amount)}</b></div>`).join('')}
-          <div class="r-line"><span>Change</span><b>${fmt(round2(tenders.reduce((s,t)=>s+t.amount,0)-sale.total))}</b></div>
-          <div class="r-rule"></div>
-          <p class="r-mid">Thank you for shopping at Orison!</p>
-          <p class="r-mid small">${receiptNo ? esc(receiptNo) : '# ' + esc(clientTxId)}</p>
-          ${receiptNo ? '' : '<p class="r-mid small">Receipt number pending sync</p>'}
-        </div>`;
+      return rollHtml(saleDoc(clientTxId, receiptNo), fmt);
     }
 
     function receiptText(cashier, clientTxId, receiptNo) {

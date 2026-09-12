@@ -3864,6 +3864,25 @@ check('statement carries the changer/cashier',
     svLabour.accepted === false && svLabour.conflicts.some((c) => c.reason === 'service_not_refundable'),
     JSON.stringify(svLabour));
 }
+{
+  section('cash drawer audit (v1.34.0)');
+
+  const drAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const drMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const drCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+
+  check('a cashier cannot record a no-sale drawer open',
+    req('/api/drawer/open', { reason: 'Change for a customer' }, { session: drCash }).status === 403);
+  check('a no-sale open needs a reason',
+    req('/api/drawer/open', {}, { session: drMgr }).status === 400);
+  const drOk = req('/api/drawer/open', { reason: 'Change for a customer', deviceId: 'till-1' }, { session: drMgr });
+  check('a manager can record one', drOk.ok === true, JSON.stringify(drOk));
+  const drEntry = req('/api/audit', {}, { session: drAdm, params: { action: 'drawer.open' } }).data.entries;
+  check('it lands in the audit log', drEntry.length === 1, String(drEntry.length));
+  check('with who, why and which till',
+    drEntry[0] && /Change for a customer/.test(drEntry[0].summary) && drEntry[0].deviceId === 'till-1',
+    JSON.stringify(drEntry[0]));
+}
 
 
 console.log('\n-------------------------------------');

@@ -568,6 +568,15 @@ background: var(--card);
   body.printing .receipt h1 { font-size: 13px; }
 }
 
+/* A 58 mm roll gets its own page size. @page cannot be switched by a class,
+   but a named page can, so the print job opts into it. */
+@page roll58 { size: 58mm auto; margin: 3mm; }
+@media print {
+  body.printing .print-job.paper-58 { page: roll58; width: 50mm; }
+}
+#receiptPrint:empty { display: none; }
+@media screen { #receiptPrint { position: fixed; left: -10000px; top: 0; } }
+
 /* ---------------- History ---------------- */
 .hx-list { display: flex; flex-direction: column; gap: 8px; padding: 4px 16px 20px; }
 .hx-card {

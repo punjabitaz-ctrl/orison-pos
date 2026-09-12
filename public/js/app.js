@@ -117,6 +117,10 @@ function renderNav() {
   document.querySelectorAll('[data-tab]').forEach((tab) => {
     tab.addEventListener('click', () => {
       const hit = tiles.find((d) => d.id === tab.dataset.tab);
+      if (hit && hit.dialog === 'drawer') {
+        import('./drawer-dialog.js').then((m) => m.openDrawerDialog(ctx));
+        return;
+      }
       if (hit && hit.dialog === 'external') {
         import('./screens/external-sale.js').then((m) => m.openExternalSaleDialog(ctx));
         return;

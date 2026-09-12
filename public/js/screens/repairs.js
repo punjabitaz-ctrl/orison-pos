@@ -19,6 +19,7 @@ import { api } from '../api.js';
 import { idb } from '../db.js';
 import { fmt, esc, toast, beep, skeleton, emptyState, openModal, closeModal } from '../ui.js';
 import { screenHead, sectionHead, dataTable } from '../components.js';
+import { receiptDoc } from '../receipt-doc.js';
 
 export const REPAIR_FLOW = [
   { id: 'intake', label: 'Booked in', tone: 'new' },
@@ -456,8 +457,8 @@ export const screen = {
             id: t.id, tenders: due > 0 ? [{ type, amount: due }] : [],
           });
           closeModal();
-          toast(`Collected — receipt ${res.receiptNo}`, 'ok');
           beep('ok');
+          collectedDialog(t, res);
           await openTicket(t.id);
           await load();
         } catch (e) {
@@ -466,6 +467,48 @@ export const screen = {
           beep('err');
         }
       });
+    }
+
+    /* The collection is a sale like any other: same receipt, same drawer. */
+    function collectionDoc(t, res) {
+      return receiptDoc({
+        createdAt: new Date().toISOString(),
+        cashier: `${(state.user || {}).firstName || ''} ${(state.user || {}).lastName || ''}`.trim(),
+        customerName: t.customerName || '',
+        items: t.parts.map((p) => ({ name: p.name, quantity: p.quantity, unitPrice: p.unitPrice, serialNumber: p.serialNumber || null }))
+          .concat(t.labour.map((l) => ({ name: l.description, quantity: 1, unitPrice: l.amount }))),
+        subtotal: t.invoiceSubtotal,
+        taxAmount: t.invoiceTax,
+        total: res.total,
+        tenders: res.tenders || [],
+        receiptNo: res.receiptNo,
+        clientTxId: res.transactionId,
+      }, { storeName: (state.store && state.store.name) || '' });
+    }
+
+    function collectedDialog(t, res) {
+      const doc = collectionDoc(t, res);
+      const modal = openModal(`
+        <div class="form-modal">
+          <h3>${esc(t.ticketNo)} collected</h3>
+          <p>Receipt <strong>${esc(res.receiptNo)}</strong> — ${esc(fmt(res.total))}</p>
+          <div class="row">
+            <button class="btn btn-ghost" id="rpPrint" type="button">Print receipt</button>
+            <button class="btn" data-cancel type="button">Done</button>
+          </div>
+        </div>`);
+      modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
+      modal.querySelector('#rpPrint').addEventListener('click', async () => {
+        const pr = await import('../printing.js');
+        const r = await pr.printDoc(doc);
+        if (!r.ok) toast(r.message, 'warn', 3600);
+      });
+      import('../printing.js').then(async (pr) => {
+        const kicked = await pr.maybeKickForSale(res.tenders || []);
+        if (!kicked.ok && kicked.message) toast(kicked.message, 'warn', 3200);
+        const printed = await pr.maybeAutoPrint(doc);
+        if (!printed.ok && printed.message) toast(printed.message, 'warn', 3200);
+      }).catch(() => {});
     }
 
     function depositRefundDialog(t) {

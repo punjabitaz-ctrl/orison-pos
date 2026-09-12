@@ -9,6 +9,7 @@ import { menuTiles } from '../nav.js';
 import { tileGrid, screenHead } from '../components.js';
 import { openCashOutDialog } from '../money-dialogs.js';
 import { openExternalSaleDialog } from './external-sale.js';
+import { openDrawerDialog } from '../drawer-dialog.js';
 
 export const screen = {
   id: 'menu',
@@ -31,6 +32,7 @@ export const screen = {
       const hit = tiles.find((x) => x.id === btn.dataset.go);
       if (!hit) return;
       if (hit.dialog === 'external') { openExternalSaleDialog(ctx); return; }
+      if (hit.dialog === 'drawer') { openDrawerDialog(ctx); return; }
       if (hit.dialog) { openCashOutDialog(ctx, hit.dialog); return; }
       router.show(hit.screen);
     };

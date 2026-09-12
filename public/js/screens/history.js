@@ -9,6 +9,7 @@ import { screenHead } from '../components.js';
 import { api } from '../api.js';
 import { fmt, esc, openModal, closeModal, toast, debounce } from '../ui.js';
 import { kindInfo, createRefund, refundGroups, refundTotal } from '../money.js';
+import { receiptDoc } from '../receipt-doc.js';
 
 export const screen = {
   id: 'history',
@@ -183,11 +184,14 @@ export const screen = {
           <div class="tx-tenders">
             ${(t.tenders || []).map((td) => `<div class="hx-tender"><span>${esc(td.label || td.type)}</span><b>${fmt(td.amount)}</b></div>`).join('')}
           </div>
+          ${(t.kind || 'sale') === 'sale' ? '<button class="btn btn-ghost" id="printTxBtn">Print receipt</button>' : ''}
           ${refundable ? `<button class="btn" id="refundBtn" style="--bg:#c62828">Refund items</button>` : ''}
           <div id="txSend" class="receipt-send-host"></div>
         </div>`);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
 
+      const printTxBtn = modalEl.querySelector('#printTxBtn');
+      if (printTxBtn) printTxBtn.addEventListener('click', () => reprint(t));
       const refundBtn = modalEl.querySelector('#refundBtn');
       if (refundBtn) refundBtn.addEventListener('click', () => openRefundModal(t));
 
@@ -303,6 +307,30 @@ export const screen = {
         confirm.disabled = Math.round(total * 100) <= 0;
       }
       updateTotal();
+    }
+
+    /* A reprint is built from the same model as the original, so it carries
+       the receipt number - not the internal transaction id - and names a
+       repair deposit as a deposit applied. */
+    async function reprint(t) {
+      const subtotal = Number(t.subtotal) || Number(t.total) || 0;
+      const pct = Number(t.discountPct) || 0;
+      const doc = receiptDoc({
+        createdAt: t.createdAt,
+        cashier: t.cashier,
+        customerName: t.customer || '',
+        items: t.items || [],
+        subtotal,
+        discount: Math.round(subtotal * pct) / 100,
+        taxAmount: Number(t.taxAmount) || 0,
+        total: t.total,
+        tenders: t.tenders || [],
+        receiptNo: t.receiptNo,
+        clientTxId: t.clientTxId || t.id,
+      }, { storeName: (ctx.state && ctx.state.store && ctx.state.store.name) || '' });
+      const pr = await import('../printing.js');
+      const r = await pr.printDoc(doc);
+      if (!r.ok) toast(r.message, 'warn', 3600);
     }
 
     function txReceiptLines(t) {
