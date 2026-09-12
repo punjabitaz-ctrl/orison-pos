@@ -1473,3 +1473,11 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; le
   font-size: 17px;
 }
 .rp-total strong { font-size: 21px; font-variant-numeric: tabular-nums; }
+
+.rp-money { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.rp-money > div { display: flex; justify-content: space-between; align-items: baseline; }
+.rp-money span { color: var(--muted); }
+.rp-money strong { font-variant-numeric: tabular-nums; }
+.rp-money .rp-total span { color: var(--text); }
+.rp-actions { gap: 8px; margin: 12px 0 6px; flex-wrap: wrap; }
+.rp-dep { font-size: 11px; font-variant-numeric: tabular-nums; }

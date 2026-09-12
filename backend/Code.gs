@@ -4202,6 +4202,7 @@ function repairRow_(row) {
     labourTotal: t.labour,
     total: t.total,
     estimateTotal: num_(row.estimate_total),
+    depositTotal: num_(row.deposit_total),
     createdAt: String(row.created_at || ''),
     updatedAt: String(row.updated_at || ''),
     promisedAt: String(row.promised_at || ''),
@@ -4277,6 +4278,16 @@ function repairDetail_(session, params) {
   dto.finalTotal = num_(row.final_total);
   dto.parts = itobjs_(row.parts_json);
   dto.labour = itobjs_(row.labour_json);
+
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var prodById = {};
+  for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
+  var inv = repairInvoice_(row, prodById, getStore_());
+  dto.invoiceSubtotal = inv.totals.subtotal;
+  dto.invoiceTax = inv.totals.tax;
+  dto.invoiceTotal = inv.totals.total;
+  dto.balanceDue = inv.balanceC / 100;
+  dto.overpaid = inv.overpaidC / 100;
   return dto;
 }
 
@@ -4674,6 +4685,24 @@ function repairInvoiceItems_(row, prodById) {
   return items;
 }
 
+/* Price a ticket exactly as collection will charge it. The detail screen and
+ * repairCollect_ both call this, so the balance a cashier is shown and the
+ * balance the server demands cannot drift apart - tax included. */
+function repairInvoice_(row, prodById, store) {
+  var items = repairInvoiceItems_(row, prodById);
+  var totals = saleTotals_(items.map(function (it) {
+    return { unitPrice: it.unitPrice, quantity: it.quantity, discountPct: 0, taxable: it.taxable !== false };
+  }), 0, num_(store.taxRate));
+  var heldC = cents_(row.deposit_total);
+  return {
+    items: items,
+    totals: totals,
+    heldC: heldC,
+    balanceC: Math.max(0, totals.grandC - heldC),
+    overpaidC: Math.max(0, heldC - totals.grandC),
+  };
+}
+
 function repairCollect_(session, payload) {
   requireRole_(session, REPAIR_ROLES_ANY);
   var id = String((payload || {}).id || '');
@@ -4691,22 +4720,19 @@ function repairCollect_(session, payload) {
     var prodById = {};
     for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
 
-    var items = repairInvoiceItems_(row, prodById);
-    if (!items.length) throw statusError_(409, 'There is nothing on this ticket to charge for');
-
     var store = getStore_();
-    var totals = saleTotals_(items.map(function (it) {
-      return { unitPrice: it.unitPrice, quantity: it.quantity, discountPct: 0, taxable: it.taxable !== false };
-    }), 0, num_(store.taxRate));
-    var totalC = totals.grandC;
-    var heldC = cents_(row.deposit_total);
+    var inv = repairInvoice_(row, prodById, store);
+    var items = inv.items;
+    if (!items.length) throw statusError_(409, 'There is nothing on this ticket to charge for');
+    var totals = inv.totals;
+    var heldC = inv.heldC;
 
     /* A deposit bigger than the job would leave the ledger holding money that
        no longer secures anything. Give the difference back first. */
-    if (heldC > totalC) {
+    if (inv.overpaidC > 0) {
       throw statusError_(409, 'The deposit is more than the job. Refund the difference before collecting.');
     }
-    var balanceC = totalC - heldC;
+    var balanceC = inv.balanceC;
     var tenders = cleanTenders_(raw, 0);
     if (tenderCents_(tenders) !== balanceC) {
       throw statusError_(400, 'Payment must cover the balance of ' + (balanceC / 100).toFixed(2));

@@ -3797,6 +3797,24 @@ check('statement carries the changer/cashier',
   /* a deposit never creates a customer debt */
   const dpRec = req('/api/customers/receivables', {}, { session: dpAdm }).data;
   check('receivables are untouched by deposits', Array.isArray(dpRec.customers));
+
+  /* ---- Task 7 (backend half): the screen quotes what collection will charge ---- */
+  req('/api/admin/store', { taxRate: 10 }, { session: dpAdm });
+  const dpTax = req('/api/repairs', { customerName: 'Tax Check', deviceMake: 'Apple', reportedFault: 'Face ID' }, { session: dpCash }).data;
+  req('/api/repairs/labour', { id: dpTax.id, add: { description: 'Face ID repair', amount: 100 } }, { session: dpCash });
+  req('/api/repairs/deposit', { id: dpTax.id, amount: 10 }, { session: dpCash });
+  const dpTaxDet = req('/api/repairs/detail', {}, { session: dpCash, params: { id: dpTax.id } }).data;
+  check('the detail quotes the invoice total with tax on it',
+    dpTaxDet.invoiceTotal === 110, String(dpTaxDet.invoiceTotal));
+  check('and the balance still to pay after the deposit',
+    dpTaxDet.balanceDue === 100, String(dpTaxDet.balanceDue));
+  const dpTaxCol = req('/api/repairs/collect', { id: dpTax.id, tenders: [{ type: 'cash', amount: dpTaxDet.balanceDue }] }, { session: dpCash });
+  check('collecting exactly the quoted balance succeeds', dpTaxCol.ok === true, JSON.stringify(dpTaxCol));
+  check('and charges exactly what was quoted', dpTaxCol.ok && dpTaxCol.data.total === dpTaxDet.invoiceTotal);
+  check('the list row carries the deposit held, for the bench marker',
+    req('/api/repairs', {}, { session: dpCash, params: { status: 'intake' } }).data.repairs
+      .every((r) => typeof r.depositTotal === 'number'));
+  req('/api/admin/store', { taxRate: 0 }, { session: dpAdm });
 }
 
 

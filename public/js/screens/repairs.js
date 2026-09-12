@@ -8,8 +8,12 @@
    what is physically in the building.
 
    Collection is deliberately not a status anyone can pick. A repair is
-   collected by invoicing it, which is v1.32.0's job — otherwise a job could be
-   marked collected without any money changing hands. */
+   collected by charging for it (Collect & charge), which writes a real sale —
+   otherwise a job could be marked collected without any money changing hands.
+
+   The amounts on the collect dialog come from the server's own quote
+   (invoiceTotal, balanceDue), priced by the same function that charges, so the
+   balance a cashier asks for is always the balance the server accepts. */
 
 import { api } from '../api.js';
 import { idb } from '../db.js';
@@ -74,7 +78,9 @@ export const screen = {
   async render(ctx, root) {
     document.getElementById('tabbar').classList.remove('hidden');
     const { state } = ctx;
-    const isAdmin = String((state.user || {}).role) === 'admin';
+    const role = String((state.user || {}).role || 'cashier');
+    const isAdmin = role === 'admin';
+    const isManager = role === 'admin' || role === 'manager';
 
     let status = '';
     let query = '';
@@ -143,7 +149,7 @@ export const screen = {
           <td><strong>${esc(r.ticketNo)}</strong><br><span class="muted">${esc(when(r.createdAt))}</span></td>
           <td>${esc(r.device || '—')}<br><span class="muted">${esc(r.reportedFault.slice(0, 60))}</span></td>
           <td>${esc(r.customerName || r.customerPhone || '—')}</td>
-          <td>${pill(r.status)}</td>
+          <td>${pill(r.status)}${r.depositTotal > 0 ? `<br><span class="muted rp-dep">Deposit ${esc(fmt(r.depositTotal))}</span>` : ''}</td>
           <td class="num">${esc(fmt(r.total))}</td>
         </tr>`).join('');
 
@@ -215,7 +221,23 @@ export const screen = {
           ${sectionHead({ title: 'Labour', asideHtml: CLOSED.has(t.status) ? '' : '<button class="btn btn-sm" id="rpAddLab" type="button">Add labour</button>' })}
           ${labourHtml}
 
-          <div class="rp-total"><span>Total so far</span><strong>${esc(fmt(t.total))}</strong></div>
+          <div class="rp-money">
+            <div><span>Job total${t.invoiceTax > 0 ? ' (incl. tax)' : ''}</span><strong>${esc(fmt(t.invoiceTotal))}</strong></div>
+            <div><span>Deposit held</span><strong>${esc(fmt(t.depositTotal))}</strong></div>
+            ${t.status === 'collected'
+    ? `<div class="rp-total"><span>Charged</span><strong>${esc(fmt(t.finalTotal))}</strong></div>`
+    : `<div class="rp-total"><span>${t.overpaid > 0 ? 'Deposit exceeds job by' : 'Balance due'}</span><strong>${esc(fmt(t.overpaid > 0 ? t.overpaid : t.balanceDue))}</strong></div>`}
+          </div>
+
+          ${CLOSED.has(t.status) ? '' : `
+            <div class="row rp-actions">
+              <button class="btn btn-ghost" id="rpDeposit" type="button">Take deposit</button>
+              <button class="btn" id="rpCollect" type="button" ${(t.parts.length || t.labour.length) && !(t.overpaid > 0) ? '' : 'disabled'}>Collect &amp; charge</button>
+            </div>
+            ${t.overpaid > 0 ? '<p class="muted">The deposit is more than the job. Give the difference back before collecting.</p>' : ''}`}
+
+          ${isManager && t.status !== 'collected' && t.depositTotal > 0
+    ? '<button class="btn btn-ghost btn-danger" id="rpDepRefund" type="button">Give deposit back</button>' : ''}
 
           ${moves.length ? `
             <div class="field"><span>Move this job to</span>
@@ -224,7 +246,7 @@ export const screen = {
               </div>
             </div>` : '<p class="muted">This ticket is closed.</p>'}
 
-          ${isAdmin && !CLOSED.has(t.status) ? '<button class="btn btn-ghost btn-danger" id="rpVoid" type="button">Void this ticket</button>' : ''}
+          ${isAdmin && !CLOSED.has(t.status) && !(t.depositTotal > 0) ? '<button class="btn btn-ghost btn-danger" id="rpVoid" type="button">Void this ticket</button>' : ''}
         </div>`;
 
       detail.querySelectorAll('[data-move]').forEach((b) => b.addEventListener('click', () => move(t, b.dataset.move)));
@@ -234,6 +256,12 @@ export const screen = {
       if (ap) ap.addEventListener('click', () => partDialog(t.id));
       const al = detail.querySelector('#rpAddLab');
       if (al) al.addEventListener('click', () => labourDialog(t.id));
+      const dp = detail.querySelector('#rpDeposit');
+      if (dp) dp.addEventListener('click', () => depositDialog(t));
+      const cl = detail.querySelector('#rpCollect');
+      if (cl) cl.addEventListener('click', () => collectDialog(t));
+      const dr = detail.querySelector('#rpDepRefund');
+      if (dr) dr.addEventListener('click', () => depositRefundDialog(t));
       const vd = detail.querySelector('#rpVoid');
       if (vd) vd.addEventListener('click', () => voidDialog(t));
       detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -349,6 +377,125 @@ export const screen = {
         } catch (e) { err.textContent = (e && e.message) || 'Could not add that line'; }
       });
       modal.querySelector('#rpLabDesc').focus();
+    }
+
+    function depositDialog(t) {
+      const modal = openModal(`
+        <div class="form-modal">
+          <h3>Take a deposit on ${esc(t.ticketNo)}</h3>
+          <p class="muted">Held against the job, not counted as a sale. It comes off the bill when the customer collects.</p>
+          <div class="field"><span>Amount</span><input id="rpDepAmt" type="number" min="0" step="0.01" inputmode="decimal"></div>
+          <div class="field"><span>Paid by</span>
+            <div class="seg seg-sm" id="rpDepType">
+              <button class="seg-btn on" data-type="cash" type="button">Cash</button>
+              <button class="seg-btn" data-type="card" type="button">Card</button>
+            </div>
+          </div>
+          <p id="rpDepErr" class="login-err"></p>
+          <div class="row">
+            <button class="btn btn-ghost" data-cancel type="button">Cancel</button>
+            <button class="btn" id="rpDepGo" type="button">Take deposit</button>
+          </div>
+        </div>`);
+      let type = 'cash';
+      const err = modal.querySelector('#rpDepErr');
+      modal.querySelectorAll('[data-type]').forEach((b) => b.addEventListener('click', () => {
+        type = b.dataset.type;
+        modal.querySelectorAll('[data-type]').forEach((x) => x.classList.toggle('on', x.dataset.type === type));
+      }));
+      modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
+      modal.querySelector('#rpDepGo').addEventListener('click', async () => {
+        const amount = Number(modal.querySelector('#rpDepAmt').value) || 0;
+        try {
+          await api.post('/api/repairs/deposit', { id: t.id, amount, tenders: [{ type, amount }] });
+          closeModal();
+          toast(`Deposit of ${fmt(amount)} taken`, 'ok');
+          beep('ok');
+          await openTicket(t.id);
+          await load();
+        } catch (e) { err.textContent = (e && e.message) || 'Could not take that deposit'; beep('err'); }
+      });
+      modal.querySelector('#rpDepAmt').focus();
+    }
+
+    function collectDialog(t) {
+      const due = Number(t.balanceDue) || 0;
+      const modal = openModal(`
+        <div class="form-modal">
+          <h3>Collect ${esc(t.ticketNo)}</h3>
+          <div class="rp-money">
+            <div><span>Job total</span><strong>${esc(fmt(t.invoiceTotal))}</strong></div>
+            <div><span>Deposit applied</span><strong>− ${esc(fmt(t.depositTotal))}</strong></div>
+            <div class="rp-total"><span>To pay now</span><strong>${esc(fmt(due))}</strong></div>
+          </div>
+          ${due > 0 ? `
+            <div class="field"><span>Paid by</span>
+              <div class="seg seg-sm" id="rpColType">
+                <button class="seg-btn on" data-type="cash" type="button">Cash</button>
+                <button class="seg-btn" data-type="card" type="button">Card</button>
+              </div>
+            </div>` : '<p class="muted">The deposit covers the whole job. Nothing more to take.</p>'}
+          <p id="rpColErr" class="login-err"></p>
+          <div class="row">
+            <button class="btn btn-ghost" data-cancel type="button">Cancel</button>
+            <button class="btn" id="rpColGo" type="button">${due > 0 ? `Charge ${esc(fmt(due))}` : 'Hand it back'}</button>
+          </div>
+        </div>`);
+      let type = 'cash';
+      const err = modal.querySelector('#rpColErr');
+      modal.querySelectorAll('[data-type]').forEach((b) => b.addEventListener('click', () => {
+        type = b.dataset.type;
+        modal.querySelectorAll('[data-type]').forEach((x) => x.classList.toggle('on', x.dataset.type === type));
+      }));
+      modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
+      const go = modal.querySelector('#rpColGo');
+      go.addEventListener('click', async () => {
+        go.disabled = true;
+        try {
+          const res = await api.post('/api/repairs/collect', {
+            id: t.id, tenders: due > 0 ? [{ type, amount: due }] : [],
+          });
+          closeModal();
+          toast(`Collected — receipt ${res.receiptNo}`, 'ok');
+          beep('ok');
+          await openTicket(t.id);
+          await load();
+        } catch (e) {
+          go.disabled = false;
+          err.textContent = (e && e.message) || 'Could not collect that job';
+          beep('err');
+        }
+      });
+    }
+
+    function depositRefundDialog(t) {
+      const modal = openModal(`
+        <div class="form-modal">
+          <h3>Give back the deposit on ${esc(t.ticketNo)}</h3>
+          <p class="muted">Cash leaves the drawer. Held now: <strong>${esc(fmt(t.depositTotal))}</strong>. Leave the amount blank to give it all back.</p>
+          <div class="field"><span>Amount</span><input id="rpDrAmt" type="number" min="0" step="0.01" inputmode="decimal" placeholder="${esc(String(t.depositTotal))}"></div>
+          <div class="field"><span>Why</span><input id="rpDrWhy" placeholder="e.g. Board is dead, customer withdrew" autocomplete="off"></div>
+          <p id="rpDrErr" class="login-err"></p>
+          <div class="row">
+            <button class="btn btn-ghost" data-cancel type="button">Cancel</button>
+            <button class="btn btn-danger" id="rpDrGo" type="button">Give it back</button>
+          </div>
+        </div>`);
+      const err = modal.querySelector('#rpDrErr');
+      modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
+      modal.querySelector('#rpDrGo').addEventListener('click', async () => {
+        const raw = modal.querySelector('#rpDrAmt').value.trim();
+        try {
+          const res = await api.post('/api/repairs/deposit-refund', {
+            id: t.id, reason: modal.querySelector('#rpDrWhy').value.trim(),
+            amount: raw === '' ? undefined : Number(raw),
+          });
+          closeModal();
+          toast(`${fmt(res.amount)} given back`, 'ok');
+          await openTicket(t.id);
+          await load();
+        } catch (e) { err.textContent = (e && e.message) || 'Could not give that back'; }
+      });
     }
 
     function voidDialog(t) {
