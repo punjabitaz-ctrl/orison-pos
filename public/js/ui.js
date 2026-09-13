@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t } from './lang.js';
+
 /* Shared UI helpers: money formatting, dom builder, toasts, modals, sheets,
    scan beeps, and camera barcode reading (BarcodeDetector when available). */
 
@@ -22,7 +24,37 @@ export function getMoneyFormat() {
   return { ...moneyFormat };
 }
 
-export function fmt(n) {
+/* Money is a left-to-right run even inside Arabic or Urdu: "$0.00" dropped
+   into a right-to-left sentence would otherwise read "0.00$". Wrapping it in
+   Unicode isolates keeps the run intact wherever the text is shown - on
+   screen, on a raster receipt, in a WhatsApp message. Sinks that can only
+   carry ASCII (ESC/POS text, the Courier PDF, CSV) strip them again. */
+const LRI = '\u2066';
+const PDI = '\u2069';
+export function isolateLtr(s) {
+  return LRI + s + PDI;
+}
+export function stripIsolates(s) {
+  return String(s == null ? '' : s).replace(/[\u2066-\u2069]/g, '');
+}
+
+function screenIsRtl() {
+  return typeof document !== 'undefined' && document.documentElement && document.documentElement.dir === 'rtl';
+}
+
+/* What the screen shows: isolated when the screen reads right to left. */
+export function fmt(n, sign = '') {
+  const s = sign + fmtPlain(n);
+  return screenIsRtl() ? isolateLtr(s) : s;
+}
+
+/* A formatter for a document of a given direction, such as a receipt that
+   follows the store's language rather than the cashier's screen. */
+export function fmtFor(dir) {
+  return dir === 'rtl' ? (n) => isolateLtr(fmtPlain(n)) : fmtPlain;
+}
+
+export function fmtPlain(n) {
   const v = Number(n) || 0;
   if (!moneyFormatter) {
     try {
@@ -182,7 +214,7 @@ export function hasBarcodeDetector() {
 export function scanFromCamera() {
   return new Promise((resolve, reject) => {
     if (!hasBarcodeDetector()) {
-      reject(new Error('Camera scanning unsupported on this device — use the search bar with a handheld scanner.'));
+      reject(new Error($t('Camera scanning unsupported on this device — use the search bar with a handheld scanner.')));
       return;
     }
     const detector = new BarcodeDetector({
@@ -193,9 +225,9 @@ export function scanFromCamera() {
       <div class="scan-stage">
         <video id="scanVideo" autoplay playsinline muted></video>
         <div class="scan-frame"></div>
-        <p class="scan-hint">Point the camera at the barcode or IMEI label</p>
+        <p class="scan-hint">${$t('Point the camera at the barcode or IMEI label')}</p>
         <div class="scan-actions">
-          <button class="btn btn-ghost" data-close>Cancel</button>
+          <button class="btn btn-ghost" data-close>${$t('Cancel')}</button>
         </div>
       </div>
     `);
@@ -233,11 +265,11 @@ export function scanFromCamera() {
       };
       raf = requestAnimationFrame(tick);
     }).catch((e) => {
-      finish(null, new Error('Camera unavailable: ' + (e && e.message ? e.message : 'permission denied')));
+      finish(null, new Error($t('Camera unavailable: {reason}', { reason: e && e.message ? e.message : $t('permission denied') })));
     });
 
     const closeBtn = modal.querySelector('[data-close]');
-    if (closeBtn) closeBtn.addEventListener('click', () => finish(null, new Error('Scan cancelled')));
+    if (closeBtn) closeBtn.addEventListener('click', () => finish(null, new Error($t('Scan cancelled'))));
   });
 }
 
@@ -261,7 +293,7 @@ export function skeleton(kind = 'rows', count = 3) {
 
 /* One empty-state component for every screen: a glyph, what is missing, why,
    and (when there is one) the action that fills it. */
-export function emptyState({ icon = '·', title = 'Nothing here yet', body = '', action = '', actionId = '' } = {}) {
+export function emptyState({ icon = '·', title = $t('Nothing here yet'), body = '', action = '', actionId = '' } = {}) {
   return `
     <div class="empty-state">
       <div class="es-icon" aria-hidden="true">${esc(icon)}</div>
@@ -278,7 +310,7 @@ export function emptyState({ icon = '·', title = 'Nothing here yet', body = '',
    quote or newline inside a name cannot shift the columns. Mirrors the
    server's `csvCell_`. */
 export function csvCell(v) {
-  let t = String(v == null ? '' : v);
+  let t = stripIsolates(v);
   if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
   return '"' + t.replace(/"/g, '""') + '"';
 }

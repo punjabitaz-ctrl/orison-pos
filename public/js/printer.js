@@ -21,6 +21,7 @@
    decision in this file is unit-tested against a fake printer. */
 
 import { chunk, drawerKick, escposFromDoc, escposRaster, isPlainAscii, packBits } from './escpos.js';
+import { $t } from './lang.js';
 
 export const PRINTER_KEY = 'printer';
 const MODES = ['dialog', 'sheet', 'bluetooth'];
@@ -92,7 +93,7 @@ export function createBluetoothTransport(nav) {
         return;
       }
     }
-    throw new Error('That printer has no channel this app can write to.');
+    throw new Error($t('That printer has no channel this app can write to.'));
   }
 
   async function writeOne(part) {
@@ -105,7 +106,7 @@ export function createBluetoothTransport(nav) {
 
   return {
     get connected() { return !!(device && device.gatt && device.gatt.connected && characteristic); },
-    get name() { return device ? String(device.name || 'Bluetooth printer') : ''; },
+    get name() { return device ? String(device.name || $t('Bluetooth printer')) : ''; },
     get id() { return device ? String(device.id || '') : ''; },
 
     async connect() {

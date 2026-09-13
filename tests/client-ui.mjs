@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   fmt, fmtQty, esc, debounce, csvCell, csvRows, emptyState, skeleton,
   setMoneyFormat, getMoneyFormat, currencySymbol, denomLabel,
+  fmtFor, fmtPlain, stripIsolates,
 } from '../public/js/ui.js';
 
 /* ── fmt() ───────────────────────────────────────────────────── */
@@ -19,6 +20,29 @@ describe('fmt()', () => {
   it('formats string number', () => assert.equal(fmt('42.5'), '$42.50'));
   it('formats negative', () => assert.equal(fmt(-10), '-$10.00'));
   it('rounds to 2 decimals', () => assert.equal(fmt(1.005), '$1.01'));
+});
+
+describe('money in right-to-left text', () => {
+  afterEach(() => { delete globalThis.document; });
+
+  it('isolates money on a right-to-left screen so "$5.00" does not read "5.00$"', () => {
+    globalThis.document = { documentElement: { dir: 'rtl' } };
+    assert.equal(fmt(5), '\u2066$5.00\u2069');
+    globalThis.document = { documentElement: { dir: 'ltr' } };
+    assert.equal(fmt(5), '$5.00');
+  });
+
+  it('formats a receipt by its own direction, not the screen', () => {
+    globalThis.document = { documentElement: { dir: 'rtl' } };
+    assert.equal(fmtFor('ltr')(5), '$5.00', 'an English receipt printed from an Arabic screen');
+    assert.equal(fmtFor('rtl')(5), '\u2066$5.00\u2069');
+    assert.equal(fmtPlain(5), '$5.00');
+  });
+
+  it('keeps isolates out of CSV cells', () => {
+    assert.equal(csvCell('\u2066$5.00\u2069'), '"$5.00"');
+    assert.equal(stripIsolates('\u2066-$5.00\u2069'), '-$5.00');
+  });
 });
 
 /* ── fmtQty() ────────────────────────────────────────────────── */

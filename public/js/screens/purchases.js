@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t, $tn, N_ } from '../lang.js';
+
 /* Purchases: suppliers + purchase orders, manager/admin only.
    Create an order against a supplier, then receive stock against it — the
    receipt posts inventory in (weighted-average cost, serials registered) and
@@ -12,16 +14,16 @@ import { screenHead } from '../components.js';
 import { fmt, esc, toast, beep, openModal, closeModal } from '../ui.js';
 
 const STATUS_META = {
-  DRAFT: { label: 'Draft', cls: 'draft' },
-  ORDERED: { label: 'Ordered', cls: 'ordered' },
-  PARTIAL: { label: 'Partial', cls: 'partial' },
-  RECEIVED: { label: 'Received', cls: 'received' },
-  CANCELLED: { label: 'Cancelled', cls: 'cancelled' },
+  DRAFT: { label: N_('Draft'), cls: 'draft' },
+  ORDERED: { label: N_('Ordered'), cls: 'ordered' },
+  PARTIAL: { label: N_('Partial'), cls: 'partial' },
+  RECEIVED: { label: N_('Received'), cls: 'received' },
+  CANCELLED: { label: N_('Cancelled'), cls: 'cancelled' },
 };
 
 function statusLabel(s) {
   const m = STATUS_META[s] || {};
-  return { label: m.label || s, cls: m.cls || 'draft' };
+  return { label: m.label ? $t(m.label) : s, cls: m.cls || 'draft' };
 }
 
 function splitSerials(text) {
@@ -40,7 +42,7 @@ export const screen = {
     document.getElementById('tabbar').classList.remove('hidden');
     const user = ctx.state.user || (await idb.get('meta', 'config'))?.user || {};
     if ((user.role || 'cashier') !== 'admin' && (user.role || 'cashier') !== 'manager') {
-      root.innerHTML = `<div class="empty"><p>Managers and admins only.</p></div>`;
+      root.innerHTML = `<div class="empty"><p>${$t('Managers and admins only.')}</p></div>`;
       return;
     }
 
@@ -51,7 +53,7 @@ export const screen = {
 
     async function load() {
       loadErr = '';
-      root.innerHTML = `<div class="empty"><p>Loading…</p></div>`;
+      root.innerHTML = `<div class="empty"><p>${$t('Loading…')}</p></div>`;
       try {
         const [sup, ord, prods] = await Promise.all([
           api.get('/api/suppliers'),
@@ -62,7 +64,7 @@ export const screen = {
         orders = ord.orders || [];
         products = (prods || []).filter((p) => p.itemType === 'product');
       } catch (err) {
-        loadErr = (err && err.offline) ? 'Offline — purchases need the server' : 'Failed to load purchases';
+        loadErr = (err && err.offline) ? $t('Offline — purchases need the server') : $t('Failed to load purchases');
       }
       draw();
     }
@@ -70,30 +72,30 @@ export const screen = {
     function draw() {
       root.innerHTML = `
         ${screenHead({
-          title: 'Purchases',
-          sub: 'Suppliers and stock-in orders',
+          title: $t('Purchases'),
+          sub: $t('Suppliers and stock-in orders'),
           actions: `<div class="scr-actions">
-            <button class="btn btn-sm" id="poAddSupplier">+ Supplier</button>
-            <button class="btn btn-sm btn-primary" id="poNew">New PO</button>
+            <button class="btn btn-sm" id="poAddSupplier">${$t('+ Supplier')}</button>
+            <button class="btn btn-sm btn-primary" id="poNew">${$t('New PO')}</button>
           </div>`,
         })}
 
         ${loadErr ? `<div class="empty"><p>${esc(loadErr)}</p></div>` : `
         <section class="po-block">
-          <h3>Suppliers</h3>
+          <h3>${$t('Suppliers')}</h3>
           ${suppliers.length ? `
           <div class="po-plain po-suppliers">
             ${suppliers.map((s) => `
               <div class="po-supplier" data-sup="${esc(s.id)}">
                 <strong>${esc(s.name)}</strong>
                 <span class="muted">${esc(s.phone || '')}${s.email ? ` · ${esc(s.email)}` : ''}</span>
-                <span class="muted">${s.paymentTerms ? esc(s.paymentTerms) : 'Open terms'}</span>
+                <span class="muted">${s.paymentTerms ? esc(s.paymentTerms) : $t('Open terms')}</span>
               </div>`).join('')}
-          </div>` : `<p class="muted">No suppliers yet — add one to place a purchase order.</p>`}
+          </div>` : `<p class="muted">${$t('No suppliers yet — add one to place a purchase order.')}</p>`}
         </section>
 
         <section class="po-block">
-          <h3>Purchase orders</h3>
+          <h3>${$t('Purchase orders')}</h3>
           ${orders.length ? `
           <div class="po-plain">
             ${orders.map((o) => {
@@ -102,16 +104,16 @@ export const screen = {
               <div class="po-row" data-po="${esc(o.id)}">
                 <div class="po-row-main">
                   <strong>${esc(o.poNumber)}</strong>
-                  <span class="muted">${esc(o.supplierName || '—')} · ${o.itemCount} line${o.itemCount === 1 ? '' : 's'} · ${o.receivedQty}/${o.orderedQty} received</span>
-                  <span class="muted">${o.expectedDate ? `Expected ${esc(o.expectedDate)}` : 'No due date'}</span>
+                  <span class="muted">${esc(o.supplierName || '—')} · ${esc($tn('{n} line', '{n} lines', o.itemCount))} · ${esc($t('{got}/{ordered} received', { got: o.receivedQty, ordered: o.orderedQty }))}</span>
+                  <span class="muted">${o.expectedDate ? esc($t('Expected {date}', { date: o.expectedDate })) : $t('No due date')}</span>
                 </div>
                 <div class="po-row-side">
-                  <span class="po-chip ${st.cls}">${st.label}</span>
+                  <span class="po-chip ${st.cls}">${esc(st.label)}</span>
                   <strong>${fmt(o.total)}</strong>
                 </div>
               </div>`;
             }).join('')}
-          </div>` : `<p class="muted">No orders yet.</p>`}
+          </div>` : `<p class="muted">${$t('No orders yet.')}</p>`}
         </section>`}
       `;
 
@@ -134,23 +136,23 @@ export const screen = {
 
     function addSupplierModal() {
       const m = openModal(`
-        <h3>Add supplier</h3>
-        <label class="field-label">Name *</label>
+        <h3>${$t('Add supplier')}</h3>
+        <label class="field-label">${$t('Name *')}</label>
         <input class="field" id="supName" placeholder="Acme Distributors">
-        <label class="field-label">Phone</label>
+        <label class="field-label">${$t('Phone')}</label>
         <input class="field" id="supPhone" inputmode="tel" placeholder="(555) 000-0000">
-        <label class="field-label">Email</label>
+        <label class="field-label">${$t('Email')}</label>
         <input class="field" id="supEmail" type="email" placeholder="sales@example.com">
-        <label class="field-label">Payment terms</label>
-        <input class="field" id="supTerms" placeholder="Net 30">
+        <label class="field-label">${$t('Payment terms')}</label>
+        <input class="field" id="supTerms" placeholder="${$t('Net 30')}">
         <div class="modal-actions">
-          <button class="btn btn-ghost" data-close>Cancel</button>
-          <button class="btn btn-primary" id="supSave">Save</button>
+          <button class="btn btn-ghost" data-close>${$t('Cancel')}</button>
+          <button class="btn btn-primary" id="supSave">${$t('Save')}</button>
         </div>
       `);
       m.querySelector('#supSave').addEventListener('click', async () => {
         const name = m.querySelector('#supName').value.trim();
-        if (!name) { toast('Name is required', 'warn'); return; }
+        if (!name) { toast($t('Name is required'), 'warn'); return; }
         const saveBtn = m.querySelector('#supSave');
         saveBtn.disabled = true;
         try {
@@ -160,12 +162,12 @@ export const screen = {
             email: m.querySelector('#supEmail').value.trim(),
             paymentTerms: m.querySelector('#supTerms').value.trim(),
           });
-          toast('Supplier added', 'ok');
+          toast($t('Supplier added'), 'ok');
           beep('ok');
           closeModal();
           await load();
         } catch (err) {
-          toast((err && err.message) || 'Could not add supplier', 'err');
+          toast((err && err.message) || $t('Could not add supplier'), 'err');
           saveBtn.disabled = false;
         }
       });
@@ -174,7 +176,7 @@ export const screen = {
     function poLineEditorRows() {
       return `
         <div id="poLines" class="po-lines"></div>
-        <button class="btn btn-sm btn-ghost" id="poAddLine">+ Add line</button>`;
+        <button class="btn btn-sm btn-ghost" id="poAddLine">${$t('+ Add line')}</button>`;
     }
 
     function addLineRow(linesEl, pre) {
@@ -183,10 +185,10 @@ export const screen = {
       row.className = 'po-line';
       row.innerHTML = `
         <select class="field po-line-product">${productOptions()}</select>
-        <input class="field po-line-qty" inputmode="decimal" value="${esc(String(prev.quantity ?? 1))}" aria-label="Quantity">
-        <input class="field po-line-cost" inputmode="decimal" placeholder="Unit cost" value="${esc(prev.unitCost == null || prev.unitCost === '' ? '' : String(prev.unitCost))}" aria-label="Unit cost">
+        <input class="field po-line-qty" inputmode="decimal" value="${esc(String(prev.quantity ?? 1))}" aria-label="${$t('Quantity')}">
+        <input class="field po-line-cost" inputmode="decimal" placeholder="${$t('Unit cost')}" value="${esc(prev.unitCost == null || prev.unitCost === '' ? '' : String(prev.unitCost))}" aria-label="${$t('Unit cost')}">
         <span class="muted po-line-onhand"></span>
-        <button class="icon-btn po-line-del" aria-label="Remove line">✕</button>`;
+        <button class="icon-btn po-line-del" aria-label="${$t('Remove line')}">✕</button>`;
       const sel = row.querySelector('.po-line-product');
       if (prev.productId) sel.value = prev.productId;
       const onHandEl = row.querySelector('.po-line-onhand');
@@ -194,7 +196,7 @@ export const screen = {
       function glance() {
         const p = products.find((x) => x.id === sel.value);
         if (!p) return;
-        onHandEl.textContent = `${p.onHand} on hand`;
+        onHandEl.textContent = $t('{n} on hand', { n: p.onHand });
         if (!costEl.value && p.costPrice != null) costEl.value = p.costPrice;
         costEl.dataset.serialized = p.isSerialized ? '1' : '0';
       }
@@ -206,41 +208,41 @@ export const screen = {
 
     function newPoModal(saveAsOrdered) {
       const m = openModal(`
-        <h3>New purchase order</h3>
+        <h3>${$t('New purchase order')}</h3>
         <div class="form-grid">
           <div>
-            <label class="field-label">Supplier *</label>
+            <label class="field-label">${$t('Supplier *')}</label>
             <select class="field" id="poSupplier">${supplierOptions()}</select>
           </div>
           <div>
-            <label class="field-label">Expected date</label>
+            <label class="field-label">${$t('Expected date')}</label>
             <input class="field" id="poExpected" type="date">
           </div>
         </div>
-        <label class="field-label">Order lines</label>
+        <label class="field-label">${$t('Order lines')}</label>
         ${poLineEditorRows()}
         <div class="po-lines-subtotal">
-          <span class="muted">Subtotal</span><strong id="poSubtotal">${fmt(0)}</strong>
+          <span class="muted">${$t('Subtotal')}</span><strong id="poSubtotal">${fmt(0)}</strong>
         </div>
         <div class="form-grid">
           <div>
-            <label class="field-label">Discount %</label>
+            <label class="field-label">${$t('Discount %')}</label>
             <input class="field" id="poDiscount" inputmode="decimal" value="0">
           </div>
           <div>
-            <label class="field-label">Tax amount</label>
+            <label class="field-label">${$t('Tax amount')}</label>
             <input class="field" id="poTax" inputmode="decimal" value="0">
           </div>
         </div>
-        <label class="field-label">Note</label>
-        <input class="field" id="poNote" placeholder="Order reference">
+        <label class="field-label">${$t('Note')}</label>
+        <input class="field" id="poNote" placeholder="${$t('Order reference')}">
         <div class="po-lines-subtotal">
-          <span class="muted">Total</span><strong id="poTotal">${fmt(0)}</strong>
+          <span class="muted">${$t('Total')}</span><strong id="poTotal">${fmt(0)}</strong>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-ghost" data-close>Cancel</button>
-          <button class="btn" id="poSaveDraft">Save draft</button>
-          <button class="btn btn-primary" id="poSaveOrder">Save & order</button>
+          <button class="btn btn-ghost" data-close>${$t('Cancel')}</button>
+          <button class="btn" id="poSaveDraft">${$t('Save draft')}</button>
+          <button class="btn btn-primary" id="poSaveOrder">${$t('Save & order')}</button>
         </div>
       `);
       const linesEl = m.querySelector('#poLines');
@@ -267,7 +269,7 @@ export const screen = {
 
       async function submit(status) {
         const supplierId = m.querySelector('#poSupplier').value;
-        if (!supplierId) { toast('Pick a supplier', 'warn'); return; }
+        if (!supplierId) { toast($t('Pick a supplier'), 'warn'); return; }
         const lines = [];
         let bad = false;
         linesEl.querySelectorAll('.po-line').forEach((row) => {
@@ -278,8 +280,8 @@ export const screen = {
           if (!(qty > 0) || !(unitCost >= 0)) { bad = true; return; }
           lines.push({ productId: p.id, quantity: qty, unitCost });
         });
-        if (bad) { toast('Check each line: quantity and unit cost', 'warn'); return; }
-        if (!lines.length) { toast('Add at least one line', 'warn'); return; }
+        if (bad) { toast($t('Check each line: quantity and unit cost'), 'warn'); return; }
+        if (!lines.length) { toast($t('Add at least one line'), 'warn'); return; }
         const btn = m.querySelector(status === 'ORDERED' ? '#poSaveOrder' : '#poSaveDraft');
         btn.disabled = true;
         try {
@@ -292,12 +294,12 @@ export const screen = {
             note: m.querySelector('#poNote').value.trim(),
             status,
           });
-          toast(`${res.poNumber} saved`, 'ok');
+          toast($t('{number} saved', { number: res.poNumber }), 'ok');
           beep('ok');
           closeModal();
           await load();
         } catch (err) {
-          toast((err && err.message) || 'Could not save the order', 'err');
+          toast((err && err.message) || $t('Could not save the order'), 'err');
           btn.disabled = false;
         }
       }
@@ -312,14 +314,14 @@ export const screen = {
       try {
         ord = (await api.get(`/api/purchase-orders/detail?id=${encodeURIComponent(id)}`)).order;
       } catch (err) {
-        msg = (err && err.message) || 'Could not load the order';
+        msg = (err && err.message) || $t('Could not load the order');
       }
 
       const m = openModal(`
-        <h3>${ord ? esc(ord.poNumber) : 'Purchase order'}</h3>
+        <h3>${ord ? esc(ord.poNumber) : $t('Purchase order')}</h3>
         ${msg ? `<div class="po-msg">${esc(msg)}</div>` : ord ? `
-        <p class="muted">${esc(ord.supplierName)} · ordered ${esc(ord.orderDate.slice(0, 10))}${ord.expectedDate ? ` · expected ${esc(ord.expectedDate)}` : ''}</p>
-        <div class="po-chip ${statusLabel(ord.status).cls}">${statusLabel(ord.status).label}</div>
+        <p class="muted">${esc(ord.supplierName)} · ${esc($t('ordered {date}', { date: ord.orderDate.slice(0, 10) }))}${ord.expectedDate ? ` · ${esc($t('expected {date}', { date: ord.expectedDate }))}` : ''}</p>
+        <div class="po-chip ${statusLabel(ord.status).cls}">${esc(statusLabel(ord.status).label)}</div>
 
         <div class="po-detail-lines">
           ${ord.lines.map((l) => `
@@ -329,36 +331,36 @@ export const screen = {
                 <span class="muted">${esc(l.sku)} · ${l.quantity} × ${fmt(l.unitCost)}</span>
               </div>
               <div class="po-detail-right">
-                <span class="muted">received ${l.receivedQty}/${l.quantity}</span>
-                ${l.onHand != null ? `<strong>${l.onHand} on hand</strong>` : ''}
+                <span class="muted">${esc($t('received {got}/{ordered}', { got: l.receivedQty, ordered: l.quantity }))}</span>
+                ${l.onHand != null ? `<strong>${esc($t('{n} on hand', { n: l.onHand }))}</strong>` : ''}
               </div>
             </div>`).join('')}
         </div>
         <div class="po-lines-subtotal">
-          <span class="muted">${ord.discountPct ? `Subtotal ${fmt(ord.subtotal)} − ${ord.discountPct}% · tax ${fmt(ord.taxAmount)}` : `Subtotal ${fmt(ord.subtotal)} · tax ${fmt(ord.taxAmount)}`}</span>
+          <span class="muted">${esc(ord.discountPct ? $t('Subtotal {subtotal} − {pct}% · tax {tax}', { subtotal: fmt(ord.subtotal), pct: ord.discountPct, tax: fmt(ord.taxAmount) }) : $t('Subtotal {subtotal} · tax {tax}', { subtotal: fmt(ord.subtotal), tax: fmt(ord.taxAmount) }))}</span>
           <strong>${fmt(ord.total)}</strong>
         </div>
         ${ord.note ? `<p class="muted">${esc(ord.note)}</p>` : ''}
         <div class="modal-actions">
-          <button class="btn btn-ghost" data-close>Close</button>
+          <button class="btn btn-ghost" data-close>${$t('Close')}</button>
           ${(ord.status === 'ORDERED' || ord.status === 'PARTIAL') ? `
-            <button class="btn btn-danger-ghost" id="poCancel">Cancel order</button>
-            <button class="btn btn-primary" id="poReceive">Receive stock</button>` : ''}
+            <button class="btn btn-danger-ghost" id="poCancel">${$t('Cancel order')}</button>
+            <button class="btn btn-primary" id="poReceive">${$t('Receive stock')}</button>` : ''}
         </div>` : ''}
       `);
 
       if (!ord) return;
       const cancelBtn = m.querySelector('#poCancel');
       if (cancelBtn) cancelBtn.addEventListener('click', async () => {
-        if (!confirm('Cancel this purchase order?')) return;
+        if (!confirm($t('Cancel this purchase order?'))) return;
         cancelBtn.disabled = true;
         try {
           await api.post('/api/purchase-orders/cancel', { id });
-          toast('Order cancelled', 'ok');
+          toast($t('Order cancelled'), 'ok');
           closeModal();
           await load();
         } catch (err) {
-          toast((err && err.message) || 'Could not cancel', 'err');
+          toast((err && err.message) || $t('Could not cancel'), 'err');
           cancelBtn.disabled = false;
         }
       });
@@ -369,27 +371,27 @@ export const screen = {
     function receiveModal(ord) {
       const openLines = ord.lines.filter((l) => l.remaining > 0);
       const m = openModal(`
-        <h3>Receive — ${esc(ord.poNumber)}</h3>
-        <p class="muted">Enter what actually arrived. Sealed items need a serial number per unit.</p>
+        <h3>${esc($t('Receive — {number}', { number: ord.poNumber }))}</h3>
+        <p class="muted">${$t('Enter what actually arrived. Sealed items need a serial number per unit.')}</p>
         <div id="poRecvLines" class="po-recv-lines">
           ${openLines.map((l) => `
             <div class="po-recv-line" data-line="${esc(l.productId)}">
               <div class="po-recv-head">
                 <strong>${esc(l.name)}</strong>
-                <span class="muted">${esc(l.sku)} · open ${l.remaining}</span>
-                ${l.serialized ? '<span class="po-chip ordered">serialized</span>' : ''}
+                <span class="muted">${esc(l.sku)} · ${esc($t('open {n}', { n: l.remaining }))}</span>
+                ${l.serialized ? `<span class="po-chip ordered">${$t('serialized')}</span>` : ''}
               </div>
               <div class="po-recv-fields">
-                <input class="field po-recv-qty" inputmode="decimal" value="${l.remaining}" max="${l.remaining}" data-max="${l.remaining}" aria-label="Received quantity">
+                <input class="field po-recv-qty" inputmode="decimal" value="${l.remaining}" max="${l.remaining}" data-max="${l.remaining}" aria-label="${$t('Received quantity')}">
                 ${l.serialized
-                  ? `<textarea class="field po-recv-serials" rows="3" placeholder="One serial per line">${(l.serializedSerials || []).join('\n')}</textarea>`
+                  ? `<textarea class="field po-recv-serials" rows="3" placeholder="${$t('One serial per line')}">${(l.serializedSerials || []).join('\n')}</textarea>`
                   : ''}
               </div>
             </div>`).join('')}
         </div>
         <div class="modal-actions">
-          <button class="btn btn-ghost" data-close>Close</button>
-          <button class="btn btn-primary" id="poRecvGo">Post receipt</button>
+          <button class="btn btn-ghost" data-close>${$t('Close')}</button>
+          <button class="btn btn-primary" id="poRecvGo">${$t('Post receipt')}</button>
         </div>
       `);
 
@@ -408,17 +410,17 @@ export const screen = {
           }
           lines.push({ productId, quantity: qty, serialNumbers: serials });
         });
-        if (invalid) { toast(`Fix ${invalid}: quantity and serials must match`, 'warn'); return; }
+        if (invalid) { toast($t('Fix {name}: quantity and serials must match', { name: invalid }), 'warn'); return; }
         const go = m.querySelector('#poRecvGo');
         go.disabled = true;
         try {
           const res = await api.post('/api/purchase-orders/receive', { id: ord.id, lines });
           closeModal();
-          toast(`Receipt posted — ${fmt(res.receivedValue)}`, 'ok');
+          toast($t('Receipt posted — {amount}', { amount: fmt(res.receivedValue) }), 'ok');
           beep('ok');
           await load();
         } catch (err) {
-          toast((err && err.message) || 'Receipt failed', 'err');
+          toast((err && err.message) || $t('Receipt failed'), 'err');
           go.disabled = false;
         }
       });

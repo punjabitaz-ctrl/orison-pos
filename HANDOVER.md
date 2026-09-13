@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.34.0** — printing and the cash drawer (`2026-09-12`) |
-| Validation bar | `backend-sim` **PASS 715 / FAIL 0** · client units **PASS 427 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.35.0** — English, Arabic and Urdu, right to left (`2026-09-12`) |
+| Validation bar | `backend-sim` **PASS 715 / FAIL 0** · client units **PASS 459 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~5,110 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,26 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.35.0** English / Arabic / Urdu with RTL (owner decision: RTL in scope,
+  options offered in-app). `lang.js` is the whole mechanism: the English text
+  is the key (`$t('New sale')`, `$tn(one, other, n)`, `N_()` to mark data,
+  `tIn(code, …)` for the store's language), plurals through
+  `Intl.PluralRules`, `{name}` placeholders. Catalogues `lang/ar.js` and
+  `lang/ur.js` load on demand. Terminal choice lives in IndexedDB `meta/lang`
+  (`store` | `en` | `ar` | `ur`) and switching reloads. Receipts and the
+  customer display follow `store.locale` (`receipt-labels.js`). **Never call
+  `$t` at module scope**, because catalogues load asynchronously. Don't name a
+  local `t`; a guard test fails if one shadows the import.
+  `tests/client-lang-catalogues.mjs` scans source for every literal and fails
+  on missing, stale, untranslated, placeholder, plural or markup problems. To
+  add a string, add it in English, then add it to both catalogues. CSS uses
+  logical properties, with a short `[dir="rtl"]` block for shadows, motion and
+  `.flip-rtl`. Money on screen is wrapped in Unicode isolates (`fmt`); receipts
+  use `fmtFor(doc.dir)`; CSV, ESC/POS text and the PDF strip them. Arabic and
+  Urdu receipts hide the Courier PDF and send text. The untracked
+  `public/js/i18n.js` and `public/locales/` are **not** this work. They are
+  someone else's abandoned attempt; leave them alone. **Translations are
+  unreviewed by native speakers.**
 - **v1.34.0** Printing and the cash drawer (owner decision: Bluetooth and
   standard printers too; replaces the parked v1.28.0, number not reused).
   `receipt-doc.js` (one model) → `receipt-render.js` (roll HTML, full-page
@@ -405,7 +425,7 @@ admin/manager.
   the guards that now read under the lock).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  **427 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  **459 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
   ui `fmt`/`esc`/`debounce`/`csvCell`/`emptyState`/`skeleton`, (v1.15.0)
@@ -496,7 +516,7 @@ The approved roadmap (v1.8–v1.16), the interface-v2 rebuild (v1.17–v1.20) an
 the operational-readiness program (v1.21–v1.30) are all complete. What is left
 is below, in the order it should be picked up.
 
-1. **Deploy v1.34.0 — both halves.** The backend has changed in nearly every
+1. **Deploy v1.35.0 — both halves.** The backend has changed in nearly every
    release since v1.16.0, so a frontend-only push ships a client that calls
    endpoints the server does not have.
    - Paste `backend/Code.gs` into Apps Script and **deploy a new Web App
@@ -507,7 +527,7 @@ is below, in the order it should be picked up.
    - Run **`installReportTriggers()`** once, then set recipients in
      Settings → *Scheduled reports*. **Every cadence ships off**; nobody
      starts receiving mail because a release landed.
-   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.34.0 shell
+   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.35.0 shell
      on next load (`sw.js` VERSION is bumped).
    - Sign in as an admin once and complete the store setup dialog (language,
      country, currency) if this is a fresh deployment.
@@ -522,14 +542,16 @@ is below, in the order it should be picked up.
    add its UUID. Buy a **Bluetooth Low Energy** printer; Web Bluetooth needs
    **Chrome or Edge** and does not exist on iPhone or iPad.
 4. **Re-run `pdf-smoke`** somewhere Edge will launch headless — see §6.
-5. **Translation — needs a decision from the owner.** The one open review
-   finding; see §10.
+5. **Native-speaker review of Arabic and Urdu** (v1.35.0). Walk every screen
+   in each language and fix wording in `public/js/lang/ar.js` / `ur.js`. The
+   catalogue test keeps the fix honest. Still English by design: CSV headers,
+   the Sheets workbook, scheduled report emails.
 
 ## 10. Review findings — status (reviewed 2026-09-10, closed out 2026-09-11)
 
 A full security + usability pass was run after v1.15.0. Everything cheap and
 safe to fix shipped in **v1.15.1**. The rest was written up here with what each
-would cost, and has since been worked through. **Seven of the eight are now
+would cost, and has since been worked through. **All eight are now
 closed.** Nothing below was silently dropped.
 
 ### Closed
@@ -560,9 +582,13 @@ closed.** Nothing below was silently dropped.
   60s for reports, exports, backups, audit and the reorder worksheet; 15s for
   everything else, so a slow report is no longer reported as "offline".
 
-### Open — the one that needs a decision
+### Closed by v1.35.0
 
-1. **The interface itself is not translated.** v1.16.0 made the *locale* real
+1. ~~**The interface itself is not translated.**~~ **v1.35.0** — owner chose
+   English, Arabic and Urdu, RTL in scope. Original write-up kept below for the
+   reasoning.
+
+   **The interface itself is not translated.** v1.16.0 made the *locale* real
    — currency, number grouping, dates all follow the store — but every string
    in the UI is still English. Translating it is a different shape of work:
    extract ~600–1,000 strings from 15 screens into a catalogue, add a `t()`
@@ -660,8 +686,8 @@ shift-roster leak (v1.17.0) and the dead cart ✕ button (v1.18.0).
    question for the business owners, not a build task. §9 item 2.
 3. **`pdf-smoke`** — §6. It has been unrun since v1.18.0 and should not be
    assumed green.
-4. **Translation** — §10, open finding #1, needs the owner to say which
-   languages and whether RTL is in scope.
+4. **Translation** — shipped in v1.35.0 (en / ar / ur, RTL). Needs a
+   native-speaker read before go-live.
 
 ### Worth knowing before you touch it
 

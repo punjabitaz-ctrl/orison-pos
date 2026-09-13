@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t } from './lang.js';
+
 /* Shelf / product labels: a Code 128-B encoder and an SVG renderer, plus the
    markup for a printable label sheet.
 
@@ -46,7 +48,7 @@ export function encodable(text) {
    check symbol, stop. */
 export function code128bValues(text) {
   const s = String(text == null ? '' : text);
-  if (!encodable(s)) throw new Error('Code 128-B can only encode printable ASCII (32-126)');
+  if (!encodable(s)) throw new Error($t('Code 128-B can only encode printable ASCII (32-126)'));
   const values = [START_B];
   for (let i = 0; i < s.length; i++) values.push(s.charCodeAt(i) - 32);
 
@@ -120,7 +122,7 @@ export function labelsFor(products, quantities = {}) {
 }
 
 export function labelSheetHtml(labels, { fmt = (v) => String(v), store = '' } = {}) {
-  if (!labels || !labels.length) return '<p class="empty">Nothing to print.</p>';
+  if (!labels || !labels.length) return `<p class="empty">${$t('Nothing to print.')}</p>`;
   return `<div class="lbl-sheet">${labels.map((l) => `
     <div class="lbl">
       <div class="lbl-name">${escapeAttr(l.name)}</div>

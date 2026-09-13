@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t, $tn, N_, arrow, dateLocale } from '../lang.js';
+
 /* Staff screen: the people side of the till. Everyone gets their own time
    clock and shift history; managers and admins also get who is on the floor
    right now, per-cashier performance for a chosen window, and the till
@@ -7,23 +9,23 @@
    something useful on a terminal that just lost its connection. */
 
 import { api } from '../api.js';
-import { screenHead, sectionHead, statRow, dataTable, rankList } from '../components.js';
+import { roleLabel, screenHead, sectionHead, statRow, dataTable, rankList } from '../components.js';
 import { fmt, esc, toast, beep, skeleton, emptyState } from '../ui.js';
 import { getDeviceId, SYNC_EVENT, queuePunch } from '../sync.js';
 import { hoursFromEntries, fmtDuration, shiftDayKey, dayKey } from '../stats.js';
 
 const MANAGER_ROLES = ['admin', 'manager'];
 const PERIODS = [
-  { id: 'today', label: 'Today', days: 0 },
-  { id: 'week', label: '7 days', days: 6 },
-  { id: 'month', label: '30 days', days: 29 },
+  { id: 'today', label: N_('Today'), days: 0 },
+  { id: 'week', label: N_('7 days'), days: 6 },
+  { id: 'month', label: N_('30 days'), days: 29 },
 ];
 
 function when(iso, withDate = true) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d)) return String(iso);
-  return d.toLocaleString('en-US', withDate
+  return d.toLocaleString(dateLocale(), withDate
     ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
     : { hour: 'numeric', minute: '2-digit' });
 }
@@ -31,7 +33,7 @@ function when(iso, withDate = true) {
 export const screen = {
   id: 'staff',
   tab: 'staff',
-  title: 'Staff',
+  title: $t('Staff'),
 
   async render(ctx, root) {
     document.getElementById('tabbar').classList.remove('hidden');
@@ -52,9 +54,9 @@ export const screen = {
 
     root.innerHTML = `
       ${screenHead({
-        title: 'Staff',
-        sub: `${[user.firstName, user.lastName].filter(Boolean).join(' ') || 'Signed in'} · ${user.role || 'cashier'}`,
-        actions: '<button class="icon-btn" id="staffRefresh" aria-label="Refresh">⟳</button>',
+        title: $t('Staff'),
+        sub: `${[user.firstName, user.lastName].filter(Boolean).join(' ') || $t('Signed in')} · ${$t(roleLabel(user.role || 'cashier'))}`,
+        actions: `<button class="icon-btn" id="staffRefresh" aria-label="${$t('Refresh')}">⟳</button>`,
       })}
       <div id="staffBody">${skeleton('rows', 4)}</div>`;
 
@@ -90,21 +92,21 @@ export const screen = {
       const weekHours = hoursFromEntries(entriesFor(user.id, shiftDayKey(6)));
       return `
         <section class="dash-section">
-          <h3>My time clock</h3>
+          <h3>${$t('My time clock')}</h3>
           <div class="clock-card ${open ? 'on' : ''}">
             <div class="clock-state">
               <span class="clock-dot" aria-hidden="true"></span>
               <div>
-                <strong>${open ? 'Clocked in' : 'Clocked out'}</strong>
-                <p class="muted">${open ? 'since ' + esc(when(clock.me.since, false)) : 'Punch in when you start on the floor.'}</p>
+                <strong>${open ? $t('Clocked in') : $t('Clocked out')}</strong>
+                <p class="muted">${open ? esc($t('since {when}', { when: when(clock.me.since, false) })) : $t('Punch in when you start on the floor.')}</p>
               </div>
             </div>
-            <button class="btn ${open ? 'btn-danger' : ''}" id="punchBtn">${open ? 'Punch out' : 'Punch in'}</button>
+            <button class="btn ${open ? 'btn-danger' : ''}" id="punchBtn">${open ? $t('Punch out') : $t('Punch in')}</button>
           </div>
           ${statRow([
-            { label: 'Today', value: fmtDuration(todayHours) },
-            { label: 'Last 7 days', value: fmtDuration(weekHours) },
-            { label: 'Punches', value: entriesFor(user.id, shiftDayKey(6)).length },
+            { label: $t('Today'), value: fmtDuration(todayHours) },
+            { label: $t('Last 7 days'), value: fmtDuration(weekHours) },
+            { label: $t('Punches'), value: entriesFor(user.id, shiftDayKey(6)).length },
           ])}
         </section>`;
     }
@@ -113,13 +115,13 @@ export const screen = {
       const mine = entriesFor(user.id, null).slice(0, 8);
       return `
         <section class="dash-section">
-          <h3>Recent punches</h3>
+          <h3>${$t('Recent punches')}</h3>
           ${mine.length ? rankList(mine.map((e) => ({
-            name: `${when(e.clockIn)}${e.clockOut ? ' → ' + when(e.clockOut, false) : ''}`,
-            meta: `${e.status === 'OPEN' ? 'On the floor now' : fmtDuration((Number(e.minutes) || 0) / 60)}${e.note ? ' · ' + e.note : ''}`,
-            rightHtml: `<span class="tag ${e.status === 'OPEN' ? 'tag-live' : ''}">${esc(e.status)}</span>`,
+            name: `${when(e.clockIn)}${e.clockOut ? ' ' + arrow() + ' ' + when(e.clockOut, false) : ''}`,
+            meta: `${e.status === 'OPEN' ? $t('On the floor now') : fmtDuration((Number(e.minutes) || 0) / 60)}${e.note ? ' · ' + e.note : ''}`,
+            rightHtml: `<span class="tag ${e.status === 'OPEN' ? 'tag-live' : ''}">${esc(e.status === 'OPEN' ? $t('Open') : $t('Closed'))}</span>`,
           })))
-            : emptyState({ icon: '⏱', title: 'No punches yet', body: 'Your clock-in and clock-out times will show up here.' })}
+            : emptyState({ icon: '⏱', title: $t('No punches yet'), body: $t('Your clock-in and clock-out times will show up here.') })}
         </section>`;
     }
 
@@ -127,13 +129,13 @@ export const screen = {
       const open = (clock.entries || []).filter((e) => e.status === 'OPEN');
       return `
         <section class="dash-section">
-          <h3>On the floor <span class="muted">· ${open.length} clocked in</span></h3>
+          <h3>${$t('On the floor')} <span class="muted">· ${esc($tn('{n} clocked in', '{n} clocked in', open.length))}</span></h3>
           ${open.length ? rankList(open.map((e) => ({
             name: e.userName,
-            meta: `since ${when(e.clockIn, false)}${e.deviceId ? ' · terminal ' + e.deviceId.slice(0, 8).toUpperCase() : ''}`,
+            meta: `${$t('since {when}', { when: when(e.clockIn, false) })}${e.deviceId ? ' · ' + $t('terminal {id}', { id: e.deviceId.slice(0, 8).toUpperCase() }) : ''}`,
             rightHtml: `<b>${esc(fmtDuration(hoursFromEntries([e])))}</b>`,
           })))
-            : emptyState({ icon: '🏪', title: 'Nobody is clocked in', body: 'Staff punches show up here the moment someone starts a shift.' })}
+            : emptyState({ icon: '🏪', title: $t('Nobody is clocked in'), body: $t('Staff punches show up here the moment someone starts a shift.') })}
         </section>`;
     }
 
@@ -147,14 +149,14 @@ export const screen = {
       return `
         <section class="dash-section">
           ${sectionHead({
-            title: 'Team performance',
-            asideHtml: `<div class="seg seg-sm">${PERIODS.map((p) => `<button class="seg-btn ${p.id === period ? 'on' : ''}" data-period="${p.id}">${esc(p.label)}</button>`).join('')}</div>`,
+            title: $t('Team performance'),
+            asideHtml: `<div class="seg seg-sm">${PERIODS.map((p) => `<button class="seg-btn ${p.id === period ? 'on' : ''}" data-period="${p.id}">${esc($t(p.label))}</button>`).join('')}</div>`,
           })}
           ${!report ? skeleton('table', 3) : (rows.length ? dataTable({
               head: [
-                { label: 'Cashier' }, { label: 'Sales', num: true }, { label: 'Tickets', num: true },
-                { label: 'Avg ticket', num: true }, { label: 'Margin', num: true },
-                { label: 'Hours', num: true }, { label: 'Per hour', num: true },
+                { label: $t('Cashier') }, { label: $t('Sales'), num: true }, { label: $t('Tickets'), num: true },
+                { label: $t('Avg ticket'), num: true }, { label: $t('Margin'), num: true },
+                { label: $t('Hours'), num: true }, { label: $t('Per hour'), num: true },
               ],
               bodyHtml: `
                   ${rows.map((r) => {
@@ -170,7 +172,7 @@ export const screen = {
                     </tr>`;
                   }).join('')}`,
             })
-            : emptyState({ icon: '📊', title: 'No sales in this window', body: 'Performance fills in as the team rings sales.' }))}
+            : emptyState({ icon: '📊', title: $t('No sales in this window'), body: $t('Performance fills in as the team rings sales.') }))}
         </section>`;
     }
 
@@ -180,11 +182,11 @@ export const screen = {
       const net = closed.reduce((s, x) => s + (Number(x.overShort) || 0), 0);
       return `
         <section class="dash-section">
-          <h3>${isManager ? 'Till reconciliation' : 'My shifts'}</h3>
+          <h3>${isManager ? $t('Till reconciliation') : $t('My shifts')}</h3>
           ${closed.length ? dataTable({
               head: [
-                { label: 'Cashier' }, { label: 'Closed' }, { label: 'Declared', num: true },
-                { label: 'Expected', num: true }, { label: 'Over / short', num: true },
+                { label: $t('Cashier') }, { label: $t('Closed') }, { label: $t('Declared'), num: true },
+                { label: $t('Expected'), num: true }, { label: $t('Over / short'), num: true },
               ],
               bodyHtml: `
                   ${closed.map((s) => `<tr>
@@ -192,17 +194,17 @@ export const screen = {
                     <td>${esc(when(s.closedAt))}</td>
                     <td class="num">${fmt(s.declaredCash)}</td>
                     <td class="num">${fmt(s.expectedCash)}</td>
-                    <td class="num ${Number(s.overShort) === 0 ? '' : (Number(s.overShort) > 0 ? 'gp' : 'neg')}">${Number(s.overShort) > 0 ? '+' : ''}${fmt(s.overShort)}</td>
+                    <td class="num ${Number(s.overShort) === 0 ? '' : (Number(s.overShort) > 0 ? 'gp' : 'neg')}">${fmt(s.overShort, Number(s.overShort) > 0 ? '+' : '')}</td>
                   </tr>`).join('')}`,
-              footHtml: `<tr><td colspan="4">Net over / short</td><td class="num ${net === 0 ? '' : (net > 0 ? 'gp' : 'neg')}">${net > 0 ? '+' : ''}${fmt(net)}</td></tr>`,
+              footHtml: `<tr><td colspan="4">${$t('Net over / short')}</td><td class="num ${net === 0 ? '' : (net > 0 ? 'gp' : 'neg')}">${fmt(net, net > 0 ? '+' : '')}</td></tr>`,
             })
-            : emptyState({ icon: '🧾', title: 'No closed shifts yet', body: 'Close a shift from the dashboard to reconcile the drawer.' })}
+            : emptyState({ icon: '🧾', title: $t('No closed shifts yet'), body: $t('Close a shift from the dashboard to reconcile the drawer.') })}
         </section>`;
     }
 
     function draw() {
       body.innerHTML = `
-        ${offline ? '<p class="muted scr-note">Offline — punches are queued and sent when the line returns. Team figures need a connection.</p>' : ''}
+        ${offline ? `<p class="muted scr-note">${$t('Offline — punches are queued and sent when the line returns. Team figures need a connection.')}</p>` : ''}
         ${myClockCard()}
         ${isManager ? onFloorCard() : ''}
         ${isManager ? performanceCard() : ''}
@@ -227,22 +229,22 @@ export const screen = {
            punch is queued with the time it actually happened and sent when the
            line returns. */
         await queuePunch({ at: new Date().toISOString(), deviceId: await getDeviceId() });
-        toast(wasOpen ? 'Clock-out queued — will send when back online' : 'Clock-in queued — will send when back online', 'ok', 3200);
+        toast(wasOpen ? $t('Clock-out queued — will send when back online') : $t('Clock-in queued — will send when back online'), 'ok', 3200);
         beep('ok');
         btn.disabled = false;
         return;
       }
       try {
         const res = await api.post('/api/timeclock/punch', { at: new Date().toISOString(), deviceId: await getDeviceId() });
-        toast(res.punched === 'in' ? 'Clocked in' : 'Clocked out · ' + fmtDuration((Number(res.entry.minutes) || 0) / 60), 'ok');
+        toast(res.punched === 'in' ? $t('Clocked in') : $t('Clocked out · {duration}', { duration: fmtDuration((Number(res.entry.minutes) || 0) / 60) }), 'ok');
         beep('ok');
         await load();
       } catch (err) {
         btn.disabled = false;
         const code = err && err.data && err.data.error;
         toast(code === 'already_clocked_in'
-          ? 'Already clocked in on another terminal'
-          : (code || (wasOpen ? 'Could not clock out' : 'Could not clock in')), 'warn');
+          ? $t('Already clocked in on another terminal')
+          : ((err && err.message) || (wasOpen ? $t('Could not clock out') : $t('Could not clock in'))), 'warn');
       }
     }
 

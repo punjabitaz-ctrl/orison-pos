@@ -30,6 +30,9 @@ const DEFAULT_LABELS = {
   tender_net30: 'On account',
   tender_account: 'On account',
   tender_deposit: 'Deposit applied',
+  qty: 'Qty',
+  price: 'Price',
+  amount: 'Amount',
 };
 
 function cents(n) {
@@ -102,5 +105,7 @@ export function receiptDoc(tx, ctx = {}) {
     reference: receiptNo || `# ${t.clientTxId || t.id || ''}`,
     pending: !receiptNo,
     pendingLabel: labels.pending,
+    columns: { qty: labels.qty, price: labels.price, amount: labels.amount },
+    dir: ctx.dir === 'rtl' ? 'rtl' : 'ltr',
   };
 }

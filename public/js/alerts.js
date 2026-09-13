@@ -1,5 +1,7 @@
 'use strict';
 
+import { N_ } from './lang.js';
+
 /* Alert computation for inventory & sales operations — pure functions that
    run offline against the local catalog. Shared by the Alerts screen, the
    Dashboard summary, and the tab badge, so every surface agrees on what
@@ -14,9 +16,9 @@
 */
 
 const AGING_BUCKETS = [
-  { key: '7',  days: 7,  label: '7 days' },
-  { key: '15', days: 15, label: '15 days' },
-  { key: '30', days: 30, label: '30 days' },
+  { key: '7',  days: 7,  label: N_('7 days') },
+  { key: '15', days: 15, label: N_('15 days') },
+  { key: '30', days: 30, label: N_('30 days') },
 ];
 
 export function available(p) {

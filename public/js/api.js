@@ -9,6 +9,7 @@
    request is a hard requirement (login, admin) or best-effort (sync). */
 
 import { idb } from './db.js';
+import { $t } from './lang.js';
 
 async function getConfig() {
   return (await idb.get('meta', 'config')) || {};
@@ -81,13 +82,13 @@ async function request(path, { method = 'GET', body, timeout } = {}) {
     const isJson = (res.headers.get('content-type') || '').includes('application/json');
     const data = isJson ? await res.json() : await res.text();
     if (!res.ok) {
-      const err = new Error((data && data.error) || `Request failed (${res.status})`);
+      const err = new Error((data && data.error) || $t('Request failed ({status})', { status: res.status }));
       err.status = res.status;
       err.data = data;
       throw err;
     }
     if (data && data.ok === false) {
-      const err = new Error(data.error || 'Request failed');
+      const err = data.error ? serverError(data.error) : new Error($t('Request failed'));
       err.status = data.status || 400;
       err.data = data;
       throw err;
@@ -95,12 +96,12 @@ async function request(path, { method = 'GET', body, timeout } = {}) {
     return data ? data.data : data;
   } catch (err) {
     if (err.name === 'AbortError') {
-      const e = new Error('Request timed out (offline?)');
+      const e = new Error($t('Request timed out (offline?)'));
       e.offline = true;
       throw e;
     }
     if (err && err.name === 'TypeError') {
-      const e = new Error('Network unreachable (offline)');
+      const e = new Error($t('Network unreachable (offline)'));
       e.offline = true;
       throw e;
     }
@@ -114,6 +115,11 @@ async function request(path, { method = 'GET', body, timeout } = {}) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/* Server messages arrive in English; the fixed ones have translations. */
+function serverError(message) {
+  return new Error($t(message));
 }
 
 const api = {

@@ -24,6 +24,7 @@ import { screen as audit } from './screens/audit.js';
 import { screen as repairs } from './screens/repairs.js';
 import { primaryTabs, menuTiles, isRestricted } from './nav.js';
 import { navButton, appHeaderHtml } from './components.js';
+import { $t, $tn, setLanguage, resolveLanguage, loadChoice, setStoreLanguage, dateLocale } from './lang.js';
 
 const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff, menu, audit, repairs };
 
@@ -140,7 +141,7 @@ function renderHeader() {
   if (!bar) return;
   const u = state.user || {};
   bar.innerHTML = appHeaderHtml({
-    storeName: (state.store && state.store.name) || 'Orison POS',
+    storeName: (state.store && state.store.name) || $t('Orison POS'),
     userName: [u.firstName, u.lastName].filter(Boolean).join(' '),
     role: u.role,
   });
@@ -154,7 +155,7 @@ let clockTimer = null;
 function tickClock() {
   const el = document.getElementById('appClock');
   if (!el) return;
-  el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  el.textContent = new Date().toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   if (!clockTimer) clockTimer = setInterval(tickClock, 1000);
 }
 
@@ -165,11 +166,11 @@ function refreshStatus() {
   el.classList.toggle('online', online);
   el.classList.toggle('offline', !online);
   const txt = el.querySelector('.ab-status-text');
-  if (txt) txt.textContent = online ? 'Online' : 'Offline';
+  if (txt) txt.textContent = online ? $t('Online') : $t('Offline');
   if (!online) return;
   outboxStats()
     .then((st) => {
-      if (txt) txt.textContent = st.pending ? `${st.pending} queued` : 'Online';
+      if (txt) txt.textContent = st.pending ? $tn('{n} queued', '{n} queued', st.pending) : $t('Online');
     })
     .catch(() => {});
 }
@@ -226,6 +227,13 @@ async function boot() {
      figure is ever briefly shown in the wrong currency. */
   applyStoreFormat(state.store);
 
+  /* The screen follows this terminal's choice; receipts and the customer
+     display follow the store's language, so both catalogues are loaded before
+     anything paints. */
+  const storeLocale = (state.store && state.store.locale) || '';
+  await setLanguage(resolveLanguage(await loadChoice(idb), storeLocale));
+  await setStoreLanguage(resolveLanguage('store', storeLocale));
+
   renderNav();
   renderHeader();
 
@@ -247,7 +255,7 @@ async function boot() {
 boot().catch((err) => {
   console.error(err);
   const root = document.getElementById('screen');
-  if (root) root.innerHTML = `<div class="empty"><p>Failed to boot: ${esc(err.message)}</p></div>`;
+  if (root) root.innerHTML = `<div class="empty"><p>${esc($t('Failed to boot: {reason}', { reason: err.message }))}</p></div>`;
 });
 
 /* ---- Responsive state: html[data-viewport] = mobile | tablet | desktop ---- */

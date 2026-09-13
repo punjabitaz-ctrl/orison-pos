@@ -41,10 +41,26 @@ export function rollHtml(doc, fmt) {
     </div>`;
 }
 
+/* Plain lines, for sharing a receipt as text or a PDF from the same model. */
+export function docToLines(doc, fmt) {
+  const lines = [doc.brand];
+  if (doc.store) lines.push(doc.store);
+  lines.push(...doc.meta, '—');
+  for (const l of doc.lines) lines.push(`${l.name}${l.qty > 1 ? ` x${l.qty}` : ''} — ${fmt(l.amount)}`);
+  lines.push('—');
+  for (const t of doc.totals) lines.push(`${totalLabel(t)} — ${fmt(t.amount)}`);
+  for (const t of doc.tenders) lines.push(`${t.label} — ${fmt(t.amount)}`);
+  if (doc.change > 0) lines.push(`${doc.changeLabel} — ${fmt(doc.change)}`);
+  lines.push(...doc.footer, doc.reference);
+  if (doc.pending) lines.push(doc.pendingLabel);
+  return lines;
+}
+
 /* A full page for an ordinary printer: the same receipt, laid out as an
    invoice-style table. Styled by print-sheet.js's sheet CSS. */
 export function sheetHtml(doc, fmt) {
   const dir = doc.dir === 'rtl' ? 'rtl' : 'ltr';
+  const cols = doc.columns || { qty: 'Qty', price: 'Price', amount: 'Amount' };
   const rows = doc.lines.map((l) => `
     <tr>
       <td>${esc(l.name)}${l.discountPct ? `<div class="muted">${esc(l.discountPct)}%</div>` : ''}</td>
@@ -61,7 +77,7 @@ export function sheetHtml(doc, fmt) {
       <p><strong>${esc(doc.brand)}</strong>${doc.store ? ` · ${esc(doc.store)}` : ''}</p>
       ${doc.meta.map((m) => `<p class="muted">${esc(m)}</p>`).join('')}
       <table>
-        <thead><tr><th></th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
+        <thead><tr><th></th><th class="num">${esc(cols.qty)}</th><th class="num">${esc(cols.price)}</th><th class="num">${esc(cols.amount)}</th></tr></thead>
         <tbody>${rows}</tbody>
         <tfoot>${totals}${tenders}${doc.change > 0 ? `<tr><td colspan="3">${esc(doc.changeLabel)}</td><td class="num">${esc(fmt(doc.change))}</td></tr>` : ''}</tfoot>
       </table>

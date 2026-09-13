@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t, N_ } from './lang.js';
+
 /* Money flows: refunds and cash payouts. Refunds reverse part or all of a
    completed sale and restore stock locally the moment they are saved (the
    server validates + re-stores the authoritative copy on push). Payouts are
@@ -47,16 +49,17 @@ export function saleTotals(lines, orderPct, taxRate) {
   };
 }
 
+/* Labels are marked N_() and translated where they are shown: $t(kindInfo(k).label). */
 export function kindInfo(kind) {
   const map = {
-    sale: { label: 'Sale', cls: 'k-sale', sign: 1 },
-    refund: { label: 'Refund', cls: 'k-refund', sign: -1 },
-    payout: { label: 'Paid out', cls: 'k-payout', sign: -1 },
-    pickup: { label: 'Cash pick-up', cls: 'k-payout', sign: -1 },
-    expense: { label: 'Staff expense', cls: 'k-payout', sign: -1 },
-    payment: { label: 'Payment', cls: 'k-sale', sign: 1 },
-    deposit: { label: 'Repair deposit', cls: 'k-deposit', sign: 1 },
-    deposit_refund: { label: 'Deposit refund', cls: 'k-payout', sign: -1 },
+    sale: { label: N_('Sale'), cls: 'k-sale', sign: 1 },
+    refund: { label: N_('Refund'), cls: 'k-refund', sign: -1 },
+    payout: { label: N_('Paid out'), cls: 'k-payout', sign: -1 },
+    pickup: { label: N_('Cash pick-up'), cls: 'k-payout', sign: -1 },
+    expense: { label: N_('Staff expense'), cls: 'k-payout', sign: -1 },
+    payment: { label: N_('Payment'), cls: 'k-sale', sign: 1 },
+    deposit: { label: N_('Repair deposit'), cls: 'k-deposit', sign: 1 },
+    deposit_refund: { label: N_('Deposit refund'), cls: 'k-payout', sign: -1 },
   };
   return map[kind || 'sale'] || map.sale;
 }
@@ -186,7 +189,7 @@ export function refundGroups(items, productsById) {
     if (!g) {
       g = {
         productId: i.productId || '',
-        name: i.name || 'Item',
+        name: i.name || $t('Item'),
         unitPrice: Number(i.unitPrice) || 0,
         serialized: false,
         qty: 0,

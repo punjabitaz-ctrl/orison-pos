@@ -1,11 +1,13 @@
 'use strict';
 
+import { $t, $tn, arrow, dateLocale } from '../lang.js';
+
 /* Products screen: full catalog with stock levels. Admin sees add-product,
    stock-adjust, and add-serials tools (server-authoritative + local mirror). */
 
 import { idb } from '../db.js';
 import { api } from '../api.js';
-import { fmt, esc, toast, beep, debounce, openModal, closeModal, openSheet, closeSheet } from '../ui.js';
+import { fmt, esc, toast, beep, debounce, openModal, closeModal, openSheet, closeSheet, currencySymbol } from '../ui.js';
 import { bulkPriceModal, stockTakeModal, labelsModal, reorderModal } from './inventory-tools.js';
 import { pull, mergeProductLocal, SYNC_EVENT, getSyncState } from '../sync.js';
 import { reorderThreshold } from '../alerts.js';
@@ -41,13 +43,13 @@ export const screen = {
 
     root.innerHTML = `
       ${screenHead({
-        title: 'Products',
-        sub: `${this._products.length} items${isAdmin ? ' · admin' : ''}`,
-        actions: isAdmin ? '<div class="btn-row"><button class="btn btn-ghost btn-sm" id="toolsBtn">Tools</button><button class="btn btn-ghost btn-sm" id="newProdBtn">+ New</button></div>' : '',
+        title: $t('Products'),
+        sub: `${$tn('{n} item', '{n} items', this._products.length)}${isAdmin ? ' · ' + $t('admin') : ''}`,
+        actions: isAdmin ? `<div class="btn-row"><button class="btn btn-ghost btn-sm" id="toolsBtn">${$t('Tools')}</button><button class="btn btn-ghost btn-sm" id="newProdBtn">${$t('+ New')}</button></div>` : '',
       })}
       <div class="search-row">
         <div class="search-box">
-          <input id="invSearch" type="search" placeholder="Search products…" autocomplete="off">
+          <input id="invSearch" type="search" placeholder="${$t('Search products…')}" autocomplete="off">
         </div>
       </div>
       <main class="inv-list" id="invList"></main>`;
@@ -72,26 +74,26 @@ export const screen = {
         <div class="inv-row">
           <div class="inv-idx" style="background:${catColor(p.category)}">${esc(p.category[0] || '?')}</div>
           <div class="inv-main">
-            <div class="inv-name">${esc(p.name)}${locked ? ' <span class="lock-dot" title="Locked">🔒</span>' : ''}</div>
-            <div class="inv-sku">${esc(p.sku || '')}${isService ? ' · service' : (p.isSerialized ? ' · IMEI-managed' : '')}</div>
+            <div class="inv-name">${esc(p.name)}${locked ? ` <span class="lock-dot" title="${$t('Locked')}">🔒</span>` : ''}</div>
+            <div class="inv-sku">${esc(p.sku || '')}${isService ? ' · ' + esc($t('service')) : (p.isSerialized ? ' · ' + esc($t('IMEI-managed')) : '')}</div>
           </div>
-          <div class="inv-qty ${stockCls}">${isService ? 'Service' : `${avail} ${p.isSerialized ? 'units' : 'left'}`}</div>
+          <div class="inv-qty ${stockCls}">${isService ? $t('Service') : (p.isSerialized ? esc($tn('{n} unit', '{n} units', avail)) : esc($t('{n} left', { n: avail })))}</div>
           <div class="inv-price">${fmt(p.retailPrice)}</div>
           ${isAdmin ? `
           <div class="inv-actions">
             ${isService
-              ? `<button class="icon-btn" data-history="${esc(p.id)}" title="Price history">📈</button>
-                 <button class="icon-btn" data-settings="${esc(p.id)}" title="Settings">⚙</button>`
+              ? `<button class="icon-btn" data-history="${esc(p.id)}" title="${$t('Price history')}">📈</button>
+                 <button class="icon-btn" data-settings="${esc(p.id)}" title="${$t('Settings')}">⚙</button>`
               : p.isSerialized
-                ? `<button class="icon-btn" data-serials="${esc(p.id)}" title="Add serials">＋</button>
-                   <button class="icon-btn" data-history="${esc(p.id)}" title="Price history">📈</button>
-                   <button class="icon-btn" data-settings="${esc(p.id)}" title="Settings">⚙</button>`
-                : `<button class="icon-btn" data-stock="${esc(p.id)}" title="Adjust stock">✎</button>
-                   <button class="icon-btn" data-history="${esc(p.id)}" title="Price history">📈</button>
-                   <button class="icon-btn" data-settings="${esc(p.id)}" title="Settings">⚙</button>`}
+                ? `<button class="icon-btn" data-serials="${esc(p.id)}" title="${$t('Add serials')}">＋</button>
+                   <button class="icon-btn" data-history="${esc(p.id)}" title="${$t('Price history')}">📈</button>
+                   <button class="icon-btn" data-settings="${esc(p.id)}" title="${$t('Settings')}">⚙</button>`
+                : `<button class="icon-btn" data-stock="${esc(p.id)}" title="${$t('Adjust stock')}">✎</button>
+                   <button class="icon-btn" data-history="${esc(p.id)}" title="${$t('Price history')}">📈</button>
+                   <button class="icon-btn" data-settings="${esc(p.id)}" title="${$t('Settings')}">⚙</button>`}
           </div>` : ''}
         </div>`;
-      }).join('') || '<div class="empty"><p>No products.</p></div>';
+      }).join('') || `<div class="empty"><p>${$t('No products.')}</p></div>`;
 
       if (isAdmin) {
         listEl.querySelectorAll('[data-stock]').forEach((b) => b.addEventListener('click', () => stockModal(listEl, b.dataset.stock)));
@@ -112,14 +114,14 @@ export const screen = {
        for the header on a phone. */
     function toolsSheet() {
       const sheet = openSheet(`
-        <div class="cart-head"><h3>Inventory tools</h3><button class="icon-btn" data-x aria-label="Close">✕</button></div>
+        <div class="cart-head"><h3>${$t('Inventory tools')}</h3><button class="icon-btn" data-x aria-label="${$t('Close')}">✕</button></div>
         <div class="tool-menu">
-          <button class="tool-item" data-tool="reorder"><b>Reorder worksheet</b><span>What to buy next, from sales velocity and reorder points</span></button>
+          <button class="tool-item" data-tool="reorder"><b>${$t('Reorder worksheet')}</b><span>${$t('What to buy next, from sales velocity and reorder points')}</span></button>
           ${isOwner ? `
-          <button class="tool-item" data-tool="stocktake"><b>Stock take</b><span>Count the shelf and post the variance</span></button>
-          <button class="tool-item" data-tool="bulk"><b>Bulk price update</b><span>Reprice a category or the whole catalog by rule</span></button>` : ''}
-          <button class="tool-item" data-tool="labels"><b>Print shelf labels</b><span>Code 128 barcodes with name and price</span></button>
-          <button class="tool-item" data-tool="aging"><b>Inventory aging</b><span>How long stock has been sitting, valued at cost</span></button>
+          <button class="tool-item" data-tool="stocktake"><b>${$t('Stock take')}</b><span>${$t('Count the shelf and post the variance')}</span></button>
+          <button class="tool-item" data-tool="bulk"><b>${$t('Bulk price update')}</b><span>${$t('Reprice a category or the whole catalog by rule')}</span></button>` : ''}
+          <button class="tool-item" data-tool="labels"><b>${$t('Print shelf labels')}</b><span>${$t('Code 128 barcodes with name and price')}</span></button>
+          <button class="tool-item" data-tool="aging"><b>${$t('Inventory aging')}</b><span>${$t('How long stock has been sitting, valued at cost')}</span></button>
         </div>`);
       sheet.querySelector('[data-x]').addEventListener('click', closeSheet);
       sheet.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', async () => {
@@ -141,34 +143,34 @@ export const screen = {
     function newProductModal() {
       const modal = openModal(`
         <div class="form-modal">
-          <h3>New item</h3>
-          <div class="field"><span>Name *</span><input id="fName" placeholder="e.g. USB-C Cable 1m"></div>
+          <h3>${$t('New item')}</h3>
+          <div class="field"><span>${$t('Name *')}</span><input id="fName" placeholder="${$t('e.g. USB-C Cable 1m')}"></div>
           <div class="two fields-row">
-            <div class="field"><span>SKU</span><input id="fSku" placeholder="CB-USBC-1M"></div>
-            <div class="field"><span>UPC</span><input id="fUpc" inputmode="numeric" placeholder="00123456…"></div>
+            <div class="field"><span>${$t('SKU')}</span><input id="fSku" placeholder="CB-USBC-1M"></div>
+            <div class="field"><span>${$t('UPC')}</span><input id="fUpc" inputmode="numeric" placeholder="00123456…"></div>
           </div>
           <div class="two fields-row">
-            <div class="field"><span>Category</span><input id="fCat" placeholder="Cables" value="General"></div>
-            <div class="field"><span>Retail $</span><input id="fPrice" type="number" inputmode="decimal" min="0" step="0.01" value="0"></div>
+            <div class="field"><span>${$t('Category')}</span><input id="fCat" placeholder="${$t('Cables')}" value="General"></div>
+            <div class="field"><span>${esc($t('Retail ({symbol})', { symbol: currencySymbol() }))}</span><input id="fPrice" type="number" inputmode="decimal" min="0" step="0.01" value="0"></div>
           </div>
           <div class="two fields-row">
-            <div class="field"><span>Cost $</span><input id="fCost" type="number" inputmode="decimal" min="0" step="0.01" value="0"></div>
-            <div class="field"><span>Type</span>
+            <div class="field"><span>${esc($t('Cost ({symbol})', { symbol: currencySymbol() }))}</span><input id="fCost" type="number" inputmode="decimal" min="0" step="0.01" value="0"></div>
+            <div class="field"><span>${$t('Type')}</span>
               <select id="fType">
-                <option value="product">Product</option>
-                <option value="service">Service / labor</option>
+                <option value="product">${$t('Product')}</option>
+                <option value="service">${$t('Service / labor')}</option>
               </select>
             </div>
           </div>
           <div id="stockFields">
-            <label class="check"><input id="fSerial" type="checkbox"> Serialized (IMEI-tracked)</label>
-            <div class="field"><span>Starting qty</span><input id="fQty" type="number" inputmode="numeric" min="0" step="1" value="0"></div>
-            <div class="field"><span>Reorder at (low-stock alert threshold)</span><input id="fReorder" type="number" inputmode="numeric" min="0" step="1" value="5"></div>
+            <label class="check"><input id="fSerial" type="checkbox"> ${$t('Serialized (IMEI-tracked)')}</label>
+            <div class="field"><span>${$t('Starting qty')}</span><input id="fQty" type="number" inputmode="numeric" min="0" step="1" value="0"></div>
+            <div class="field"><span>${$t('Reorder at (low-stock alert threshold)')}</span><input id="fReorder" type="number" inputmode="numeric" min="0" step="1" value="5"></div>
           </div>
-          <label class="check"><input id="fLocked" type="checkbox"> Locked (cannot be sold until unlocked)</label>
-          <label class="check"><input id="fTaxable" type="checkbox" checked> Taxable (subject to store sales tax)</label>
+          <label class="check"><input id="fLocked" type="checkbox"> ${$t('Locked (cannot be sold until unlocked)')}</label>
+          <label class="check"><input id="fTaxable" type="checkbox" checked> ${$t('Taxable (subject to store sales tax)')}</label>
           <p id="pErr" class="login-err"></p>
-          <div class="row"><button class="btn btn-ghost" data-cancel>Cancel</button><button class="btn" id="pSave">Save</button></div>
+          <div class="row"><button class="btn btn-ghost" data-cancel>${$t('Cancel')}</button><button class="btn" id="pSave">${$t('Save')}</button></div>
         </div>`);
       const fType = modal.querySelector('#fType');
       const stockEl = modal.querySelector('#stockFields');
@@ -191,16 +193,16 @@ export const screen = {
           locked: modal.querySelector('#fLocked').checked,
           taxable: modal.querySelector('#fTaxable').checked,
         };
-        if (!body.name) { modal.querySelector('#pErr').textContent = 'Name is required.'; return; }
+        if (!body.name) { modal.querySelector('#pErr').textContent = $t('Name is required.'); return; }
         try {
           await api.post('/api/admin/products', body);
           await pull();
           await screen.refreshProducts();
           renderList();
           closeModal();
-          toast('Item created', 'ok'); beep('ok');
+          toast($t('Item created'), 'ok'); beep('ok');
         } catch (err) {
-          modal.querySelector('#pErr').textContent = (err && err.data && err.data.error) || err.message;
+          modal.querySelector('#pErr').textContent = (err && err.message) || $t('Could not save');
         }
       });
     }
@@ -210,24 +212,24 @@ export const screen = {
       if (!p) return;
       const modal = openModal(`
         <div class="form-modal">
-          <h3>Stock level</h3>
+          <h3>${$t('Stock level')}</h3>
           <p class="muted">${esc(p.name)}</p>
-          <div class="field"><span>On hand</span><input id="sQty" type="number" inputmode="numeric" min="0" step="1" value="${p.onHand || 0}"></div>
+          <div class="field"><span>${$t('On hand')}</span><input id="sQty" type="number" inputmode="numeric" min="0" step="1" value="${p.onHand || 0}"></div>
           <p id="sErr" class="login-err"></p>
-          <div class="row"><button class="btn btn-ghost" data-cancel>Cancel</button><button class="btn" id="sSave">Save count</button></div>
+          <div class="row"><button class="btn btn-ghost" data-cancel>${$t('Cancel')}</button><button class="btn" id="sSave">${$t('Save count')}</button></div>
         </div>`);
       modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
       modal.querySelector('#sSave').addEventListener('click', async () => {
         const v = parseInt(modal.querySelector('#sQty').value, 10);
-        if (isNaN(v) || v < 0) { modal.querySelector('#sErr').textContent = 'Enter a whole number ≥ 0.'; return; }
+        if (isNaN(v) || v < 0) { modal.querySelector('#sErr').textContent = $t('Enter a whole number ≥ 0.'); return; }
         try {
           await api.post('/api/admin/inventory', { productId, onHand: v });
           await pull();
           await screen.refreshProducts();
           renderList();
           closeModal();
-          toast('Stock updated', 'ok'); beep('ok');
-        } catch (err) { modal.querySelector('#sErr').textContent = (err && err.data && err.data.error) || err.message; }
+          toast($t('Stock updated'), 'ok'); beep('ok');
+        } catch (err) { modal.querySelector('#sErr').textContent = (err && err.message) || $t('Could not save'); }
       });
     }
 
@@ -237,26 +239,26 @@ export const screen = {
       const used = (p.serials || []).length;
       const modal = openModal(`
         <div class="form-modal">
-          <h3>Add serials / IMEIs</h3>
+          <h3>${$t('Add serials / IMEIs')}</h3>
           <p class="muted">${esc(p.name)} · ${used} currently in stock</p>
-          <div class="field"><span>Serials (one per line)</span>
-            <textarea id="sList" rows="6" placeholder="IMEI/SN per line…"></textarea>
+          <div class="field"><span>${$t('Serials (one per line)')}</span>
+            <textarea id="sList" rows="6" placeholder="${$t('IMEI/SN per line…')}"></textarea>
           </div>
           <p id="sErr" class="login-err"></p>
-          <div class="row"><button class="btn btn-ghost" data-cancel>Cancel</button><button class="btn" id="sSave">Add</button></div>
+          <div class="row"><button class="btn btn-ghost" data-cancel>${$t('Cancel')}</button><button class="btn" id="sSave">${$t('Add')}</button></div>
         </div>`);
       modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
       modal.querySelector('#sSave').addEventListener('click', async () => {
         const serialNumbers = modal.querySelector('#sList').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-        if (!serialNumbers.length) { modal.querySelector('#sErr').textContent = 'Paste at least one serial.'; return; }
+        if (!serialNumbers.length) { modal.querySelector('#sErr').textContent = $t('Paste at least one serial.'); return; }
         try {
           const res = await api.post('/api/admin/serials', { productId, serialNumbers });
           await pull();
           await screen.refreshProducts();
           renderList();
           closeModal();
-          toast(`Added ${res.added.length} serials${res.duplicates.length ? `, ${res.duplicates.length} duplicates skipped` : ''}`, 'ok');
-        } catch (err) { modal.querySelector('#sErr').textContent = (err && err.data && err.data.error) || err.message; }
+          toast(`${$tn('Added {n} serial', 'Added {n} serials', res.added.length)}${res.duplicates.length ? ', ' + $tn('{n} duplicate skipped', '{n} duplicates skipped', res.duplicates.length) : ''}`, 'ok');
+        } catch (err) { modal.querySelector('#sErr').textContent = (err && err.message) || $t('Could not save'); }
       });
     }
 
@@ -266,10 +268,10 @@ export const screen = {
       let history = [];
       const modal = openModal(`
         <div class="form-modal inv-history">
-          <h3>Price history</h3>
+          <h3>${$t('Price history')}</h3>
           <p class="muted">${esc(p.name)}</p>
-          <div id="phBody" class="ph-body"><p class="empty">Loading…</p></div>
-          <div class="row"><button class="btn btn-ghost" data-close>Close</button></div>
+          <div id="phBody" class="ph-body"><p class="empty">${$t('Loading…')}</p></div>
+          <div class="row"><button class="btn btn-ghost" data-close>${$t('Close')}</button></div>
         </div>`);
       modal.querySelector('[data-close]').addEventListener('click', closeModal);
       (async () => {
@@ -287,39 +289,39 @@ export const screen = {
                   </div>
                   <div class="ph-chg">
                     <span>${esc(fieldLabel(h.field))}</span>
-                    <span class="ph-old">${fmt(h.oldValue)}</span> →
+                    <span class="ph-old">${fmt(h.oldValue)}</span> ${arrow()}
                     <strong>${fmt(h.newValue)}</strong>
                   </div>
                 </div>`).join('')
-            : '<p class="empty">No price changes recorded.</p>';
+            : `<p class="empty">${$t('No price changes recorded.')}</p>`;
         } catch (_) {
-          body.innerHTML = '<p class="empty">Failed to load — check connection.</p>';
+          body.innerHTML = `<p class="empty">${$t('Failed to load — check connection.')}</p>`;
         }
       })();
 
       function sourceLabel(s) {
-        if (s === 'po') return 'Purchase order';
-        if (s === 'create') return 'Created';
-        if (s === 'bulk') return 'Bulk update';
-        return 'Manual edit';
+        if (s === 'po') return $t('Purchase order');
+        if (s === 'create') return $t('Created');
+        if (s === 'bulk') return $t('Bulk update');
+        return $t('Manual edit');
       }
       function fieldLabel(f) {
-        return f === 'retail_price' ? 'Retail price' : 'Cost price';
+        return f === 'retail_price' ? $t('Retail price') : $t('Cost price');
       }
       function dt(iso) {
         if (!iso) return '';
         const d = new Date(iso);
-        return isNaN(d) ? iso : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        return isNaN(d) ? iso : d.toLocaleString(dateLocale(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
       }
     }
 
     function agingModal() {
       const modal = openModal(`
         <div class="form-modal inv-history">
-          <h3>Inventory aging</h3>
-          <p class="muted">How long on-hand stock has been sitting, valued at cost</p>
-          <div id="agBody" class="ph-body"><p class="empty">Loading…</p></div>
-          <div class="row"><button class="btn btn-ghost" data-close>Close</button></div>
+          <h3>${$t('Inventory aging')}</h3>
+          <p class="muted">${$t('How long on-hand stock has been sitting, valued at cost')}</p>
+          <div id="agBody" class="ph-body"><p class="empty">${$t('Loading…')}</p></div>
+          <div class="row"><button class="btn btn-ghost" data-close>${$t('Close')}</button></div>
         </div>`);
       modal.querySelector('[data-close]').addEventListener('click', closeModal);
       (async () => {
@@ -328,17 +330,17 @@ export const screen = {
           const res = await api.get('/api/inventory/aging');
           const s = res.summary || {};
           const chips = [
-            ['current', '0–30d', s.current],
-            ['d30', '31–60d', s.d30],
-            ['d60', '61–90d', s.d60],
-            ['d90', '90d+', s.d90],
+            ['current', $t('0–30d'), s.current],
+            ['d30', $t('31–60d'), s.d30],
+            ['d60', $t('61–90d'), s.d60],
+            ['d90', $t('90d+'), s.d90],
           ];
           const tot = (s.current && s.current.value || 0) + (s.d30 && s.d30.value || 0) + (s.d60 && s.d60.value || 0) + (s.d90 && s.d90.value || 0);
           const chipCls = { current: 'age0', d30: 'age30', d60: 'age60', d90: 'age90' };
           body.innerHTML = `
             <div class="ag-summary">
-              ${chips.map(([k, label, b]) => `<span class="age ${chipCls[k]}">${esc(label)}: ${b ? b.units : 0} @ ${fmt(b ? b.value : 0)}</span>`).join('')}
-              <div class="ag-total">Total on hand <strong>${fmt(tot)}</strong> at cost</div>
+              ${chips.map(([k, label, b]) => `<span class="age ${chipCls[k]}">${esc($t('{band}: {units} @ {value}', { band: label, units: b ? b.units : 0, value: fmt(b ? b.value : 0) }))}</span>`).join('')}
+              <div class="ag-total">${esc($t('Total on hand {amount} at cost', { amount: fmt(tot) }))}</div>
             </div>
             ${(res.items || []).length ? res.items.map((it) => `
               <div class="ph-row">
@@ -347,13 +349,13 @@ export const screen = {
                   <span class="muted">${esc(it.sku || '')} · ${esc(it.category)}</span>
                 </div>
                 <div class="ph-chg">
-                  <span>${it.onHand} left · ${it.ageDays} days${it.ageDays >= 90 ? ' 🔴' : it.ageDays >= 60 ? ' 🟠' : it.ageDays >= 30 ? ' 🟡' : ' 🟢'}</span>
-                  <strong>${fmt(it.value)} @ cost</strong>
+                  <span>${esc($t('{n} left · {days} days', { n: it.onHand, days: it.ageDays }))}${it.ageDays >= 90 ? ' 🔴' : it.ageDays >= 60 ? ' 🟠' : it.ageDays >= 30 ? ' 🟡' : ' 🟢'}</span>
+                  <strong>${esc($t('{amount} @ cost', { amount: fmt(it.value) }))}</strong>
                 </div>
               </div>`).join('')
-            : '<p class="empty">Everything in stock is fresh.</p>'}`;
+            : `<p class="empty">${$t('Everything in stock is fresh.')}</p>`}`;
         } catch (_) {
-          body.innerHTML = '<p class="empty">Failed to load — check connection.</p>';
+          body.innerHTML = `<p class="empty">${$t('Failed to load — check connection.')}</p>`;
         }
       })();
     }
@@ -366,19 +368,19 @@ export const screen = {
       const locked = isLocked(p);
       const modal = openModal(`
         <div class="form-modal">
-          <h3>Item settings</h3>
-          <p class="muted">${esc(p.name)}${isService ? ' · service' : ''}</p>
+          <h3>${$t('Item settings')}</h3>
+          <p class="muted">${esc(p.name)}${isService ? ' · ' + esc($t('service')) : ''}</p>
           <div class="two fields-row">
-            <div class="field"><span>Retail $</span><input id="oPrice" type="number" inputmode="decimal" min="0" step="0.01" value="${p.retailPrice || 0}"></div>
-            <div class="field"><span>Cost $</span><input id="oCost" type="number" inputmode="decimal" min="0" step="0.01" value="${p.costPrice || 0}"></div>
+            <div class="field"><span>${esc($t('Retail ({symbol})', { symbol: currencySymbol() }))}</span><input id="oPrice" type="number" inputmode="decimal" min="0" step="0.01" value="${p.retailPrice || 0}"></div>
+            <div class="field"><span>${esc($t('Cost ({symbol})', { symbol: currencySymbol() }))}</span><input id="oCost" type="number" inputmode="decimal" min="0" step="0.01" value="${p.costPrice || 0}"></div>
           </div>
           ${!isService && !serialized
-            ? `<div class="field"><span>Reorder at (low-stock alert threshold)</span><input id="oReorder" type="number" inputmode="numeric" min="0" step="1" value="${(p.reorderPoint != null && p.reorderPoint !== '') ? p.reorderPoint : 5}"></div>`
+            ? `<div class="field"><span>${$t('Reorder at (low-stock alert threshold)')}</span><input id="oReorder" type="number" inputmode="numeric" min="0" step="1" value="${(p.reorderPoint != null && p.reorderPoint !== '') ? p.reorderPoint : 5}"></div>`
             : ''}
-          ${!isService ? `<label class="check"><input id="oLocked" type="checkbox" ${locked ? 'checked' : ''}> Locked (cannot be sold)</label>` : ''}
-          ${!isService ? `<label class="check"><input id="oTaxable" type="checkbox" ${p.taxable !== false ? 'checked' : ''}> Taxable</label>` : ''}
+          ${!isService ? `<label class="check"><input id="oLocked" type="checkbox" ${locked ? 'checked' : ''}> ${$t('Locked (cannot be sold)')}</label>` : ''}
+          ${!isService ? `<label class="check"><input id="oTaxable" type="checkbox" ${p.taxable !== false ? 'checked' : ''}> ${$t('Taxable')}</label>` : ''}
           <p id="oErr" class="login-err"></p>
-          <div class="row"><button class="btn btn-ghost" data-cancel>Cancel</button><button class="btn" id="oSave">Save</button></div>
+          <div class="row"><button class="btn btn-ghost" data-cancel>${$t('Cancel')}</button><button class="btn" id="oSave">${$t('Save')}</button></div>
         </div>`);
       modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
       modal.querySelector('#oSave').addEventListener('click', async () => {
@@ -396,8 +398,8 @@ export const screen = {
           await screen.refreshProducts();
           renderList();
           closeModal();
-          toast('Settings saved', 'ok'); beep('ok');
-        } catch (err) { modal.querySelector('#oErr').textContent = (err && err.data && err.data.error) || err.message; }
+          toast($t('Settings saved'), 'ok'); beep('ok');
+        } catch (err) { modal.querySelector('#oErr').textContent = (err && err.message) || $t('Could not save'); }
       });
     }
 

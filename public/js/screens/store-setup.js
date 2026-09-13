@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t, language, setStoreLanguage, resolveLanguage, loadChoice } from '../lang.js';
+
 /* First-run store setup: language, country, currency, and the cash ladder the
    till will be counted against.
 
@@ -53,6 +55,15 @@ const COUNTRIES = [
   { code: 'JP', name: 'Japan', currency: 'JPY', lang: 'ja' },
 ];
 
+/* Country and currency names in the reader's own language, from the browser
+   itself - no catalogue to keep in step with the list. */
+function regionName(code, fallback) {
+  try { return new Intl.DisplayNames([language()], { type: 'region' }).of(code) || fallback; } catch (_) { return fallback; }
+}
+function currencyName(code, fallback) {
+  try { return new Intl.DisplayNames([language()], { type: 'currency' }).of(code) || fallback; } catch (_) { return fallback; }
+}
+
 function localeTag(lang, country) {
   return `${lang || 'en'}-${country || 'US'}`;
 }
@@ -61,15 +72,15 @@ export async function openStoreSetup({ store, firstRun = false, onSaved } = {}) 
   const current = store || {};
   const modal = openModal(`
     <div class="form-modal store-setup">
-      <h3>${firstRun ? 'Set up this store' : 'Store &amp; localisation'}</h3>
+      <h3>${firstRun ? $t('Set up this store') : $t('Store &amp; localisation')}</h3>
       <p class="muted">${firstRun
-        ? 'Choose the language, country and currency this shop trades in. Every receipt, report and drawer count follows this — you can change it later in Settings.'
-        : 'Language, country and currency for every figure this store prints, and the notes and coins its till is counted in.'}</p>
+        ? $t('Choose the language, country and currency this shop trades in. Every receipt, report and drawer count follows this — you can change it later in Settings.')
+        : $t('Language, country and currency for every figure this store prints, and the notes and coins its till is counted in.')}</p>
       <div id="ssBody">${skeleton('rows', 3)}</div>
       <p id="ssErr" class="login-err"></p>
       <div class="row">
-        ${firstRun ? '' : '<button class="btn btn-ghost" data-cancel>Cancel</button>'}
-        <button class="btn" id="ssSave" disabled>Save</button>
+        ${firstRun ? '' : `<button class="btn btn-ghost" data-cancel>${$t('Cancel')}</button>`}
+        <button class="btn" id="ssSave" disabled>${$t('Save')}</button>
       </div>
     </div>`);
 
@@ -85,7 +96,7 @@ export async function openStoreSetup({ store, firstRun = false, onSaved } = {}) 
     currencies = cfg.currencies || [];
   } catch (e) {
     body.innerHTML = '';
-    err.textContent = 'Could not reach the backend — store setup needs a connection.';
+    err.textContent = $t('Could not reach the backend — store setup needs a connection.');
     return;
   }
 
@@ -117,32 +128,33 @@ export async function openStoreSetup({ store, firstRun = false, onSaved } = {}) 
     const sample = preview();
     body.innerHTML = `
       <div class="two fields-row">
-        <div class="field"><span>Language</span>
+        <div class="field"><span>${$t('Language')}</span>
           <select id="ssLang">
             ${LANGUAGES.map((l) => `<option value="${esc(l.code)}" ${l.code === state.lang ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}
           </select>
         </div>
-        <div class="field"><span>Country</span>
+        <div class="field"><span>${$t('Country')}</span>
           <select id="ssCountry">
-            ${COUNTRIES.map((c) => `<option value="${esc(c.code)}" ${c.code === state.country ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+            ${COUNTRIES.map((c) => `<option value="${esc(c.code)}" ${c.code === state.country ? 'selected' : ''}>${esc(regionName(c.code, c.name))}</option>`).join('')}
           </select>
         </div>
       </div>
-      <div class="field"><span>Currency</span>
+      <div class="field"><span>${$t('Currency')}</span>
         <select id="ssCurrency">
-          ${currencies.map((c) => `<option value="${esc(c.code)}" ${c.code === state.currency ? 'selected' : ''}>${esc(c.code)} — ${esc(c.name)}</option>`).join('')}
+          ${currencies.map((c) => `<option value="${esc(c.code)}" ${c.code === state.currency ? 'selected' : ''}>${esc(c.code)} — ${esc(currencyName(c.code, c.name))}</option>`).join('')}
         </select>
       </div>
       <div class="ss-preview">
-        <span>A price will read</span><strong>${esc(sample.total)}</strong>
+        <span>${$t('A price will read')}</span><strong>${esc(sample.total)}</strong>
       </div>
       <div class="field">
-        <span>Notes and coins the till is counted in</span>
+        <span>${$t('Notes and coins the till is counted in')}</span>
         <input id="ssDenoms" type="text" inputmode="decimal" value="${esc(state.denoms.join(', '))}"
                autocomplete="off" spellcheck="false">
       </div>
       <div class="ss-ladder">${sample.ladder.map((l) => `<span class="chip-static">${esc(l)}</span>`).join('')}</div>
-      <p class="muted">Only these amounts are counted at close of shift, so they must match the cash the drawer actually holds. Change the currency to reset them.</p>`;
+      <p class="muted">${$t('Only these amounts are counted at close of shift, so they must match the cash the drawer actually holds. Change the currency to reset them.')}</p>
+      <p class="muted">${$t('Receipts and the customer display are printed in this language when the till has a translation for it: English, Arabic or Urdu. Any other language prints receipts in English.')}</p>`;
 
     body.querySelector('#ssLang').addEventListener('change', (e) => {
       state.lang = e.target.value;
@@ -171,7 +183,7 @@ export async function openStoreSetup({ store, firstRun = false, onSaved } = {}) 
         state.denoms = [...new Set(parsed)].sort((a, b) => b - a);
         err.textContent = '';
       } else {
-        err.textContent = 'Enter at least one positive amount, separated by commas.';
+        err.textContent = $t('Enter at least one positive amount, separated by commas.');
       }
       render();
     });
@@ -181,7 +193,7 @@ export async function openStoreSetup({ store, firstRun = false, onSaved } = {}) 
   saveBtn.addEventListener('click', async () => {
     err.textContent = '';
     saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving…';
+    saveBtn.textContent = $t('Saving…');
     try {
       const saved = await api.post('/api/admin/store', {
         locale: localeTag(state.lang, state.country),
@@ -193,14 +205,18 @@ export async function openStoreSetup({ store, firstRun = false, onSaved } = {}) 
       m.store = saved;
       await idb.put('meta', m, 'config');
       applyStoreFormat(saved);
+      /* Receipts follow the store's language from now on; a till set to match
+         the store also switches its own screens, which needs a fresh start. */
+      await setStoreLanguage(resolveLanguage('store', saved.locale));
       closeModal();
-      toast('Store settings saved', 'ok');
+      toast($t('Store settings saved'), 'ok');
+      if (resolveLanguage(await loadChoice(idb), saved.locale) !== language()) { window.location.reload(); return; }
       beep('ok');
       if (onSaved) await onSaved(saved);
     } catch (e) {
       saveBtn.disabled = false;
-      saveBtn.textContent = 'Save';
-      err.textContent = (e && e.data && e.data.error) || e.message;
+      saveBtn.textContent = $t('Save');
+      err.textContent = (e && e.message) || $t('Could not save');
     }
   });
 

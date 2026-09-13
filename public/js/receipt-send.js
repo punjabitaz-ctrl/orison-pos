@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t, tIn, storeLanguage } from './lang.js';
+
 /* Receipt delivery: real PDF generation (no dependencies), WhatsApp and email
    handoff, native share-with-file when the platform supports it, plus a
    plain download fallback. Thermal printing stays on the register's Print
@@ -41,11 +43,21 @@ const PDF_GLYPHS = {
 // Strip everything the Type1/Courier + PDF literal can't carry to ASCII.
 function toPdfLine(s) {
   let out = '';
-  for (const ch of String(s == null ? '' : s)) {
+  for (const ch of String(s == null ? '' : s).replace(/[\u2066-\u2069]/g, '')) {
     if (Object.prototype.hasOwnProperty.call(PDF_GLYPHS, ch)) { out += PDF_GLYPHS[ch]; continue; }
     out += ch.codePointAt(0) < 128 ? ch : '?';
   }
   return out;
+}
+
+/* The PDF is Courier, which has no Arabic or Urdu letters: those would print
+   as a row of question marks. A receipt that needs them goes out as text. */
+export function pdfCanCarry(lines) {
+  for (const ch of (lines || []).join('\n').replace(/[\u2066-\u2069]/g, '')) {
+    const cp = ch.codePointAt(0);
+    if (cp >= 128 && !Object.prototype.hasOwnProperty.call(PDF_GLYPHS, ch)) return false;
+  }
+  return true;
 }
 
 function pdfEsc(s) {
@@ -143,14 +155,14 @@ export async function mountSendButtons(host, rc) {
     <div class="receipt-send">
       <div class="rs-fields">
         <input id="rsPhone" type="tel" inputmode="tel" autocomplete="tel"
-          placeholder="Customer phone · WhatsApp" value="${esc(m.lastReceiptPhone || '')}">
+          placeholder="${esc($t('Customer phone · WhatsApp'))}" value="${esc(m.lastReceiptPhone || '')}">
         <input id="rsEmail" type="email" inputmode="email" autocomplete="email"
-          placeholder="customer@example.com · Email" value="${esc(m.lastReceiptEmail || '')}">
+          placeholder="${esc($t('customer@example.com · Email'))}" value="${esc(m.lastReceiptEmail || '')}">
       </div>
       <div class="rs-actions">
-        <button class="btn" id="rsPdf">PDF</button>
-        <button class="btn" id="rsWa">WhatsApp</button>
-        <button class="btn" id="rsMail">Email</button>
+        <button class="btn" id="rsPdf">${$t('PDF')}</button>
+        <button class="btn" id="rsWa">${$t('WhatsApp')}</button>
+        <button class="btn" id="rsMail">${$t('Email')}</button>
       </div>
     </div>`;
 
@@ -159,6 +171,8 @@ export async function mountSendButtons(host, rc) {
   const lines = (rc.lines || []).slice();
   const text = lines.join('\n');
   const filename = rc.filename + '.pdf';
+  const asPdf = pdfCanCarry(lines);
+  if (!asPdf) host.querySelector('#rsPdf').hidden = true;
 
   const saveContact = async () => {
     const cfg = (await idb.get('meta', 'config').catch(() => ({}))) || {};
@@ -169,18 +183,18 @@ export async function mountSendButtons(host, rc) {
 
   host.querySelector('#rsPdf').addEventListener('click', async () => {
     const r = await sharePdfOrDownload(await pdfBlobFromLines(lines), filename, text);
-    if (r === 'downloaded') toast('PDF saved', 'ok');
-    else if (r === 'downloaded+clip') toast('PDF saved · receipt copied', 'ok');
+    if (r === 'downloaded') toast($t('PDF saved'), 'ok');
+    else if (r === 'downloaded+clip') toast($t('PDF saved · receipt copied'), 'ok');
   });
 
   host.querySelector('#rsWa').addEventListener('click', async () => {
     const phone = normalPhone(phoneEl.value);
-    if (!phone) { toast('Enter a valid customer phone', 'warn'); phoneEl.focus(); return; }
+    if (!phone) { toast($t('Enter a valid customer phone'), 'warn'); phoneEl.focus(); return; }
     await saveContact();
 
-    const file = canShareFiles() ? newFile(await pdfBlobFromLines(lines), filename) : null;
+    const file = asPdf && canShareFiles() ? newFile(await pdfBlobFromLines(lines), filename) : null;
     if (file && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: rc.title }); toast('Sending PDF via WhatsApp…', 'ok'); return; }
+      try { await navigator.share({ files: [file], title: rc.title }); toast($t('Sending PDF via WhatsApp…'), 'ok'); return; }
       catch (e) { if (e.name === 'AbortError') return; }
     }
     window.open(whatsappLink(phone, text), '_blank');
@@ -188,14 +202,14 @@ export async function mountSendButtons(host, rc) {
 
   host.querySelector('#rsMail').addEventListener('click', async () => {
     const email = (emailEl.value || '').trim();
-    if (!email) { toast('Enter a customer email', 'warn'); emailEl.focus(); return; }
+    if (!email) { toast($t('Enter a customer email'), 'warn'); emailEl.focus(); return; }
     await saveContact();
 
-    const file = canShareFiles() ? newFile(await pdfBlobFromLines(lines), filename) : null;
+    const file = asPdf && canShareFiles() ? newFile(await pdfBlobFromLines(lines), filename) : null;
     if (file && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: rc.title }); toast('Sending PDF to ' + email + '…', 'ok'); return; }
+      try { await navigator.share({ files: [file], title: rc.title }); toast($t('Sending PDF to {email}…', { email }), 'ok'); return; }
       catch (e) { if (e.name === 'AbortError') return; }
     }
-    location.href = mailtoLink(email, 'Your Orison POS receipt', text);
+    location.href = mailtoLink(email, tIn(storeLanguage(), 'Your Orison POS receipt'), text);
   });
 }

@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t } from './lang.js';
+
 /* Pure aggregation helpers shared by the Dashboard and the Staff screen.
    Everything here takes a plain transaction list and returns numbers — no
    IndexedDB, no network, no clock — so the same maths runs offline, in the
@@ -138,7 +140,7 @@ export function topSellers(txs, limit = 5) {
   for (const t of txs || []) {
     if (kindOf(t) !== 'sale') continue;
     for (const it of t.items || []) {
-      const name = String(it.name || 'Item');
+      const name = String(it.name || $t('Item'));
       const e = tally.get(name) || { name, units: 0, rev: 0, gp: 0 };
       const qty = Number(it.quantity) || 1;
       e.units += qty;
@@ -181,6 +183,6 @@ export function fmtDuration(hours) {
   const total = Math.max(0, Math.round((Number(hours) || 0) * 60));
   const h = Math.floor(total / 60);
   const m = total % 60;
-  if (!h) return `${m}m`;
-  return m ? `${h}h ${m}m` : `${h}h`;
+  if (!h) return $t('{m}m', { m });
+  return m ? $t('{h}h {m}m', { h, m }) : $t('{h}h', { h });
 }

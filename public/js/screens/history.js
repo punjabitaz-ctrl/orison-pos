@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t, $tn, N_, dateLocale } from '../lang.js';
+
 /* History: offline ledger of this device's sales plus server-transactions
    pulled on demand. Each record shows sync state (SYNCED / PENDING / VOIDED),
    its kind (sale / refund / payout), and refundable sales open a refund modal. */
@@ -7,14 +9,23 @@
 import { idb } from '../db.js';
 import { screenHead } from '../components.js';
 import { api } from '../api.js';
-import { fmt, esc, openModal, closeModal, toast, debounce } from '../ui.js';
+import { fmt, fmtFor, esc, openModal, closeModal, toast, debounce } from '../ui.js';
 import { kindInfo, createRefund, refundGroups, refundTotal } from '../money.js';
 import { receiptDoc } from '../receipt-doc.js';
+import { receiptContext } from '../receipt-labels.js';
+import { docToLines } from '../receipt-render.js';
+
+/* Sync states are stored as codes; these are the words people read. */
+const STATUS_LABELS = { SYNCED: N_('Synced'), PENDING: N_('Pending'), VOIDED: N_('Voided'), SERVER: N_('On server') };
+const statusLabel = (s) => $t(STATUS_LABELS[s] || N_('Pending'));
+
+/* Tenders from the server may carry only a type. */
+const TENDER_NAMES = { cash: N_('Cash'), card: N_('Card'), transfer: N_('Transfer'), store_credit: N_('Store credit'), net30: N_('On account'), account: N_('On account'), deposit: N_('Deposit applied') };
 
 export const screen = {
   id: 'history',
   tab: 'history',
-  title: 'History',
+  title: $t('History'),
 
   async render(ctx, root) {
     document.getElementById('tabbar').classList.remove('hidden');
@@ -77,18 +88,18 @@ export const screen = {
 
       root.innerHTML = `
         ${screenHead({
-          title: 'History',
-          subHtml: `${local.length} local · ${stat.synced} synced · <span class="warn-text">${stat.pending} pending · ${stat.voided} voided</span>`,
-          actions: '<button class="icon-btn" id="refreshH" aria-label="Refresh">⟳</button>',
+          title: $t('History'),
+          subHtml: `${esc($t('{local} local · {synced} synced', { local: local.length, synced: stat.synced }))} · <span class="warn-text">${esc($t('{pending} pending · {voided} voided', { pending: stat.pending, voided: stat.voided }))}</span>`,
+          actions: `<button class="icon-btn" id="refreshH" aria-label="${$t('Refresh')}">⟳</button>`,
         })}
         <div class="search-row">
           <div class="search-box">
             <svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            <input id="hxSearch" type="search" placeholder="Receipt no., customer, item, IMEI or amount…"
+            <input id="hxSearch" type="search" placeholder="${$t('Receipt no., customer, item, IMEI or amount…')}"
                    value="${esc(query)}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
           </div>
         </div>
-        ${query ? `<p class="muted scr-note">${matched} match${matched === 1 ? '' : 'es'} for “${esc(query)}” · <button class="linklike" id="hxClear">clear</button></p>` : ''}
+        ${query ? `<p class="muted scr-note">${esc($tn('{n} match for “{query}”', '{n} matches for “{query}”', matched, { query }))} · <button class="linklike" id="hxClear">${$t('clear')}</button></p>` : ''}
         <div class="hx-list">
           ${all.length ? all.map((t) => {
             const k = kindInfo(t.kind);
@@ -97,18 +108,18 @@ export const screen = {
               <div class="hx-left">
                 <span class="hx-date">${humanDate(t.createdAt)}</span>
                 <span class="hx-cashier">${esc(t.cashier || '—')}</span>
-                <span class="hx-status st-${(t.status || 'PENDING').toLowerCase()}">${t.status}</span>
-                ${t.kind && t.kind !== 'sale' ? `<span class="k-chip ${k.cls}">${k.label}</span>` : ''}
+                <span class="hx-status st-${(t.status || 'PENDING').toLowerCase()}">${esc(statusLabel(t.status))}</span>
+                ${t.kind && t.kind !== 'sale' ? `<span class="k-chip ${k.cls}">${esc($t(k.label))}</span>` : ''}
               </div>
               <div class="hx-right">
                 <strong>${k.sign < 0 ? '−' : ''}${fmt(t.total)}</strong>
-                <span class="hx-count">${t.items ? t.items.length : 0} items</span>
+                <span class="hx-count">${esc($tn('{n} item', '{n} items', t.items ? t.items.length : 0))}</span>
               </div>
             </button>`;
           }).join('')
-            : `<div class="empty"><p>${query ? 'Nothing matches that search.' : 'No sales yet.'}</p></div>`}
+            : `<div class="empty"><p>${query ? $t('Nothing matches that search.') : $t('No sales yet.')}</p></div>`}
         </div>
-        ${nextCursor ? '<div class="row dash-actions"><button class="btn btn-ghost" id="hxMore">Load 100 more</button></div>' : ''}`;
+        ${nextCursor ? `<div class="row dash-actions"><button class="btn btn-ghost" id="hxMore">${$t('Load 100 more')}</button></div>` : ''}`;
 
       root.querySelector('#refreshH').addEventListener('click', () => loadServer(false));
 
@@ -158,34 +169,34 @@ export const screen = {
       const modalEl = openModal(`
         <div class="tx-detail">
           <button class="icon-btn abs-close" data-x>✕</button>
-          <h3>${k.sign < 0 ? '−' : ''}${fmt(t.total)} <span class="k-chip ${k.cls}">${k.label}</span></h3>
-          <p class="muted">${esc(humanDate(t.createdAt))} · ${esc(t.cashier || '—')} · ${t.status}</p>
-          ${t.originalClientTx ? `<p class="muted">refund of ${esc(t.originalClientTx)}</p>` : ''}
+          <h3>${k.sign < 0 ? '−' : ''}${fmt(t.total)} <span class="k-chip ${k.cls}">${esc($t(k.label))}</span></h3>
+          <p class="muted">${esc(humanDate(t.createdAt))} · ${esc(t.cashier || '—')} · ${esc(statusLabel(t.status))}</p>
+          ${t.originalClientTx ? `<p class="muted">${esc($t('refund of {ref}', { ref: t.originalClientTx }))}</p>` : ''}
           ${t.counterparty ? `<p class="muted">${esc(t.counterparty)}</p>` : ''}
-          ${t.customer ? `<p class="muted">Customer: ${esc(t.customer)}</p>` : ''}
+          ${t.customer ? `<p class="muted">${esc($t('Customer: {name}', { name: t.customer }))}</p>` : ''}
           ${t.receiptNo ? `<p class="muted mono-no">${esc(t.receiptNo)}</p>` : (t.clientTxId ? `<p class="muted">${esc(t.clientTxId)}</p>` : '')}
           <div class="tx-items">
             ${(t.items || []).map((i) => `
               <div class="tx-item-row">
                 <div>
-                  <div>${esc(i.name || 'Item')} <em>×${i.quantity || 1}</em>
-                    ${i.discountPct ? `<span class="k-chip k-disc">${i.discountPct}% off</span>` : ''}</div>
+                  <div>${esc(i.name || $t('Item'))} <em>×${i.quantity || 1}</em>
+                    ${i.discountPct ? `<span class="k-chip k-disc">${esc($t('{pct}% off', { pct: i.discountPct }))}</span>` : ''}</div>
                   ${i.serialNumber ? `<div class="cl-serial">${esc(i.serialNumber)}</div>` : ''}
                 </div>
                 <b>${fmt(lineTotal(i))}${i.discountPct ? ` <s class="muted">${fmt((i.unitPrice || 0) * (i.quantity || 1))}</s>` : ''}</b>
               </div>`).join('')}
           </div>
           ${hasMoney ? `
-          <div class="co-bd-row"><span>Subtotal</span><b>${fmt(t.subtotal != null ? t.subtotal : t.total)}</b></div>
-          <div class="co-bd-row">${(t.discountPct || 0) > 0 ? `<span>Discount</span><b class="neg">−${fmt(t.discountPct)}%</b>` : ''}</div>
-          <div class="co-bd-row"><span>Tax</span><b>${fmt(t.taxAmount || 0)}</b></div>
-          ${t.grossProfit != null ? `<div class="co-bd-row"><span>Gross profit</span><b class="gp">${fmt(t.grossProfit)}</b></div>` : ''}`
+          <div class="co-bd-row"><span>${$t('Subtotal')}</span><b>${fmt(t.subtotal != null ? t.subtotal : t.total)}</b></div>
+          <div class="co-bd-row">${(t.discountPct || 0) > 0 ? `<span>${$t('Discount')}</span><b class="neg">−${esc(t.discountPct)}%</b>` : ''}</div>
+          <div class="co-bd-row"><span>${$t('Tax')}</span><b>${fmt(t.taxAmount || 0)}</b></div>
+          ${t.grossProfit != null ? `<div class="co-bd-row"><span>${$t('Gross profit')}</span><b class="gp">${fmt(t.grossProfit)}</b></div>` : ''}`
             : ''}
           <div class="tx-tenders">
-            ${(t.tenders || []).map((td) => `<div class="hx-tender"><span>${esc(td.label || td.type)}</span><b>${fmt(td.amount)}</b></div>`).join('')}
+            ${(t.tenders || []).map((td) => `<div class="hx-tender"><span>${esc($t(TENDER_NAMES[td.type] || td.label || td.type))}</span><b>${fmt(td.amount)}</b></div>`).join('')}
           </div>
-          ${(t.kind || 'sale') === 'sale' ? '<button class="btn btn-ghost" id="printTxBtn">Print receipt</button>' : ''}
-          ${refundable ? `<button class="btn" id="refundBtn" style="--bg:#c62828">Refund items</button>` : ''}
+          ${(t.kind || 'sale') === 'sale' ? `<button class="btn btn-ghost" id="printTxBtn">${$t('Print receipt')}</button>` : ''}
+          ${refundable ? `<button class="btn" id="refundBtn" style="--bg:#c62828">${$t('Refund items')}</button>` : ''}
           <div id="txSend" class="receipt-send-host"></div>
         </div>`);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
@@ -200,8 +211,8 @@ export const screen = {
           const host = modalEl.querySelector('#txSend');
           if (!host) return;
           mountSendButtons(host, {
-            lines: txReceiptLines(t),
-            title: 'Orison POS — Receipt',
+            lines: docToLines(txDoc(t), fmtFor(txDoc(t).dir)),
+            title: $t('Orison POS — Receipt'),
             filename: 'orison-receipt-' + (t.receiptNo || t.clientTxId || t.id),
           });
         });
@@ -223,15 +234,15 @@ export const screen = {
       const modalEl = openModal(`
         <div class="tx-detail refund-modal">
           <button class="icon-btn abs-close" data-x>✕</button>
-          <h3>Refund</h3>
+          <h3>${$t('Refund')}</h3>
           <p class="muted">${esc(humanDate(t.createdAt))} · ${esc(t.receiptNo || t.clientTxId || t.id)}</p>
           <div class="refund-lines">
-            ${anyRefundable ? '' : '<p class="muted">Everything on this sale is a service, and services are not refunded.</p>'}
+            ${anyRefundable ? '' : `<p class="muted">${$t('Everything on this sale is a service, and services are not refunded.')}</p>`}
             ${groups.map((g, gi) => `
               ${!g.refundable ? `
                 <div class="rf-group rf-locked">
                   <div>${esc(g.name)} <em>×${fmt(g.unitPrice)}</em></div>
-                  <span class="muted">Service — not refundable</span>
+                  <span class="muted">${$t('Service — not refundable')}</span>
                 </div>` : g.serialized ? `
                 <div class="rf-group">
                   <div class="rf-gname">${esc(g.name)}</div>
@@ -252,12 +263,12 @@ export const screen = {
                 </div>`}`).join('')}
           </div>
           <div class="rf-method">
-            <label class="rf-radio"><input type="radio" name="rf-method" value="cash" ${method === 'cash' ? 'checked' : ''}><span>Cash</span></label>
-            <label class="rf-radio"><input type="radio" name="rf-method" value="store_credit" ${method === 'store_credit' ? 'checked' : ''}><span>Store credit</span></label>
+            <label class="rf-radio"><input type="radio" name="rf-method" value="cash" ${method === 'cash' ? 'checked' : ''}><span>${$t('Cash')}</span></label>
+            <label class="rf-radio"><input type="radio" name="rf-method" value="store_credit" ${method === 'store_credit' ? 'checked' : ''}><span>${$t('Store credit')}</span></label>
           </div>
-          <input class="field" id="rf-note" placeholder="Reason (optional)">
-          <div class="rf-total"><span>Refund total</span><b id="rf-total">${fmt(0)}</b></div>
-          <button class="btn" id="rf-confirm" disabled style="--bg:#c62828">Confirm refund</button>
+          <input class="field" id="rf-note" placeholder="${$t('Reason (optional)')}">
+          <div class="rf-total"><span>${$t('Refund total')}</span><b id="rf-total">${fmt(0)}</b></div>
+          <button class="btn" id="rf-confirm" disabled style="--bg:#c62828">${$t('Confirm refund')}</button>
         </div>`);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
       modalEl.querySelectorAll('[data-dir]').forEach((btn) => btn.addEventListener('click', () => {
@@ -290,11 +301,11 @@ export const screen = {
         try {
           await createRefund({ original: t, items, method, note: modalEl.querySelector('#rf-note').value.trim(), user });
           closeModal();
-          toast('Refund queued', 'ok', 1800);
+          toast($t('Refund queued'), 'ok', 1800);
           if (navigator.onLine) loadServer(false); else render();
         } catch (_) {
           confirm.disabled = false;
-          toast('Refund failed — try again', 'warn', 2400);
+          toast($t('Refund failed — try again'), 'warn', 2400);
         }
       });
 
@@ -312,10 +323,10 @@ export const screen = {
     /* A reprint is built from the same model as the original, so it carries
        the receipt number - not the internal transaction id - and names a
        repair deposit as a deposit applied. */
-    async function reprint(t) {
+    function txDoc(t) {
       const subtotal = Number(t.subtotal) || Number(t.total) || 0;
       const pct = Number(t.discountPct) || 0;
-      const doc = receiptDoc({
+      return receiptDoc({
         createdAt: t.createdAt,
         cashier: t.cashier,
         customerName: t.customer || '',
@@ -327,38 +338,13 @@ export const screen = {
         tenders: t.tenders || [],
         receiptNo: t.receiptNo,
         clientTxId: t.clientTxId || t.id,
-      }, { storeName: (ctx.state && ctx.state.store && ctx.state.store.name) || '' });
-      const pr = await import('../printing.js');
-      const r = await pr.printDoc(doc);
-      if (!r.ok) toast(r.message, 'warn', 3600);
+      }, receiptContext(ctx.state && ctx.state.store));
     }
 
-    function txReceiptLines(t) {
-      const kind = kindInfo(t.kind);
-      const d = t.createdAt ? new Date(t.createdAt) : new Date();
-      const dateStr = isNaN(d) ? '' : d.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
-      const timeStr = isNaN(d) ? '' : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      const lines = [
-        'ORISON ELECTRONICS',
-        t.storeName || '',
-        `${dateStr} ${timeStr}`.trim(),
-        `${kind.label} — Cashier: ${t.cashier || '—'}`, '—',
-      ];
-      if (kind.label === 'Sale') {
-        for (const i of (t.items || [])) {
-          const name = i.serialNumber ? `${i.name} [${i.serialNumber}]` : i.name;
-          const qty = i.quantity > 1 ? ` x${i.quantity}` : '';
-          lines.push(`${name}${qty} — ${fmt((i.unitPrice || 0) * (i.quantity || 1))}`);
-        }
-        lines.push('—', `Total — ${fmt(t.total)}`);
-        for (const td of (t.tenders || [])) lines.push(`${td.label || td.type} — ${fmt(td.amount)}`);
-        lines.push('Thank you for shopping at Orison!');
-      } else {
-        lines.push(`Total — ${fmt(t.total)}`);
-        if (t.counterparty) lines.push(`To: ${t.counterparty}`);
-      }
-      lines.push(`# ${t.clientTxId || t.id}`);
-      return lines;
+    async function reprint(t) {
+      const pr = await import('../printing.js');
+      const r = await pr.printDoc(txDoc(t));
+      if (!r.ok) toast(r.message, 'warn', 3600);
     }
 
     function mergeById(list) {
@@ -374,7 +360,7 @@ export const screen = {
       if (!iso) return '—';
       const d = new Date(iso);
       if (isNaN(d)) return iso;
-      return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return d.toLocaleString(dateLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     }
 
     await render();

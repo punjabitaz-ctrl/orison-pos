@@ -1,9 +1,11 @@
 'use strict';
 
+import { $t, $tn, N_ } from '../lang.js';
+
 /* Checkout: split-tender (Cash / Store Credit / Net-30), change calc,
    completes the sale offline-first, then offers receipt print/share. */
 
-import { fmt, esc, toast, beep } from '../ui.js';
+import { fmt, fmtFor, esc, toast, beep } from '../ui.js';
 import { enqueueTransaction, pushImmediate } from '../sync.js';
 import { saleTotals, round2 } from '../money.js';
 import { api } from '../api.js';
@@ -12,15 +14,16 @@ import { screenHead } from '../components.js';
 import { clearSaved } from '../cart.js';
 import { receiptDoc } from '../receipt-doc.js';
 import { rollHtml } from '../receipt-render.js';
+import { receiptContext } from '../receipt-labels.js';
 
 /* Card is recorded, not authorised: the terminal beside the till does the
    authorising and the POS records the amount. Crucially it is not cash, so it
    never counts toward the drawer at shift close. */
 const TENDERS = [
-  { id: 'cash', label: 'Cash' },
-  { id: 'card', label: 'Card' },
-  { id: 'store_credit', label: 'Store Credit' },
-  { id: 'net30', label: 'Net-30 Terms' },
+  { id: 'cash', label: N_('Cash') },
+  { id: 'card', label: N_('Card') },
+  { id: 'store_credit', label: N_('Store Credit') },
+  { id: 'net30', label: N_('Net-30 Terms') },
 ];
 
 export const screen = {
@@ -135,77 +138,77 @@ export const screen = {
 
       root.innerHTML = `
         ${screenHead({
-          title: 'Charge Sale',
+          title: $t('Charge Sale'),
           sub: `${(state.user && state.user.firstName) || ''} · ${fmt(sale.total)}`,
-          actions: '<button class="icon-btn" id="backBtn" aria-label="Cancel">✕</button>',
+          actions: `<button class="icon-btn" id="backBtn" aria-label="${$t('Cancel')}">✕</button>`,
         })}
 
         <div class="checkout">
           <section class="co-cust">
-            <h3>Customer <em class="muted">optional</em></h3>
+            <h3>${$t('Customer')} <em class="muted">${$t('optional')}</em></h3>
             <div class="co-cust-search">
-              <input id="custSearch" class="field" placeholder="Search name, phone, email…" autocomplete="off" aria-label="Search customers">
+              <input id="custSearch" class="field" placeholder="${$t('Search name, phone, email…')}" autocomplete="off" aria-label="${$t('Search customers')}">
               <div id="custResults" class="cust-results"></div>
             </div>
             ${customer ? `
             <div class="co-cust-chip">
               <span>${esc(customer.name)}</span>
-              <button class="cl-remove" id="custClear" aria-label="Clear customer">✕</button>
+              <button class="cl-remove" id="custClear" aria-label="${$t('Clear customer')}">✕</button>
             </div>` : ''}
           </section>
 
           <section class="co-items">
             <details class="co-lines">
               <summary>
-                <span>${sale.items.length} item${sale.items.length === 1 ? '' : 's'}</span>
+                <span>${esc($tn('{n} item', '{n} items', sale.items.length))}</span>
                 <b>${fmt(t.subtotal)}</b>
               </summary>
             ${sale.items.map((i) => `
               <div class="co-item">
                 <div class="co-name">${esc(i.name)} <span class="co-qty">×${i.quantity}</span>
-                  ${i.discountPct ? `<span class="k-chip k-disc">${i.discountPct}% off</span>` : ''}</div>
+                  ${i.discountPct ? `<span class="k-chip k-disc">${esc($t('{pct}% off', { pct: i.discountPct }))}</span>` : ''}</div>
                 ${i.serialNumber ? `<div class="cl-serial">${esc(i.serialNumber)}</div>` : ''}
                 <div class="co-price">${fmt(lineTotal(i))}${i.discountPct ? ` <s>${fmt(i.unitPrice * i.quantity)}</s>` : ''}</div>
               </div>`).join('')}
             </details>
             <div class="co-notes">
               <div class="field co-field">
-                <span>Order discount %</span>
+                <span>${$t('Order discount %')}</span>
                 <input id="orderDisc" type="number" inputmode="decimal" min="0" max="100" step="0.5" value="${sale.orderPct}" placeholder="0">
               </div>
             </div>
             <div class="co-breakdown">
-              <div class="co-bd-row"><span>Subtotal</span><b>${fmt(t.subtotal)}</b></div>
-              <div class="co-bd-row">${t.discount > 0 ? `<span>Discount</span><b class="neg">−${fmt(t.discount)}</b>` : '<span>Discount</span><b>0.00</b>'}</div>
-              <div class="co-bd-row"><span>Tax${store.taxRate != null ? ` (${store.taxRate}%)` : ''}</span><b>${fmt(t.tax)}</b></div>
-              <div class="co-bd-row co-bd-total"><span>Total due</span><strong>${fmt(sale.total)}</strong></div>
+              <div class="co-bd-row"><span>${$t('Subtotal')}</span><b>${fmt(t.subtotal)}</b></div>
+              <div class="co-bd-row">${t.discount > 0 ? `<span>${$t('Discount')}</span><b class="neg">${fmt(t.discount, '−')}</b>` : `<span>${$t('Discount')}</span><b>${fmt(0)}</b>`}</div>
+              <div class="co-bd-row"><span>${$t('Tax')}${store.taxRate != null ? ` (${store.taxRate}%)` : ''}</span><b>${fmt(t.tax)}</b></div>
+              <div class="co-bd-row co-bd-total"><span>${$t('Total due')}</span><strong>${fmt(sale.total)}</strong></div>
             </div>
           </section>
 
           <section class="co-tenders">
-            <h3>Tenders</h3>
+            <h3>${$t('Tenders')}</h3>
             <div class="co-tender-list">
               ${tenders.length ? tenders.map((t) => `
                 <div class="co-tender">
-                  <span>${esc(t.label)}</span>
+                  <span>${esc($t(t.label))}</span>
                   <span class="co-tender-amount">${fmt(t.amount)}</span>
                   <button class="cl-remove" data-del="${t.idx}">✕</button>
-                </div>`).join('') : '<p class="muted">No tenders yet — add cash, store credit, or terms below.</p>'}
+                </div>`).join('') : `<p class="muted">${$t('No tenders yet — add cash, store credit, or terms below.')}</p>`}
             </div>
             <div class="co-remain ${rem <= 0 ? 'co-clear' : ''}">${rem <= 0
-              ? `<span>Change due</span><strong>${fmt(round2(tenders.reduce((s,t)=>s+t.amount,0)-sale.total))}</strong>`
-              : `<span>Amount due</span><strong>${fmt(rem)}</strong>`}</div>
+              ? `<span>${$t('Change due')}</span><strong>${fmt(round2(tenders.reduce((s,t)=>s+t.amount,0)-sale.total))}</strong>`
+              : `<span>${$t('Amount due')}</span><strong>${fmt(rem)}</strong>`}</div>
           </section>
 
           <section class="co-input">
             <div class="seg">
-              ${TENDERS.map((t) => `<button class="seg-btn ${t.id === type ? 'on' : ''}" data-type="${t.id}">${t.label}</button>`).join('')}
+              ${TENDERS.map((t) => `<button class="seg-btn ${t.id === type ? 'on' : ''}" data-type="${t.id}">${esc($t(t.label))}</button>`).join('')}
             </div>
 
             <div class="tender-amount-display">
-              <span>${scrub()} Tender amount</span>
+              <span>${esc($t('{method} tender amount', { method: $t(scrub()) }))}</span>
               <strong class="${change > 0 ? 'has-change' : ''}">${fmt(amount)}</strong>
-              ${type === 'cash' && rem > 0 && change > 0 ? `<em>Change: ${fmt(change)}</em>` : ''}
+              ${type === 'cash' && rem > 0 && change > 0 ? `<em>${esc($t('Change: {amount}', { amount: fmt(change) }))}</em>` : ''}
             </div>
 
             <div class="quicks">
@@ -217,10 +220,10 @@ export const screen = {
             </div>
 
             <button id="addTender" class="btn btn-block btn-ghost" ${amount > 0 || type !== 'cash' ? '' : 'disabled'}>
-              + Add ${esc(typeLabel())}
+              ${esc($t('+ Add {method}', { method: $t(typeLabel()) }))}
             </button>
             <button id="completeBtn" class="btn btn-block btn-primary btn-xl" ${rem <= 0 && tenders.length ? '' : 'disabled'}>
-              Complete Sale · ${fmt(sale.total)}
+              ${esc($t('Complete Sale · {amount}', { amount: fmt(sale.total) }))}
             </button>
           </section>
         </div>`;
@@ -235,7 +238,7 @@ export const screen = {
 
       root.querySelector('[data-close], #backBtn').addEventListener('click', () => {
         if (tenders.length) {
-          if (!window.confirm('Abandon this charge and return to register?')) return;
+          if (!window.confirm($t('Abandon this charge and return to register?'))) return;
         }
         router.show('register');
       });
@@ -264,10 +267,10 @@ export const screen = {
 
       root.querySelector('#addTender').addEventListener('click', () => {
         const t = TENDERS.find((x) => x.id === type);
-        if (type === 'net30' && !customer) { toast('Pick a customer for Net-30 terms', 'warn'); return; }
+        if (type === 'net30' && !customer) { toast($t('Pick a customer for Net-30 terms'), 'warn'); return; }
         const add = type === 'net30' ? remaining() : amount;
-        if (add <= 0 && type !== 'net30') { toast('Enter an amount first', 'warn'); return; }
-        if (type === 'net30' && add <= 0) { toast('Nothing left to put on terms', 'warn'); return; }
+        if (add <= 0 && type !== 'net30') { toast($t('Enter an amount first'), 'warn'); return; }
+        if (type === 'net30' && add <= 0) { toast($t('Nothing left to put on terms'), 'warn'); return; }
         tenders.push({ type: t.id, label: t.label, amount: Math.round(add * 100) / 100, idx: tenders.length });
         amount = 0;
         render();
@@ -307,9 +310,9 @@ export const screen = {
             try {
               const res = await api.post('/api/admin/customers', { name: btn.dataset.name });
               customer = { id: res.customer.id, name: res.customer.name };
-              toast('Customer added', 'ok', 1800);
+              toast($t('Customer added'), 'ok', 1800);
               render();
-            } catch (_) { toast('Could not add customer', 'warn'); }
+            } catch (_) { toast($t('Could not add customer'), 'warn'); }
             return;
           }
           customer = { id: btn.dataset.id, name: btn.dataset.name };
@@ -321,8 +324,8 @@ export const screen = {
     }
 
     async function completeSale() {
-      if (remaining() > 0) { toast('Not fully covered', 'warn'); return; }
-      if (tenders.some((t) => t.type === 'net30') && !customer) { toast('Pick a customer for Net-30 terms', 'warn'); return; }
+      if (remaining() > 0) { toast($t('Not fully covered'), 'warn'); return; }
+      if (tenders.some((t) => t.type === 'net30') && !customer) { toast($t('Pick a customer for Net-30 terms'), 'warn'); return; }
       const tendered = tenders.filter((t) => t.amount > 0);
       const txItems = sale.items.map((i) => ({
         productId: i.productId,
@@ -395,9 +398,9 @@ export const screen = {
       root.innerHTML = `
         <div class="receipt-wrap">
           <div class="receipt-actions">
-            <button class="btn btn-ghost" id="printBtn">Print</button>
-            <button class="btn btn-ghost" id="shareBtn">Share</button>
-            <button class="btn" id="doneBtn">New Sale</button>
+            <button class="btn btn-ghost" id="printBtn">${$t('Print')}</button>
+            <button class="btn btn-ghost" id="shareBtn">${$t('Share')}</button>
+            <button class="btn" id="doneBtn">${$t('New Sale')}</button>
           </div>
           <div id="printRoot" class="print-root"></div>
           <div id="receiptSend" class="receipt-send-host"></div>
@@ -409,7 +412,7 @@ export const screen = {
         if (!sendHost) return;
         mountSendButtons(sendHost, {
           lines: receiptText(cashier, clientTxId).split('\n'),
-          title: 'Orison POS — Receipt',
+          title: $t('Orison POS — Receipt'),
           filename: 'orison-receipt-' + clientTxId,
         });
       });
@@ -423,10 +426,10 @@ export const screen = {
       root.querySelector('#shareBtn').addEventListener('click', async () => {
         const text = receiptText(cashier, clientTxId, receiptNo);
         if (navigator.share) {
-          try { await navigator.share({ title: 'Orison POS — Receipt', text }); } catch (_) {}
+          try { await navigator.share({ title: $t('Orison POS — Receipt'), text }); } catch (_) {}
         } else if (navigator.clipboard) {
           await navigator.clipboard.writeText(text);
-          toast('Receipt copied to clipboard', 'ok');
+          toast($t('Receipt copied to clipboard'), 'ok');
         }
       });
     }
@@ -451,11 +454,12 @@ export const screen = {
         tenders: tenders.filter((t) => t.amount > 0).map((t) => ({ type: t.type, amount: t.amount })),
         receiptNo,
         clientTxId,
-      }, { storeName: (state.store && state.store.name) || '' });
+      }, receiptContext(state.store));
     }
 
     function receiptHtml(cashier, clientTxId, receiptNo) {
-      return rollHtml(saleDoc(clientTxId, receiptNo), fmt);
+      const doc = saleDoc(clientTxId, receiptNo);
+      return rollHtml(doc, fmtFor(doc.dir));
     }
 
     function receiptText(cashier, clientTxId, receiptNo) {

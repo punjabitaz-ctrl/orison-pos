@@ -1,9 +1,11 @@
 'use strict';
 
+import { $t, $tn, LANGUAGES, storeLanguage, loadChoice, saveChoice, dateLocale } from '../lang.js';
+
 /* Settings: session, sync health, server endpoint, sign out. */
 
 import { idb } from '../db.js';
-import { screenHead } from '../components.js';
+import { screenHead, roleLabel } from '../components.js';
 import { api } from '../api.js';
 import { esc, toast, beep, fmt, denomLabel } from '../ui.js';
 import { openModal, closeModal } from '../ui.js';
@@ -29,150 +31,167 @@ export const screen = {
       screen.render(ctx, root);
     }
 
+    const langChoice = await loadChoice(idb);
+
     root.innerHTML = `
-      ${screenHead({ title: 'Settings', sub: 'Terminal & account' })}
+      ${screenHead({ title: $t('Settings'), sub: $t('Terminal & account') })}
 
       <section class="set-card">
         <div class="set-user">
           <div class="avatar">${esc((user && (user.firstName || '?'))[0] || '?')}</div>
           <div>
-            <strong>${esc(user ? `${user.firstName} ${user.lastName || ''}` : 'Not signed in')}</strong>
-            <p class="muted">${esc(user ? ((user.email || '') + ' · ' + (user.role || 'cashier')) : '')}</p>
+            <strong>${esc(user ? `${user.firstName} ${user.lastName || ''}` : $t('Not signed in'))}</strong>
+            <p class="muted">${esc(user ? ((user.email || '') + ' · ' + $t(roleLabel(user.role || 'cashier'))) : '')}</p>
           </div>
+        </div>
+      </section>
+
+      <section class="set-card" id="langCard">
+        <h3>${$t('Language')}</h3>
+        <p class="muted">${esc($t('The language of this till’s screens. Receipts and the customer display use the store’s language: {name}.', { name: (LANGUAGES.find((l) => l.code === storeLanguage()) || LANGUAGES[0]).name }))}</p>
+        <div class="seg seg-sm" id="langPick">
+          <button class="seg-btn ${langChoice === 'store' ? 'on' : ''}" data-lang="store" type="button">${$t('Match the store')}</button>
+          ${LANGUAGES.map((l) => `<button class="seg-btn ${langChoice === l.code ? 'on' : ''}" data-lang="${l.code}" lang="${l.code}" type="button">${esc(l.name)}</button>`).join('')}
         </div>
       </section>
 
       ${(user && user.role === 'admin') ? `
       <section class="set-card">
-        <h3>Scheduled reports</h3>
-        <p class="muted">Daily, weekly and monthly figures emailed automatically. Each report covers the period that just closed and carries the CSV.</p>
+        <h3>${$t('Scheduled reports')}</h3>
+        <p class="muted">${$t('Daily, weekly and monthly figures emailed automatically. Each report covers the period that just closed and carries the CSV.')}</p>
         <div class="field">
-          <span>Send to (comma separated)</span>
+          <span>${$t('Send to (comma separated)')}</span>
           <input id="rsTo" type="text" placeholder="owner@example.com, books@example.com" autocapitalize="none" spellcheck="false">
         </div>
-        <label class="check"><input id="rsDaily" type="checkbox"> Daily</label>
-        <label class="check"><input id="rsWeekly" type="checkbox"> Weekly</label>
-        <label class="check"><input id="rsMonthly" type="checkbox"> Monthly</label>
+        <label class="check"><input id="rsDaily" type="checkbox"> ${$t('Daily')}</label>
+        <label class="check"><input id="rsWeekly" type="checkbox"> ${$t('Weekly')}</label>
+        <label class="check"><input id="rsMonthly" type="checkbox"> ${$t('Monthly')}</label>
         <div class="row">
-          <button class="btn" id="rsSave">Save</button>
-          <button class="btn btn-ghost" id="rsTest">Send one now</button>
+          <button class="btn" id="rsSave">${$t('Save')}</button>
+          <button class="btn btn-ghost" id="rsTest">${$t('Send one now')}</button>
         </div>
         <p id="rsMsg" class="muted" role="status"></p>
       </section>
 
       <section class="set-card">
-        <h3>Backups</h3>
-        <p class="muted">A copy of the whole workbook lands nightly in a Drive folder called <strong>POS Backup</strong>, named with the date and time. The last 30 nights and 12 months are kept.</p>
-        <div id="bkStatus" class="muted">Checking…</div>
-        <div class="row"><button class="btn" id="bkRun">Back up now</button></div>
+        <h3>${$t('Backups')}</h3>
+        <p class="muted">${$t('A copy of the whole workbook lands nightly in a Drive folder called “POS Backup”, named with the date and time. The last 30 nights and 12 months are kept.')}</p>
+        <div id="bkStatus" class="muted">${$t('Checking…')}</div>
+        <div class="row"><button class="btn" id="bkRun">${$t('Back up now')}</button></div>
         <p id="bkMsg" class="muted" role="status"></p>
       </section>` : ''}
 
       <section class="set-card">
-        <h3>Customer display</h3>
-        <p class="muted">Mirror the cart on a second screen facing the shopper. Item names, quantities, prices and the amount due only — never cost, margin or customer records.</p>
-        <label class="check"><input id="cdOn" type="checkbox" ${displayEnabled() ? 'checked' : ''}> Mirror this terminal</label>
-        <div class="row"><button class="btn" id="cdOpen">Open display window</button></div>
+        <h3>${$t('Customer display')}</h3>
+        <p class="muted">${$t('Mirror the cart on a second screen facing the shopper. Item names, quantities, prices and the amount due only — never cost, margin or customer records.')}</p>
+        <label class="check"><input id="cdOn" type="checkbox" ${displayEnabled() ? 'checked' : ''}> ${$t('Mirror this terminal')}</label>
+        <div class="row"><button class="btn" id="cdOpen">${$t('Open display window')}</button></div>
         <p id="cdMsg" class="muted" role="status"></p>
       </section>
 
       ${printerCardHtml()}
 
       <section class="set-card">
-        <h3>Sync</h3>
-        <div class="set-row"><span>Terminal ID</span><code>${esc(syncState.deviceId || '—')}</code></div>
-        <div class="set-row"><span>Last sync</span><span>${esc(syncState.lastSyncAt ? new Date(syncState.lastSyncAt).toLocaleString() : 'never')}</span></div>
-        <div class="set-row"><span>Network</span><span class="${navigator.onLine ? 'tag-ok' : 'tag-bad'}">${navigator.onLine ? 'Online' : 'Offline'}</span></div>
-        <div class="set-row"><span>Queued to send</span><span class="${stats.pending ? 'tag-warn' : ''}">${stats.pending}</span></div>
-        <div class="set-row"><span>Synced</span><span>${stats.synced}</span></div>
-        <div class="set-row"><span>Voided (server-rejected)</span><span>${stats.voided}</span></div>
+        <h3>${$t('Sync')}</h3>
+        <div class="set-row"><span>${$t('Terminal ID')}</span><code>${esc(syncState.deviceId || '—')}</code></div>
+        <div class="set-row"><span>${$t('Last sync')}</span><span>${esc(syncState.lastSyncAt ? new Date(syncState.lastSyncAt).toLocaleString(dateLocale()) : $t('never'))}</span></div>
+        <div class="set-row"><span>${$t('Network')}</span><span class="${navigator.onLine ? 'tag-ok' : 'tag-bad'}">${navigator.onLine ? $t('Online') : $t('Offline')}</span></div>
+        <div class="set-row"><span>${$t('Queued to send')}</span><span class="${stats.pending ? 'tag-warn' : ''}">${stats.pending}</span></div>
+        <div class="set-row"><span>${$t('Synced')}</span><span>${stats.synced}</span></div>
+        <div class="set-row"><span>${$t('Voided (server-rejected)')}</span><span>${stats.voided}</span></div>
         <div class="field">
-          <span>Offline sync window (minutes) — sales sync instantly when online</span>
+          <span>${$t('Offline sync window (minutes) — sales sync instantly when online')}</span>
           <input id="syncMin" type="number" min="1" max="1440" value="${Number(m.syncIntervalMin || 30)}" autocomplete="off">
         </div>
-        <div class="row"><button class="btn" id="syncNowBtn">Sync now</button></div>
+        <div class="row"><button class="btn" id="syncNowBtn">${$t('Sync now')}</button></div>
       </section>
 
       <section class="set-card">
-        <h3>Backend</h3>
+        <h3>${$t('Backend')}</h3>
         <div class="field">
-          <span>Apps Script deployment URL (ends in /exec)</span>
+          <span>${$t('Apps Script deployment URL (ends in /exec)')}</span>
           <input id="serverUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(m.serverUrl || '')}"
                  autocapitalize="off" autocorrect="off" spellcheck="false">
         </div>
         <div class="field">
-          <span>App token (matches Script Properties APP_TOKEN)</span>
-          <input id="appToken" type="text" placeholder="shared app token" value="${esc(m.appToken || '')}"
+          <span>${$t('App token (matches Script Properties APP_TOKEN)')}</span>
+          <input id="appToken" type="text" placeholder="${$t('shared app token')}" value="${esc(m.appToken || '')}"
                  autocapitalize="off" autocorrect="off" spellcheck="false">
         </div>
-        <div class="row"><button class="btn" id="saveUrl">Save &amp; reconnect</button></div>
+        <div class="row"><button class="btn" id="saveUrl">${$t('Save &amp; reconnect')}</button></div>
       </section>
 
       ${m.store ? `
       <section class="set-card">
-        <h3>Store</h3>
-        <div class="set-row"><span>Name</span><span>${esc(m.store.name)}</span></div>
-        <div class="set-row"><span>Code</span><span>${esc(m.store.code)}</span></div>
-        <div class="set-row"><span>Address</span><span>${esc(m.store.address || '—')}</span></div>
-        <div class="set-row"><span>Tax rate</span><span>${m.store.taxRate != null ? `${m.store.taxRate}%` : '0%'}</span></div>
-        <div class="set-row"><span>Language &amp; country</span><span>${esc(m.store.locale || 'en-US')} · ${esc(m.store.country || 'US')}</span></div>
-        <div class="set-row"><span>Currency</span><span>${esc(m.store.currency || 'USD')} · sample ${fmt(1234.5)}</span></div>
-        <div class="set-row"><span>Till counts</span><span>${esc(((m.store.denoms || []).map(denomLabel).join(', ')) || '—')}</span></div>
+        <h3>${$t('Store')}</h3>
+        <div class="set-row"><span>${$t('Name')}</span><span>${esc(m.store.name)}</span></div>
+        <div class="set-row"><span>${$t('Code')}</span><span>${esc(m.store.code)}</span></div>
+        <div class="set-row"><span>${$t('Address')}</span><span>${esc(m.store.address || '—')}</span></div>
+        <div class="set-row"><span>${$t('Tax rate')}</span><span>${m.store.taxRate != null ? `${m.store.taxRate}%` : '0%'}</span></div>
+        <div class="set-row"><span>${$t('Language &amp; country')}</span><span>${esc(m.store.locale || 'en-US')} · ${esc(m.store.country || 'US')}</span></div>
+        <div class="set-row"><span>${$t('Currency')}</span><span>${esc($t('{currency} · sample {amount}', { currency: m.store.currency || 'USD', amount: fmt(1234.5) }))}</span></div>
+        <div class="set-row"><span>${$t('Till counts')}</span><span>${esc(((m.store.denoms || []).map(denomLabel).join(', ')) || '—')}</span></div>
         ${(user && user.role === 'admin') ? `
-        <div class="row"><button class="btn btn-ghost btn-sm" id="storeSetupBtn">Language, country &amp; currency</button></div>` : ''}
+        <div class="row"><button class="btn btn-ghost btn-sm" id="storeSetupBtn">${$t('Language, country &amp; currency')}</button></div>` : ''}
         ${(user && user.role === 'admin') ? `
         <div class="set-row">
-          <span>Sales tax % (admin)</span>
+          <span>${$t('Sales tax % (admin)')}</span>
           <span class="set-inline">
             <input id="taxRate" type="number" inputmode="decimal" min="0" max="100" step="0.01" value="${m.store.taxRate != null ? m.store.taxRate : 0}" style="width:6em">
-            <button class="btn btn-sm" id="saveTax">Save</button>
+            <button class="btn btn-sm" id="saveTax">${$t('Save')}</button>
           </span>
         </div>` : ''}
       </section>` : ''}
 
       ${(user && user.role === 'admin') ? `
       <section class="set-card">
-        <h3>Security</h3>
-        <p class="muted">Manage a staff member's terminals. Find the lost device — compare Terminal ID with Settings → Terminal ID on each device — and revoke just that one, or kill every session.</p>
+        <h3>${$t('Security')}</h3>
+        <p class="muted">${$t('Manage a staff member\'s terminals. Find the lost device — compare Terminal ID with Settings → Terminal ID on each device — and revoke just that one, or kill every session.')}</p>
         <div class="field">
-          <span>Staff email</span>
+          <span>${$t('Staff email')}</span>
           <input id="secEmail" type="email" placeholder="staff@example.com" autocapitalize="none" spellcheck="false">
         </div>
-        <div class="row"><button class="btn" id="listDevicesBtn">List terminals</button></div>
+        <div class="row"><button class="btn" id="listDevicesBtn">${$t('List terminals')}</button></div>
         <div id="deviceList"></div>
-        <div class="row"><button class="btn btn-danger" id="revokeAllBtn">Revoke all sessions</button></div>
+        <div class="row"><button class="btn btn-danger" id="revokeAllBtn">${$t('Revoke all sessions')}</button></div>
         <p id="secMsg" class="muted" role="status"></p>
       </section>` : ''}
 
       ${(user && user.role === 'admin') ? `
       <section class="set-card">
-        <h3>Staff</h3>
-        <p class="muted">Add staff, reset a forgotten PIN, or deactivate a leaver. A new PIN is set by the admin here — hand it over, then the staff member changes it on their own terminal.</p>
-        <div class="row"><button class="btn" id="addStaffBtn">Add staff</button><button class="btn btn-ghost" id="reloadStaffBtn">Reload</button></div>
-        <div id="staffList" class="muted">Loading…</div>
+        <h3>${$t('Staff')}</h3>
+        <p class="muted">${$t('Add staff, reset a forgotten PIN, or deactivate a leaver. A new PIN is set by the admin here — hand it over, then the staff member changes it on their own terminal.')}</p>
+        <div class="row"><button class="btn" id="addStaffBtn">${$t('Add staff')}</button><button class="btn btn-ghost" id="reloadStaffBtn">${$t('Reload')}</button></div>
+        <div id="staffList" class="muted">${$t('Loading…')}</div>
       </section>` : ''}
 
       <section class="set-card">
-        <h3>Change PIN</h3>
-        <p class="muted">Rotate your sign-in PIN. All terminals — including this one — are signed out, so sign back in with the new PIN.</p>
+        <h3>${$t('Change PIN')}</h3>
+        <p class="muted">${$t('Rotate your sign-in PIN. All terminals — including this one — are signed out, so sign back in with the new PIN.')}</p>
         <div class="field">
-          <span>Current PIN</span>
+          <span>${$t('Current PIN')}</span>
           <input id="pinCurrent" type="password" inputmode="numeric" maxlength="8" autocomplete="off">
         </div>
         <div class="field">
-          <span>New PIN (6 digits)</span>
+          <span>${$t('New PIN (6 digits)')}</span>
           <input id="pinNew" type="password" inputmode="numeric" maxlength="8" autocomplete="off">
         </div>
-        <div class="row"><button class="btn" id="changePinBtn">Change PIN</button></div>
+        <div class="row"><button class="btn" id="changePinBtn">${$t('Change PIN')}</button></div>
         <p id="pinMsg" class="muted" role="status"></p>
       </section>
 
       <section class="set-card set-about">
-        <p>Orison POS · offline-first PWA<br>Backend: Google Apps Script + Sheets + Drive · protocol v1</p>
-        <p class="muted">Install from the browser menu — works fully offline after first sync.</p>
+        <p>${$t('Orison POS · offline-first PWA')}<br>${$t('Backend: Google Apps Script + Sheets + Drive · protocol v1')}</p>
+        <p class="muted">${$t('Install from the browser menu — works fully offline after first sync.')}</p>
       </section>
 
-      <button class="btn btn-block btn-danger" id="signoutBtn">Sign out</button>`;
+      <button class="btn btn-block btn-danger" id="signoutBtn">${$t('Sign out')}</button>`;
+
+    root.querySelectorAll('#langPick [data-lang]').forEach((b) => b.addEventListener('click', async () => {
+      await saveChoice(idb, b.dataset.lang);
+      /* A reload is the honest switch: every screen and the layout direction start again in the new language. */
+      window.location.reload();
+    }));
 
     root.querySelector('#storeSetupBtn')?.addEventListener('click', async () => {
       const { openStoreSetup } = await import('./store-setup.js');
@@ -183,17 +202,17 @@ export const screen = {
     if (rsSave) {
       const rsMsg = root.querySelector('#rsMsg');
       const paintSchedule = (st) => {
-        if (!st) { rsMsg.textContent = 'Could not read the schedule.'; return; }
+        if (!st) { rsMsg.textContent = $t('Could not read the schedule.'); return; }
         root.querySelector('#rsTo').value = (st.recipients || []).join(', ');
         root.querySelector('#rsDaily').checked = !!st.daily;
         root.querySelector('#rsWeekly').checked = !!st.weekly;
         root.querySelector('#rsMonthly').checked = !!st.monthly;
         const last = [
-          st.lastDaily ? 'daily ' + new Date(st.lastDaily).toLocaleDateString() : '',
-          st.lastWeekly ? 'weekly ' + new Date(st.lastWeekly).toLocaleDateString() : '',
-          st.lastMonthly ? 'monthly ' + new Date(st.lastMonthly).toLocaleDateString() : '',
+          st.lastDaily ? $t('daily {date}', { date: new Date(st.lastDaily).toLocaleDateString(dateLocale()) }) : '',
+          st.lastWeekly ? $t('weekly {date}', { date: new Date(st.lastWeekly).toLocaleDateString(dateLocale()) }) : '',
+          st.lastMonthly ? $t('monthly {date}', { date: new Date(st.lastMonthly).toLocaleDateString(dateLocale()) }) : '',
         ].filter(Boolean).join(' · ');
-        rsMsg.innerHTML = last ? 'Last sent: ' + esc(last) : 'Nothing sent yet.';
+        rsMsg.innerHTML = last ? esc($t('Last sent: {list}', { list: last })) : esc($t('Nothing sent yet.'));
         if (st.lastError) rsMsg.innerHTML += `<br><span class="tag-bad">${esc(st.lastError)}</span>`;
       };
       api.post('/api/reports/schedule', {}).then(paintSchedule).catch(() => paintSchedule(null));
@@ -207,25 +226,25 @@ export const screen = {
           }
           const st = await api.post('/api/reports/schedule', {});
           paintSchedule(st);
-          toast('Schedule saved', 'ok'); beep('ok');
+          toast($t('Schedule saved'), 'ok'); beep('ok');
         } catch (err) {
-          rsMsg.textContent = (err && err.data && err.data.error) || 'Could not save';
-          toast('Could not save the schedule', 'warn');
+          rsMsg.textContent = (err && err.message) || $t('Could not save');
+          toast($t('Could not save the schedule'), 'warn');
         }
         rsSave.disabled = false;
       };
       rsSave.addEventListener('click', saveSchedule);
 
       root.querySelector('#rsTest').addEventListener('click', async () => {
-        rsMsg.textContent = 'Sending…';
+        rsMsg.textContent = $t('Sending…');
         try {
           const res = await api.post('/api/reports/schedule', { sendNow: 'daily' }, { timeout: 45000 });
           rsMsg.textContent = res.sent
-            ? `Sent to ${res.recipients} recipient${res.recipients === 1 ? '' : 's'}.`
-            : 'Nobody to send to — add a recipient and save first.';
-          if (res.sent) { toast('Report sent', 'ok'); beep('ok'); }
+            ? $tn('Sent to {n} recipient.', 'Sent to {n} recipients.', res.recipients)
+            : $t('Nobody to send to — add a recipient and save first.');
+          if (res.sent) { toast($t('Report sent'), 'ok'); beep('ok'); }
         } catch (err) {
-          rsMsg.textContent = (err && err.data && err.data.error) || 'Send failed';
+          rsMsg.textContent = (err && err.message) || $t('Send failed');
         }
       });
     }
@@ -235,23 +254,23 @@ export const screen = {
       const bkStatus = root.querySelector('#bkStatus');
       const bkMsg = root.querySelector('#bkMsg');
       const paint = (st) => {
-        if (!st) { bkStatus.textContent = 'Could not read backup status.'; return; }
-        const when = st.lastAt ? new Date(st.lastAt).toLocaleString() : 'never';
-        bkStatus.innerHTML = `Last backup: <strong>${esc(when)}</strong>${st.lastName ? ' · ' + esc(st.lastName) : ''}`;
-        if (st.lastError) bkStatus.innerHTML += `<br><span class="tag-bad">Last failure: ${esc(st.lastError)}</span>`;
+        if (!st) { bkStatus.textContent = $t('Could not read backup status.'); return; }
+        const when = st.lastAt ? new Date(st.lastAt).toLocaleString(dateLocale()) : $t('never');
+        bkStatus.innerHTML = `${esc($t('Last backup:'))} <strong>${esc(when)}</strong>${st.lastName ? ' · ' + esc(st.lastName) : ''}`;
+        if (st.lastError) bkStatus.innerHTML += `<br><span class="tag-bad">${esc($t('Last failure: {reason}', { reason: st.lastError }))}</span>`;
       };
       api.get('/api/backup/status').then(paint).catch(() => paint(null));
       bkRun.addEventListener('click', async () => {
         bkRun.disabled = true;
-        bkMsg.textContent = 'Backing up…';
+        bkMsg.textContent = $t('Backing up…');
         try {
           const res = await api.post('/api/backup/run', {}, { timeout: 60000 });
-          bkMsg.textContent = 'Saved ' + res.name;
-          toast('Backup saved', 'ok'); beep('ok');
+          bkMsg.textContent = $t('Saved {name}', { name: res.name });
+          toast($t('Backup saved'), 'ok'); beep('ok');
           api.get('/api/backup/status').then(paint).catch(() => {});
         } catch (err) {
-          bkMsg.textContent = (err && err.data && err.data.error) || 'Backup failed';
-          toast('Backup failed', 'warn');
+          bkMsg.textContent = (err && err.message) || $t('Backup failed');
+          toast($t('Backup failed'), 'warn');
         }
         bkRun.disabled = false;
       });
@@ -262,13 +281,13 @@ export const screen = {
       const msg = root.querySelector('#cdMsg');
       if (e.target.checked) {
         publishIdle((state.store && state.store.name) || '');
-        msg.textContent = 'Mirroring on. Open the display window on the customer-facing screen.';
+        msg.textContent = $t('Mirroring on. Open the display window on the customer-facing screen.');
       } else {
-        msg.textContent = 'Mirroring off — any open display goes back to the welcome screen.';
+        msg.textContent = $t('Mirroring off — any open display goes back to the welcome screen.');
       }
     });
 
-    mountPrinterCard(root, { storeName: (m.store && m.store.name) || '' });
+    mountPrinterCard(root, { store: m.store || null });
 
     root.querySelector('#cdOpen').addEventListener('click', async () => {
       const msg = root.querySelector('#cdMsg');
@@ -278,25 +297,25 @@ export const screen = {
       }
       const res = await openDisplay();
       if (!res.opened) {
-        msg.textContent = 'The browser blocked the window — allow pop-ups for this site and try again.';
-        toast('Pop-up blocked', 'warn');
+        msg.textContent = $t('The browser blocked the window — allow pop-ups for this site and try again.');
+        toast($t('Pop-up blocked'), 'warn');
         return;
       }
-      if (res.secondScreen) msg.textContent = 'Display opened on the second screen.';
-      else if (res.reason === 'single-screen') msg.textContent = 'Only one screen detected — opened here; drag it across if you attach one.';
-      else msg.textContent = 'Display opened. Drag it to the customer-facing screen and full-screen it (F11).';
+      if (res.secondScreen) msg.textContent = $t('Display opened on the second screen.');
+      else if (res.reason === 'single-screen') msg.textContent = $t('Only one screen detected — opened here; drag it across if you attach one.');
+      else msg.textContent = $t('Display opened. Drag it to the customer-facing screen and full-screen it (F11).');
       publishIdle((state.store && state.store.name) || '');
     });
 
     root.querySelector('#syncNowBtn').addEventListener('click', async () => {
       root.querySelector('#syncNowBtn').disabled = true;
-      root.querySelector('#syncNowBtn').textContent = 'Syncing…';
+      root.querySelector('#syncNowBtn').textContent = $t('Syncing…');
       await setSyncInterval(Number(root.querySelector('#syncMin').value || 30));
       const res = await syncNow();
       root.querySelector('#syncNowBtn').disabled = false;
-      root.querySelector('#syncNowBtn').textContent = 'Sync now';
+      root.querySelector('#syncNowBtn').textContent = $t('Sync now');
       redraw();
-      if (res && res.offline) toast('Offline — queued locally', 'warn');
+      if (res && res.offline) toast($t('Offline — queued locally'), 'warn');
     });
 
     root.querySelector('#saveUrl').addEventListener('click', async () => {
@@ -306,22 +325,22 @@ export const screen = {
       await setAppToken(token);
       try {
         await pull();
-        toast('Connected', 'ok'); beep('ok');
+        toast($t('Connected'), 'ok'); beep('ok');
       } catch (_) {
-        toast('Backend unreachable — will retry once online', 'warn');
+        toast($t('Backend unreachable — will retry once online'), 'warn');
       }
       redraw();
     });
 
     root.querySelector('#saveTax')?.addEventListener('click', async () => {
       const rate = parseFloat(root.querySelector('#taxRate').value);
-      if (isNaN(rate) || rate < 0 || rate > 100) { toast('Tax rate must be between 0 and 100', 'warn'); return; }
+      if (isNaN(rate) || rate < 0 || rate > 100) { toast($t('Tax rate must be between 0 and 100'), 'warn'); return; }
       try {
         await api.post('/api/admin/store', { taxRate: rate });
         await pull();
-        toast('Tax rate saved', 'ok'); beep('ok');
+        toast($t('Tax rate saved'), 'ok'); beep('ok');
       } catch (err) {
-        toast((err && (err.data && err.data.error)) || (err && err.message) || 'Save failed', 'warn');
+        toast((err && err.message) || $t('Save failed'), 'warn');
       }
       redraw();
     });
@@ -334,7 +353,7 @@ export const screen = {
       const res = await api.post('/api/admin/devices', { email });
       const list = deviceList();
       if (!res.devices.length) {
-        list.innerHTML = '<p class="muted">No registered terminals for that account yet.</p>';
+        list.innerHTML = `<p class="muted">${$t('No registered terminals for that account yet.')}</p>`;
         secMsg().textContent = '';
         return;
       }
@@ -342,20 +361,20 @@ export const screen = {
         <div class="set-row">
           <span>
             <code>${esc(d.deviceId.slice(0, 8).toUpperCase())}</code>
-            <span class="muted"> · last seen ${d.lastSeen ? esc(new Date(d.lastSeen).toLocaleString()) : 'never'}</span>
-            ${d.revoked ? '<span class="tag-bad">revoked</span>' : ''}
+            <span class="muted"> · ${esc($t('last seen {when}', { when: d.lastSeen ? new Date(d.lastSeen).toLocaleString(dateLocale()) : $t('never') }))}</span>
+            ${d.revoked ? `<span class="tag-bad">${$t('revoked')}</span>` : ''}
           </span>
-          ${d.revoked ? '' : `<button class="btn btn-sm btn-danger" data-dev="${esc(d.deviceId)}">Revoke</button>`}
+          ${d.revoked ? '' : `<button class="btn btn-sm btn-danger" data-dev="${esc(d.deviceId)}">${$t('Revoke')}</button>`}
         </div>`).join('');
       list.querySelectorAll('button[data-dev]').forEach((btn) => {
         btn.addEventListener('click', async () => {
           try {
             await api.post('/api/admin/revoke-device', { email, deviceId: btn.dataset.dev });
-            secMsg().textContent = `Revoked terminal ${btn.dataset.dev.slice(0, 8).toUpperCase()}. It will be forced to sign in again.`;
+            secMsg().textContent = $t('Revoked terminal {id}. It will be forced to sign in again.', { id: btn.dataset.dev.slice(0, 8).toUpperCase() });
             beep('ok');
             await listDevices(email);
           } catch (err) {
-            secMsg().textContent = (err && (err.data && err.data.error)) || (err && err.message) || 'Revoke failed';
+            secMsg().textContent = (err && err.message) || $t('Revoke failed');
             beep('err');
           }
         });
@@ -364,26 +383,26 @@ export const screen = {
 
     root.querySelector('#listDevicesBtn')?.addEventListener('click', async () => {
       const email = secEmail().value.trim().toLowerCase();
-      if (!email.includes('@')) { secMsg().textContent = 'Enter a valid staff email.'; return; }
+      if (!email.includes('@')) { secMsg().textContent = $t('Enter a valid staff email.'); return; }
       try {
         await listDevices(email);
       } catch (err) {
-        secMsg().textContent = (err && (err.data && err.data.error)) || (err && err.message) || 'List failed';
+        secMsg().textContent = (err && err.message) || $t('List failed');
         beep('err');
       }
     });
 
     root.querySelector('#revokeAllBtn')?.addEventListener('click', async () => {
       const email = secEmail().value.trim().toLowerCase();
-      if (!email.includes('@')) { secMsg().textContent = 'Enter a valid staff email.'; return; }
-      if (!window.confirm(`Revoke ALL sessions for ${email}?`)) return;
+      if (!email.includes('@')) { secMsg().textContent = $t('Enter a valid staff email.'); return; }
+      if (!window.confirm($t('Revoke ALL sessions for {email}?', { email }))) return;
       try {
         await api.post('/api/admin/revoke', { email });
-        secMsg().textContent = `All sessions revoked for ${email}. They must sign in again on every device.`;
+        secMsg().textContent = $t('All sessions revoked for {email}. They must sign in again on every device.', { email });
         beep('ok');
         await listDevices(email);
       } catch (err) {
-        secMsg().textContent = (err && (err.data && err.data.error)) || (err && err.message) || 'Revoke failed';
+        secMsg().textContent = (err && err.message) || $t('Revoke failed');
         beep('err');
       }
     });
@@ -396,25 +415,25 @@ export const screen = {
         const modalEl = openModal(`
           <div class="tx-detail">
             <button class="icon-btn abs-close" data-x>✕</button>
-            <h3>Reset PIN for ${esc(name)}</h3>
-            <p class="muted">Set a new 6-digit PIN for ${esc(email)}. They are signed out everywhere and must use this PIN on next sign-in.</p>
-            <label class="field-label">New PIN
-              <input class="field" id="staffPin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="6 digits">
+            <h3>${esc($t('Reset PIN for {name}', { name }))}</h3>
+            <p class="muted">${esc($t('Set a new 6-digit PIN for {email}. They are signed out everywhere and must use this PIN on next sign-in.', { email }))}</p>
+            <label class="field-label">${$t('New PIN')}
+              <input class="field" id="staffPin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="${$t('6 digits')}">
             </label>
-            <button class="btn" id="staffPinSave">Set PIN</button>
+            <button class="btn" id="staffPinSave">${$t('Set PIN')}</button>
           </div>`);
         modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
         modalEl.querySelector('#staffPinSave').addEventListener('click', async () => {
           const pinVal = modalEl.querySelector('#staffPin').value.trim();
-          if (!/^\d{6}$/.test(pinVal)) { toast('PIN must be exactly 6 digits', 'warn'); return; }
+          if (!/^\d{6}$/.test(pinVal)) { toast($t('PIN must be exactly 6 digits'), 'warn'); return; }
           const save = modalEl.querySelector('#staffPinSave');
           save.disabled = true;
           try {
             await api.post('/api/admin/pin', { email, pin: pinVal });
             closeModal();
-            toast('PIN set — hand it to the staff member', 'ok', 3200); beep('ok');
+            toast($t('PIN set — hand it to the staff member'), 'ok', 3200); beep('ok');
           } catch (err) {
-            toast((err && (err.data && err.data.error)) || (err && err.message) || 'Reset failed', 'warn');
+            toast((err && err.message) || $t('Reset failed'), 'warn');
             save.disabled = false;
           }
         });
@@ -424,11 +443,11 @@ export const screen = {
         btn.disabled = true;
         try {
           await api.post('/api/admin/users/patch', { id, active: btn.dataset.want === '1' });
-          toast(btn.dataset.want === '1' ? 'Staff re-activated' : 'Staff deactivated — signed out everywhere', 'ok');
+          toast(btn.dataset.want === '1' ? $t('Staff re-activated') : $t('Staff deactivated — signed out everywhere'), 'ok');
           beep('ok');
           await loadStaff();
         } catch (err) {
-          toast((err && (err.data && err.data.error)) || (err && err.message) || 'Update failed', 'warn');
+          toast((err && err.message) || $t('Update failed'), 'warn');
           btn.disabled = false;
         }
         return;
@@ -444,18 +463,18 @@ export const screen = {
           <div class="set-row">
             <span>
               <strong>${esc(u.firstName + ' ' + u.lastName)}</strong>
-              <span class="muted"> · ${esc(u.email)} · ${esc(u.role)}</span>
-              ${u.active ? '' : ' <span class="tag-bad">off</span>'}
-              ${String(u.id) === String(me && me.id) ? ' <span class="tag-ok">you</span>' : ''}
+              <span class="muted"> · ${esc(u.email)} · ${esc($t(roleLabel(u.role)))}</span>
+              ${u.active ? '' : ` <span class="tag-bad">${$t('off')}</span>`}
+              ${String(u.id) === String(me && me.id) ? ` <span class="tag-ok">${$t('you')}</span>` : ''}
             </span>
             <span class="set-inline">
-              <button class="btn btn-sm" data-staff data-id="${esc(u.id)}" data-email="${esc(u.email)}" data-name="${esc(u.firstName + ' ' + u.lastName)}" data-act="pin">PIN</button>
+              <button class="btn btn-sm" data-staff data-id="${esc(u.id)}" data-email="${esc(u.email)}" data-name="${esc(u.firstName + ' ' + u.lastName)}" data-act="pin">${$t('PIN')}</button>
               ${String(u.id) === String(me && me.id) ? '' : `
-              <button class="btn btn-sm ${u.active ? 'btn-danger' : 'btn-ghost'}" data-staff data-id="${esc(u.id)}" data-want="${u.active ? '0' : '1'}" data-act="toggle">${u.active ? 'Off' : 'On'}</button>`}
+              <button class="btn btn-sm ${u.active ? 'btn-danger' : 'btn-ghost'}" data-staff data-id="${esc(u.id)}" data-want="${u.active ? '0' : '1'}" data-act="toggle">${u.active ? $t('Off') : $t('On')}</button>`}
             </span>
           </div>`).join('');
       } catch (err) {
-        list.textContent = (err && (err.data && err.data.error)) || 'Could not load staff';
+        list.textContent = (err && err.message) || $t('Could not load staff');
       }
     }
 
@@ -464,24 +483,24 @@ export const screen = {
       staffModal = openModal(`
         <div class="tx-detail">
           <button class="icon-btn abs-close" data-x>✕</button>
-          <h3>Add staff</h3>
-          <label class="field-label">First name
+          <h3>${$t('Add staff')}</h3>
+          <label class="field-label">${$t('First name')}
             <input class="field" id="nsFirst" autocomplete="off">
           </label>
-          <label class="field-label">Last name
+          <label class="field-label">${$t('Last name')}
             <input class="field" id="nsLast" autocomplete="off">
           </label>
-          <label class="field-label">Email
+          <label class="field-label">${$t('Email')}
             <input class="field" id="nsEmail" type="email" autocapitalize="none" autocomplete="off">
           </label>
-          <label class="field-label">Role
+          <label class="field-label">${$t('Role')}
             <select class="field" id="nsRole">
-              <option value="cashier">Cashier</option>
-              <option value="manager">Manager</option>
-              <option value="admin">Admin</option>
+              <option value="cashier">${$t('Cashier')}</option>
+              <option value="manager">${$t('Manager')}</option>
+              <option value="admin">${$t('Admin')}</option>
             </select>
           </label>
-          <button class="btn" id="nsCreate">Create account</button>
+          <button class="btn" id="nsCreate">${$t('Create account')}</button>
           <p id="nsMsg" class="muted" role="status"></p>
         </div>`);
       staffModal.querySelector('[data-x]').addEventListener('click', closeModal);
@@ -498,17 +517,17 @@ export const screen = {
           staffModal.innerHTML = `
             <div class="tx-detail">
               <button class="icon-btn abs-close" data-x>✕</button>
-              <h3>Account created</h3>
-              <p class="muted">Show this PIN once and have it changed at the terminal. It is not shown again and not stored anywhere.</p>
+              <h3>${$t('Account created')}</h3>
+              <p class="muted">${$t('Show this PIN once and have it changed at the terminal. It is not shown again and not stored anywhere.')}</p>
               <div class="staff-pin">${esc(res.oneTimePin)}</div>
               <p class="muted">${esc(email)}</p>
-              <button class="btn" id="nsDone">Done</button>
+              <button class="btn" id="nsDone">${$t('Done')}</button>
             </div>`;
           staffModal.querySelector('[data-x]').addEventListener('click', closeModal);
           staffModal.querySelector('#nsDone').addEventListener('click', async () => { closeModal(); await loadStaff(); });
           beep('ok');
         } catch (err) {
-          cMsg.textContent = (err && (err.data && err.data.error)) || (err && err.message) || 'Create failed';
+          cMsg.textContent = (err && err.message) || $t('Create failed');
           cBtn.disabled = false;
         }
       });
@@ -521,17 +540,17 @@ export const screen = {
       const next = root.querySelector('#pinNew').value.trim();
       const msg = root.querySelector('#pinMsg');
       const btn = root.querySelector('#changePinBtn');
-      if (!/^\d{6}$/.test(next)) { msg.textContent = 'New PIN must be exactly 6 digits.'; return; }
+      if (!/^\d{6}$/.test(next)) { msg.textContent = $t('New PIN must be exactly 6 digits.'); return; }
       btn.disabled = true;
       try {
         await api.post('/api/pin', { currentPin: current, newPin: next });
-        msg.textContent = 'PIN changed. Use it next time you sign in.';
+        msg.textContent = $t('PIN changed. Use it next time you sign in.');
         msg.className = 'muted';
         beep('ok');
         root.querySelector('#pinCurrent').value = '';
         root.querySelector('#pinNew').value = '';
       } catch (err) {
-        msg.textContent = (err && (err.data && err.data.error)) || (err && err.message) || 'Change failed';
+        msg.textContent = (err && err.message) || $t('Change failed');
         msg.className = 'muted';
         beep('err');
       }
@@ -539,7 +558,7 @@ export const screen = {
     });
 
     root.querySelector('#signoutBtn').addEventListener('click', async () => {
-      if (!window.confirm('Sign out of this terminal?')) return;
+      if (!window.confirm($t('Sign out of this terminal?'))) return;
       // Revoke this terminal's token server-side so a lost device can't keep
       // using it; best-effort (offline sign-out still clears locally).
       try { await api.post('/api/logout', {}); } catch (_) {}

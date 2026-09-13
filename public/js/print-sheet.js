@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t } from './lang.js';
+
 /* Full-page printing for things that are not 80mm receipts.
 
    The app's own print path is tuned for a thermal roll (`@page { size: 80mm }`),
@@ -58,7 +60,7 @@ export function printSheet(html, title = '', pageSize = 'auto') {
   doc.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title></title></head><body></body></html>');
   doc.close();
 
-  doc.title = title || 'Orison POS';
+  doc.title = title || $t('Orison POS');
   const style = doc.createElement('style');
   style.textContent = SHEET_CSS
     + (pageSize === 'A4' || pageSize === 'letter' ? `@page { size: ${pageSize}; margin: 12mm; }` : '')

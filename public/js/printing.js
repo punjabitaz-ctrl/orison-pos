@@ -6,13 +6,14 @@
    renderers, the store's currency, and plain-language results. */
 
 import { idb } from './db.js';
-import { fmt } from './ui.js';
+import { fmtFor } from './ui.js';
 import { printSheet } from './print-sheet.js';
 import { rollHtml, sheetHtml, docToImage } from './receipt-render.js';
 import {
   bluetoothSupported, createBluetoothTransport, loadPrinterSettings, openDrawer,
   printReceipt, savePrinterSettings, shouldKickForSale,
 } from './printer.js';
+import { $t, N_ } from './lang.js';
 
 export const bluetooth = createBluetoothTransport(typeof navigator === 'undefined' ? undefined : navigator);
 
@@ -31,7 +32,7 @@ function renderRoll(doc, paper) {
     document.body.appendChild(host);
   }
   host.className = `print-root print-job paper-${paper}`;
-  host.innerHTML = rollHtml(doc, fmt);
+  host.innerHTML = rollHtml(doc, fmtFor(doc.dir));
   document.body.classList.add('printing');
   requestAnimationFrame(() => {
     window.print();
@@ -44,25 +45,26 @@ function renderRoll(doc, paper) {
 
 function renderSheet(doc, page) {
   const size = page === 'letter' ? 'letter' : page === 'a4' ? 'A4' : 'auto';
-  return printSheet(sheetHtml(doc, fmt), '', size);
+  return printSheet(sheetHtml(doc, fmtFor(doc.dir)), '', size);
 }
 
 export const REASONS = {
-  not_connected: 'The Bluetooth printer is not connected. Connect it in Settings → Printer.',
-  popup_blocked: 'The browser blocked the print window. Allow pop-ups for this site, then try again.',
-  no_drawer: 'No cash drawer is set up on this terminal.',
+  not_connected: N_('The Bluetooth printer is not connected. Connect it in Settings → Printer.'),
+  popup_blocked: N_('The browser blocked the print window. Allow pop-ups for this site, then try again.'),
+  no_drawer: N_('No cash drawer is set up on this terminal.'),
 };
 
 export async function printDoc(doc, { kick = false } = {}) {
   const settings = await getPrinterSettings();
+  const fmt = fmtFor(doc.dir);
   try {
     const r = await printReceipt(doc, {
       settings, fmt, transport: bluetooth, renderRoll, renderSheet,
       renderCanvas: (d, width) => docToImage(d, width, fmt), kick,
     });
-    return { ...r, message: r.ok ? '' : (REASONS[r.reason] || 'Could not print') };
+    return { ...r, message: r.ok ? '' : $t(REASONS[r.reason] || N_('Could not print')) };
   } catch (e) {
-    return { ok: false, reason: 'error', message: `Printer error: ${(e && e.message) || e}` };
+    return { ok: false, reason: 'error', message: $t('Printer error: {reason}', { reason: (e && e.message) || e }) };
   }
 }
 
@@ -70,9 +72,9 @@ export async function kickDrawer() {
   const settings = await getPrinterSettings();
   try {
     const r = await openDrawer({ settings, transport: bluetooth });
-    return { ...r, message: r.ok ? '' : (REASONS[r.reason] || 'Could not open the drawer') };
+    return { ...r, message: r.ok ? '' : $t(REASONS[r.reason] || N_('Could not open the drawer')) };
   } catch (e) {
-    return { ok: false, reason: 'error', message: `Drawer error: ${(e && e.message) || e}` };
+    return { ok: false, reason: 'error', message: $t('Drawer error: {reason}', { reason: (e && e.message) || e }) };
   }
 }
 

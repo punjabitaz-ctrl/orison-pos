@@ -7,13 +7,21 @@
 
 import { esc } from './ui.js';
 
-const SVG = (body) => `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">${body}</svg>`;
+const SVG = (body, cls = '') => `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"${cls ? ` class="${cls}"` : ''}>${body}</svg>`;
+
+import { $t, $tn, N_ } from './lang.js';
+
+/* Role names are stored lowercase; these are the words people read. */
+const ROLE_LABELS = { admin: N_('Admin'), manager: N_('Manager'), cashier: N_('Cashier') };
+export function roleLabel(role) {
+  return ROLE_LABELS[String(role || '')] || String(role || '');
+}
 
 export const ICONS = {
   menu: SVG('<rect x="3" y="3" width="7" height="7" rx="1.6" stroke="currentColor" stroke-width="1.7"/><rect x="14" y="3" width="7" height="7" rx="1.6" stroke="currentColor" stroke-width="1.7"/><rect x="3" y="14" width="7" height="7" rx="1.6" stroke="currentColor" stroke-width="1.7"/><rect x="14" y="14" width="7" height="7" rx="1.6" stroke="currentColor" stroke-width="1.7"/>'),
   register: SVG('<rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M3 9h18M8 13h4M8 16h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'),
   history: SVG('<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6"/><path d="M12 7v5l3.5 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'),
-  refund: SVG('<path d="M9 5L4 10l5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 10h9a6 6 0 010 12h-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>'),
+  refund: SVG('<path d="M9 5L4 10l5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 10h9a6 6 0 010 12h-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>', 'flip-rtl'),
   payout: SVG('<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6"/><path d="M12 17V7M9 14l3 3 3-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'),
   pickup: SVG('<rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.6"/><path d="M6 9.5v5M18 9.5v5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'),
   expense: SVG('<circle cx="9" cy="7.5" r="3.2" stroke="currentColor" stroke-width="1.6"/><path d="M3.2 20c.9-3.6 3.2-5.2 5.8-5.2 1.1 0 2.1.3 3 .9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14 17.5h6M17 14.5v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'),
@@ -41,7 +49,7 @@ export function tile({ id, label } = {}) {
   return `
     <button class="mtile" data-go="${esc(id)}" type="button">
       <span class="mtile-icon i-${esc(id)}">${icon(id)}</span>
-      <span class="mtile-label">${esc(label)}</span>
+      <span class="mtile-label">${esc($t(label))}</span>
     </button>`;
 }
 
@@ -51,9 +59,9 @@ export function tileGrid(tiles) {
 
 export function navButton({ id, label, primary } = {}) {
   return `
-    <button class="tab${primary ? ' tab-primary' : ''}" data-tab="${esc(id)}" aria-label="${esc(label)}" title="${esc(label)}">
+    <button class="tab${primary ? ' tab-primary' : ''}" data-tab="${esc(id)}" aria-label="${esc($t(label))}" title="${esc($t(label))}">
       ${icon(id)}
-      <span>${esc(label)}</span>
+      <span>${esc($t(label))}</span>
       ${id === 'alerts' || id === 'menu' ? '<span class="tab-badge hidden"></span>' : ''}
     </button>`;
 }
@@ -68,7 +76,7 @@ export function appHeaderHtml({ storeName, userName, role } = {}) {
     <div class="ab-right">
       <span id="appStatus" class="ab-status"><span class="dot"></span><span class="ab-status-text"></span></span>
       <time id="appClock" class="ab-clock"></time>
-      <button id="appUser" class="ab-user" type="button" aria-label="${esc(name || 'Account')}" title="${esc(name)}${role ? ' · ' + esc(role) : ''}">${esc(initial)}</button>
+      <button id="appUser" class="ab-user" type="button" aria-label="${esc(name || $t('Account'))}" title="${esc(name)}${role ? ' · ' + esc($t(roleLabel(role))) : ''}">${esc(initial)}</button>
     </div>`;
 }
 
@@ -87,7 +95,8 @@ export function catColor(category) {
 export function categoryChip({ label, active } = {}) {
   const name = String(label == null ? '' : label);
   const dot = name === 'All' ? '' : `<span class="chip-dot" style="background:${catColor(name)}"></span>`;
-  return `<button class="chip${active ? ' on' : ''}" data-cat="${esc(name)}" type="button">${dot}${esc(name)}</button>`;
+  /* 'All' is the sentinel value; only its label is translated. */
+  return `<button class="chip${active ? ' on' : ''}" data-cat="${esc(name)}" type="button">${dot}${esc(name === 'All' ? $t('All') : name)}</button>`;
 }
 
 function lockedFlag(p) {
@@ -105,8 +114,8 @@ export function productTile(product, { fmt, available } = {}) {
     : available;
   const out = !isService && avail <= 0;
   const stock = isService
-    ? '<span class="pt-stock pt-service">Service</span>'
-    : `<span class="pt-stock${out ? ' pt-out' : ''}">${out ? 'Out of stock' : (p.isSerialized ? avail + ' units' : avail + ' in stock')}</span>`;
+    ? `<span class="pt-stock pt-service">${$t('Service')}</span>`
+    : `<span class="pt-stock${out ? ' pt-out' : ''}">${out ? $t('Out of stock') : (p.isSerialized ? $tn('{n} unit', '{n} units', avail) : $t('{n} in stock', { n: avail }))}</span>`;
   return `
     <button class="prod-card${out ? ' out' : ''}" data-add="${esc(p.id)}" type="button">
       <span class="pt-cat" style="background:${catColor(p.category)}">${esc(p.category)}</span>
@@ -115,8 +124,8 @@ export function productTile(product, { fmt, available } = {}) {
         <span class="pt-price">${esc(money(p.retailPrice))}</span>
         ${stock}
       </span>
-      ${p.isSerialized ? '<span class="pt-badge">IMEI</span>' : ''}
-      ${lockedFlag(p) ? '<span class="pt-badge pt-lock">Locked</span>' : ''}
+      ${p.isSerialized ? `<span class="pt-badge">${$t('IMEI')}</span>` : ''}
+      ${lockedFlag(p) ? `<span class="pt-badge pt-lock">${$t('Locked')}</span>` : ''}
     </button>`;
 }
 
@@ -130,10 +139,10 @@ export function cartBar({ count, total, fmt } = {}) {
   return `
     <button class="cb-open" data-open-cart type="button">
       <span class="cb-count">${n}</span>
-      <span class="cb-label">${n} item${n === 1 ? '' : 's'}</span>
+      <span class="cb-label">${esc($tn('{n} item', '{n} items', n))}</span>
       <strong class="cb-total">${esc(money(total))}</strong>
     </button>
-    <button class="btn cb-charge" data-charge type="button">Charge</button>`;
+    <button class="btn cb-charge" data-charge type="button">${$t('Charge')}</button>`;
 }
 
 /* ---- Structural pieces every screen was hand-rolling ----

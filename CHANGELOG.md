@@ -5,6 +5,58 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.0] — 2026-09-12
+
+English, Arabic and Urdu, with right-to-left layouts. Owner decision: RTL is in
+scope, and the language options must be offered in the app.
+
+### Added
+
+- **Three languages: English, العربية, اردو.** Every screen, dialog, toast,
+  empty state and server error a cashier can see is translated. That is 1,070
+  strings, including 26 that change with a count, which use each language's
+  own plural rules (Arabic has six forms).
+- **Language options in two places.** On the sign-in screen, so a cashier can
+  pick before signing in. And per terminal under Settings → Language, where
+  the default is **Match the store**. Switching reloads the app in the new
+  language.
+- **Receipts and the customer display use the store's language**, not the
+  cashier's. An Urdu-speaking cashier in an English store still prints English
+  receipts. Arabic and Urdu receipts mirror their columns and print as an image
+  over Bluetooth.
+- **Right-to-left layouts.** Arabic and Urdu mirror the whole app: sidebar,
+  cart panel, checkout column, sheets sliding in from the left, dialog buttons,
+  alert stripes and badges. Spacing, borders and offsets in `style.css` now use
+  logical properties, so they follow the document direction without a second
+  stylesheet.
+- **Dates and times follow the screen language**, with Latin digits so they
+  match the money beside them.
+
+### Fixed
+
+- **Money read backwards inside Arabic and Urdu text** ("0.00$"). Amounts on
+  screen are now wrapped as a left-to-right run, including the signs on
+  discounts and over/short. Receipts isolate money by the receipt's own
+  direction. CSV, the text-mode receipt printer and the PDF strip the markers.
+- **Arrows in date ranges and price changes point the reading way.**
+- **The refund icon mirrors** in right-to-left.
+- **An Arabic or Urdu receipt no longer makes a PDF of question marks.** The
+  PDF is Courier, which has no Arabic or Urdu letters. When a receipt needs
+  them, the PDF button is hidden and WhatsApp or email sends the receipt as
+  text.
+
+### Notes
+
+- **No backend change.** The server's error messages are translated on the
+  client, keyed by their English text.
+- **The translations were written without a native speaker.** Have an Arabic
+  and an Urdu speaker read through the app before go-live.
+- A catalogue test scans the source for every translatable string. It fails on
+  a missing, stale or untranslated entry, a dropped placeholder, a missing
+  plural form, or markup in a translation.
+- Still English: CSV column headers, the Google Sheets workbook, and the
+  scheduled report emails.
+
 ## [1.34.0] — 2026-09-12
 
 Printing and the cash drawer. Owner decision: support Bluetooth and standard

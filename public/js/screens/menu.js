@@ -6,7 +6,8 @@
 
 import { esc } from '../ui.js';
 import { menuTiles } from '../nav.js';
-import { tileGrid, screenHead } from '../components.js';
+import { tileGrid, screenHead, roleLabel } from '../components.js';
+import { $t } from '../lang.js';
 import { openCashOutDialog } from '../money-dialogs.js';
 import { openExternalSaleDialog } from './external-sale.js';
 import { openDrawerDialog } from '../drawer-dialog.js';
@@ -23,7 +24,7 @@ export const screen = {
     const tiles = menuTiles(role);
 
     root.innerHTML = `
-      ${screenHead({ title: 'Menu', sub: String(role) })}
+      ${screenHead({ title: $t('Menu'), sub: $t(roleLabel(role)) })}
       ${tileGrid(tiles)}`;
 
     const onTap = (e) => {

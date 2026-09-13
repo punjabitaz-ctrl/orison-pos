@@ -6,6 +6,10 @@
    catalog, and shows only what the register chose to publish. */
 
 import { DISPLAY_CHANNEL, DISPLAY_STATE_KEY } from './customer-display.js';
+import { tIn, tnIn, ensureLoaded, dirOf } from './lang.js';
+
+/* The language the customer reads: the store's, carried on every frame. */
+let lang = 'en';
 
 const root = document.getElementById('cd');
 const IDLE_AFTER_THANKS_MS = 45000;
@@ -25,7 +29,8 @@ function useMoney(next) {
   formatter = null;
 }
 
-function fmt(n) {
+/* `sign` sits inside the isolate so a discount reads "−$5.00" in Arabic too. */
+function fmt(n, sign = '') {
   if (!formatter) {
     try {
       formatter = new Intl.NumberFormat(money.locale, { style: 'currency', currency: money.currency });
@@ -33,7 +38,8 @@ function fmt(n) {
       formatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
     }
   }
-  return formatter.format(Number(n) || 0);
+  const s = sign + formatter.format(Number(n) || 0);
+  return document.documentElement.dir === 'rtl' ? '\u2066' + s + '\u2069' : s;
 }
 
 function esc(s) {
@@ -43,26 +49,26 @@ function esc(s) {
 }
 
 function storeName(frame) {
-  return esc((frame && frame.store) || 'Orison Electronics');
+  return esc((frame && frame.store) || tIn(lang, 'Orison Electronics'));
 }
 
 function renderIdle(frame) {
   return `
     <div class="cd-idle">
       <div class="cd-brand">${storeName(frame)}</div>
-      <p>Welcome — we'll ring you up in a moment.</p>
+      <p>${esc(tIn(lang, 'Welcome — we’ll ring you up in a moment.'))}</p>
     </div>`;
 }
 
 function lineRows(frame) {
   const lines = (frame.lines || []);
-  if (!lines.length) return '<div class="cd-empty">Your basket is empty</div>';
+  if (!lines.length) return `<div class="cd-empty">${esc(tIn(lang, 'Your basket is empty'))}</div>`;
   return `<div class="cd-lines">${lines.map((l) => `
     <div class="cd-line">
       <div class="cd-line-main">
         <span class="cd-name">${esc(l.name)}</span>
         ${l.serial ? `<span class="cd-serial">${esc(l.serial)}</span>` : ''}
-        ${l.discountPct ? `<span class="cd-disc">${esc(String(l.discountPct))}% off</span>` : ''}
+        ${l.discountPct ? `<span class="cd-disc">${esc(tIn(lang, '{pct}% off', { pct: l.discountPct }))}</span>` : ''}
       </div>
       <span class="cd-qty">${l.qty > 1 ? '×' + esc(String(l.qty)) : ''}</span>
       <span class="cd-amt">${fmt(l.amount)}</span>
@@ -71,10 +77,10 @@ function lineRows(frame) {
 
 function renderCart(frame) {
   return `
-    <header class="cd-head"><span>${storeName(frame)}</span><span class="cd-count">${frame.count || 0} item${frame.count === 1 ? '' : 's'}</span></header>
+    <header class="cd-head"><span>${storeName(frame)}</span><span class="cd-count">${esc(tnIn(lang, '{n} item', '{n} items', frame.count || 0))}</span></header>
     ${lineRows(frame)}
     <footer class="cd-foot">
-      <span>Total</span>
+      <span>${esc(tIn(lang, 'Total'))}</span>
       <strong>${fmt(frame.total)}</strong>
     </footer>`;
 }
@@ -82,16 +88,16 @@ function renderCart(frame) {
 function renderCheckout(frame) {
   const due = Number(frame.due) || 0;
   return `
-    <header class="cd-head"><span>${storeName(frame)}</span><span class="cd-count">Checkout</span></header>
+    <header class="cd-head"><span>${storeName(frame)}</span><span class="cd-count">${esc(tIn(lang, 'Checkout'))}</span></header>
     ${lineRows(frame)}
     <div class="cd-break">
-      <div><span>Subtotal</span><b>${fmt(frame.subtotal)}</b></div>
-      ${Number(frame.discount) > 0 ? `<div><span>Discount</span><b class="cd-neg">−${fmt(frame.discount)}</b></div>` : ''}
-      ${Number(frame.tax) > 0 ? `<div><span>Tax</span><b>${fmt(frame.tax)}</b></div>` : ''}
-      ${Number(frame.tendered) > 0 ? `<div><span>Paid</span><b>${fmt(frame.tendered)}</b></div>` : ''}
+      <div><span>${esc(tIn(lang, 'Subtotal'))}</span><b>${fmt(frame.subtotal)}</b></div>
+      ${Number(frame.discount) > 0 ? `<div><span>${esc(tIn(lang, 'Discount'))}</span><b class="cd-neg">${fmt(frame.discount, '−')}</b></div>` : ''}
+      ${Number(frame.tax) > 0 ? `<div><span>${esc(tIn(lang, 'Tax'))}</span><b>${fmt(frame.tax)}</b></div>` : ''}
+      ${Number(frame.tendered) > 0 ? `<div><span>${esc(tIn(lang, 'Paid'))}</span><b>${fmt(frame.tendered)}</b></div>` : ''}
     </div>
     <footer class="cd-foot ${due > 0 ? 'cd-due' : 'cd-clear'}">
-      <span>${due > 0 ? 'Amount due' : 'Total'}</span>
+      <span>${esc(due > 0 ? tIn(lang, 'Amount due') : tIn(lang, 'Total'))}</span>
       <strong>${fmt(due > 0 ? due : frame.total)}</strong>
     </footer>`;
 }
@@ -100,20 +106,26 @@ function renderThanks(frame) {
   return `
     <div class="cd-thanks">
       <div class="cd-tick" aria-hidden="true">✓</div>
-      <div class="cd-brand">Thank you!</div>
+      <div class="cd-brand">${esc(tIn(lang, 'Thank you!'))}</div>
       <p>${storeName(frame)}</p>
       <div class="cd-totals">
-        <div><span>Paid</span><b>${fmt(frame.total)}</b></div>
-        ${Number(frame.change) > 0 ? `<div><span>Change</span><b>${fmt(frame.change)}</b></div>` : ''}
+        <div><span>${esc(tIn(lang, 'Paid'))}</span><b>${fmt(frame.total)}</b></div>
+        ${Number(frame.change) > 0 ? `<div><span>${esc(tIn(lang, 'Change'))}</span><b>${fmt(frame.change)}</b></div>` : ''}
       </div>
     </div>`;
 }
 
 let idleTimer = null;
 
-function paint(frame) {
+async function paint(frame) {
   if (!frame || !root) return;
   useMoney(frame.money);
+  const next = frame.lang || lang;
+  if (await ensureLoaded(next) || next === 'en') {
+    lang = next;
+    document.documentElement.lang = lang;
+    document.documentElement.dir = dirOf(lang);
+  }
   clearTimeout(idleTimer);
   const view = frame.view || 'idle';
   root.dataset.view = view;
@@ -121,7 +133,7 @@ function paint(frame) {
   else if (view === 'checkout') root.innerHTML = renderCheckout(frame);
   else if (view === 'thanks') {
     root.innerHTML = renderThanks(frame);
-    idleTimer = setTimeout(() => paint({ view: 'idle', store: frame.store }), IDLE_AFTER_THANKS_MS);
+    idleTimer = setTimeout(() => paint({ view: 'idle', store: frame.store, lang: frame.lang }), IDLE_AFTER_THANKS_MS);
   } else root.innerHTML = renderIdle(frame);
 }
 
@@ -137,7 +149,7 @@ function readLast() {
 function freshOrIdle(frame) {
   if (!frame) return { view: 'idle' };
   const age = Date.now() - (Number(frame.at) || 0);
-  return age > STALE_FRAME_MS ? { view: 'idle', store: frame.store } : frame;
+  return age > STALE_FRAME_MS ? { view: 'idle', store: frame.store, lang: frame.lang } : frame;
 }
 
 paint(freshOrIdle(readLast()));
@@ -147,7 +159,7 @@ paint(freshOrIdle(readLast()));
 setInterval(() => {
   const last = readLast();
   if (!last || root.dataset.view === 'idle') return;
-  if (Date.now() - (Number(last.at) || 0) > STALE_FRAME_MS) paint({ view: 'idle', store: last.store });
+  if (Date.now() - (Number(last.at) || 0) > STALE_FRAME_MS) paint({ view: 'idle', store: last.store, lang: last.lang });
 }, 30000);
 
 try {

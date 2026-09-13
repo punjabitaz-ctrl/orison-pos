@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t, $tn, N_ } from '../lang.js';
+
 /* Alerts screen: inventory health for managers/admin — out of stock, low
    stock (at/below reorder point), locked items held from sale, and aging
    ("paying dust") items with 7/15/30-day buckets. Pure read + one unlock
@@ -13,9 +15,9 @@ import { inventoryAlerts } from '../alerts.js';
 import { pull, SYNC_EVENT } from '../sync.js';
 
 const SEV = {
-  out:   { label: 'Out of stock', cls: 'sev-out' },
-  low:   { label: 'Low stock', cls: 'sev-low' },
-  locked:{ label: 'Locked', cls: 'sev-locked' },
+  out:   { label: N_('Out of stock'), cls: 'sev-out' },
+  low:   { label: N_('Low stock'), cls: 'sev-low' },
+  locked:{ label: N_('Locked'), cls: 'sev-locked' },
 };
 
 export const screen = {
@@ -31,32 +33,31 @@ export const screen = {
     let products = [];
 
     function metaLine(p) {
-      if (p.itemType === 'service') return 'service';
-      if (p.isSerialized) return `${(p.serials || []).length} units`;
-      return `${p.onHand || 0} left`;
+      if (p.itemType === 'service') return $t('service');
+      if (p.isSerialized) return $tn('{n} unit', '{n} units', (p.serials || []).length);
+      return $t('{n} left', { n: p.onHand || 0 });
     }
 
     function agingText(a) {
       if (!a || !a.ageDays) return '';
-      if (a.ageDays < 30) return `${a.ageDays} days idle`;
-      return `${a.ageDays} days idle`;
+      return $tn('{n} day idle', '{n} days idle', a.ageDays);
     }
 
     function row(a) {
       const p = a.product;
       const locked = a.severity === 'locked';
       const qty = p.itemType === 'service' ? '' : ` · ${metaLine(p)}`;
-      const reorder = a.reorder ? ` · reorder @ ${a.reorder}` : '';
+      const reorder = a.reorder ? ` · ${$t('reorder @ {n}', { n: a.reorder })}` : '';
       return `
         <div class="al-row ${SEV[a.severity].cls}">
           <div class="al-main">
             <div class="al-name">${esc(p.name)}${locked ? ' <span class="lock-dot">🔒</span>' : ''}</div>
-            <div class="al-meta">${esc(p.sku || '')}${qty}${reorder}${a.ageDays ? ' · ' + agingText(a) : ''}</div>
+            <div class="al-meta">${esc(`${p.sku || ''}${qty}${reorder}${a.ageDays ? ' · ' + agingText(a) : ''}`)}</div>
           </div>
           <div class="al-right">
-            <span class="al-tag">${SEV[a.severity].label}</span>
+            <span class="al-tag">${esc($t(SEV[a.severity].label))}</span>
             ${locked && isManager
-              ? `<button class="btn btn-ghost btn-sm" data-unlock="${esc(p.id)}">Unlock</button>`
+              ? `<button class="btn btn-ghost btn-sm" data-unlock="${esc(p.id)}">${$t('Unlock')}</button>`
               : ''}
           </div>
         </div>`;
@@ -66,7 +67,7 @@ export const screen = {
       if (!items.length) return '';
       return `
         <section class="dash-section">
-          <h3>${title}${sub ? ` <span class="muted">· ${sub}</span>` : ''} <span class="pill">${items.length}</span></h3>
+          <h3>${esc(title)}${sub ? ` <span class="muted">· ${esc(sub)}</span>` : ''} <span class="pill">${items.length}</span></h3>
           <div class="rank-list">${items.map(row).join('')}</div>
         </section>`;
     }
@@ -83,15 +84,15 @@ export const screen = {
 
       root.innerHTML = `
         ${screenHead({
-          title: 'Alerts',
-          sub: `${alerts.length ? alerts.length + ' action needed' : 'All healthy'} · ${products.length} items tracked`,
-          actions: '<button class="icon-btn" id="alRefresh" aria-label="Refresh">⟳</button>',
+          title: $t('Alerts'),
+          sub: `${alerts.length ? $tn('{n} action needed', '{n} actions needed', alerts.length) : $t('All healthy')} · ${$tn('{n} item tracked', '{n} items tracked', products.length)}`,
+          actions: `<button class="icon-btn" id="alRefresh" aria-label="${$t('Refresh')}">⟳</button>`,
         })}
-        ${!alerts.length ? `<div class="empty"><p>No inventory alerts. Everything is stocked and selling.</p></div>` : ''}
-        ${section('out', 'Out of stock', out)}
-        ${section('low', 'Low stock', low, 'at or below reorder point')}
-        ${agingGroups.map((g) => section('aging', 'Paying dust', g.items, `${g.days}+ days without a sale`)).join('')}
-        ${section('locked', 'Locked', locked, 'held from sale by admin')}`;
+        ${!alerts.length ? `<div class="empty"><p>${$t('No inventory alerts. Everything is stocked and selling.')}</p></div>` : ''}
+        ${section('out', $t('Out of stock'), out)}
+        ${section('low', $t('Low stock'), low, $t('at or below reorder point'))}
+        ${agingGroups.map((g) => section('aging', $t('Paying dust'), g.items, $t('{n}+ days without a sale', { n: g.days }))).join('')}
+        ${section('locked', $t('Locked'), locked, $t('held from sale by admin'))}`;
     }
 
     async function refresh() {
@@ -108,9 +109,9 @@ export const screen = {
         await api.post('/api/admin/products/patch', { productId: btn.dataset.unlock, locked: false });
         await pull();
         await refresh();
-        toast('Item unlocked', 'ok'); beep('ok');
+        toast($t('Item unlocked'), 'ok'); beep('ok');
       } catch (err) {
-        toast((err && err.data && err.data.error) || 'Unlock failed', 'warn');
+        toast((err && err.message) || $t('Unlock failed'), 'warn');
         btn.disabled = false;
       }
     });

@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t } from '../lang.js';
+
 /* Register screen: product catalog + search + barcode scan + cart sheet.
    Serialized (IMEI) items go through a capture dialog, one serial per unit. */
 
@@ -46,21 +48,21 @@ export const screen = {
       <div class="reg-wrap">
         <div class="reg-catalog">
       ${screenHead({
-        title: 'Register',
-        sub: `${syncState.deviceId ? 'Terminal ' + syncState.deviceId.slice(0, 8).toUpperCase() : ''} · ${(state.user && state.user.firstName) || ''}`,
+        title: $t('Register'),
+        sub: `${syncState.deviceId ? $t('Terminal {id}', { id: syncState.deviceId.slice(0, 8).toUpperCase() }) : ''} · ${(state.user && state.user.firstName) || ''}`,
       })}
       <div class="search-row">
         <div class="search-box">
           <svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          <input id="searchInput" type="search" placeholder="Search name, SKU, or scan barcode…"
+          <input id="searchInput" type="search" placeholder="${$t('Search name, SKU, or scan barcode…')}"
                  autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search">
         </div>
-        ${hasBarcodeDetector() ? '<button id="camBtn" class="icon-btn" title="Scan with camera">◉</button>' : ''}
+        ${hasBarcodeDetector() ? `<button id="camBtn" class="icon-btn" title="${$t('Scan with camera')}">◉</button>` : ''}
       </div>
       <div class="chips" id="chips"></div>
       <main class="grid" id="grid" tabindex="-1"></main>
         </div>
-        <aside class="reg-cart" id="regCartPanel" aria-label="Cart"></aside>
+        <aside class="reg-cart" id="regCartPanel" aria-label="${$t('Cart')}"></aside>
       </div>`;
 
     const searchInput = root.querySelector('#searchInput');
@@ -97,7 +99,7 @@ export const screen = {
           || (p.serials || []).join(',').includes(q);
       });
       grid.innerHTML = list.map((p) => productTile(p, { fmt, available: availableFor(p, state.cart) })).join('')
-        + (list.length ? '' : `<div class="empty"><p>No products match “${esc(term)}”.</p><button class="btn btn-ghost" id="resetSearch">Clear search</button></div>`);
+        + (list.length ? '' : `<div class="empty"><p>${esc($t('No products match “{term}”.', { term }))}</p><button class="btn btn-ghost" id="resetSearch">${$t('Clear search')}</button></div>`);
       const reset = grid.querySelector('#resetSearch');
       if (reset) reset.addEventListener('click', () => { term = ''; searchInput.value = ''; renderGrid(); });
       grid.querySelectorAll('[data-add]').forEach((b) => b.addEventListener('click', () => {
@@ -114,7 +116,7 @@ export const screen = {
         try {
           const code = await scanFromCamera();
           if (code) { searchInput.value = code; term = code; handleScan(code); }
-        } catch (err) { toast(err.message || 'Scan failed', 'warn'); }
+        } catch (err) { toast(err.message || $t('Scan failed'), 'warn'); }
       });
     }
 
@@ -122,17 +124,17 @@ export const screen = {
     function openSerialDialog(product, prefill) {
       const modal = openModal(`
         <div class="serial-dialog">
-          <h3>Scan IMEI / Serial</h3>
+          <h3>${$t('Scan IMEI / Serial')}</h3>
           <p class="muted">${esc(product.name)}</p>
-          <div class="serial-avail">${freeSerials(product, state.cart).length} available</div>
+          <div class="serial-avail">${esc($t('{n} available', { n: freeSerials(product, state.cart).length }))}</div>
           <div class="field">
-            <input id="serialInput" type="text" inputmode="numeric" placeholder="Scan or type serial…"
+            <input id="serialInput" type="text" inputmode="numeric" placeholder="${$t('Scan or type serial…')}"
                    autocomplete="off" autocapitalize="off" autocorrect="off" autocapitalize="none"
                    value="${esc(prefill || '')}">
           </div>
           <div class="row">
-            ${hasBarcodeDetector() ? '<button id="serialCam" class="btn btn-ghost">Camera</button>' : ''}
-            <button id="serialAdd" class="btn" ${prefill ? '' : 'disabled'}>Add to cart</button>
+            ${hasBarcodeDetector() ? `<button id="serialCam" class="btn btn-ghost">${$t('Camera')}</button>` : ''}
+            <button id="serialAdd" class="btn" ${prefill ? '' : 'disabled'}>${$t('Add to cart')}</button>
           </div>
           <p id="serialErr" class="login-err"></p>
         </div>`);
@@ -148,10 +150,10 @@ export const screen = {
         const serial = input.value.trim();
         if (!serial) return;
         if (!(product.serials || []).map((x) => String(x).trim()).includes(serial)) {
-          errEl.textContent = 'Serial not in stock for this product.'; beep('err'); return;
+          errEl.textContent = $t('Serial not in stock for this product.'); beep('err'); return;
         }
         if (!isSerialFree(product, state.cart, serial)) {
-          errEl.textContent = 'That serial is already in the cart.'; beep('err'); return;
+          errEl.textContent = $t('That serial is already in the cart.'); beep('err'); return;
         }
         closeModal();
         beep('ok');
@@ -165,7 +167,7 @@ export const screen = {
         try {
           const code = await scanFromCamera();
           if (code) { input.value = code; update(); submit(); }
-        } catch (err) { toast(err.message || 'Scan failed', 'warn'); }
+        } catch (err) { toast(err.message || $t('Scan failed'), 'warn'); }
       });
     }
 
@@ -179,11 +181,11 @@ export const screen = {
     }
 
     function addToCart(product) {
-      if (!product) { toast('Product not found', 'warn'); beep('err'); return; }
-      if (isLocked(product)) { toast(`${product.name} is locked — release it in Inventory`, 'warn'); beep('err'); return; }
+      if (!product) { toast($t('Product not found'), 'warn'); beep('err'); return; }
+      if (isLocked(product)) { toast($t('{name} is locked — release it in Inventory', { name: product.name }), 'warn'); beep('err'); return; }
       if (product.itemType === 'service') { addCartLine(product, null); refreshView(); return; }
       if (product.isSerialized) { openSerialDialog(product, ''); return; }
-      if (availableFor(product, state.cart) <= 0) { toast(`${product.name} is out of stock`, 'warn'); beep('err'); return; }
+      if (availableFor(product, state.cart) <= 0) { toast($t('{name} is out of stock', { name: product.name }), 'warn'); beep('err'); return; }
       addCartLine(product, null);
       refreshView();
     }
@@ -251,8 +253,8 @@ export const screen = {
         && document.documentElement.dataset.viewport === 'desktop';
       const markup = `
         <div class="cart-head">
-          <h3>Cart <span class="pill">${totals.count}</span></h3>
-          ${onDesktop ? '' : '<button class="icon-btn" data-close aria-label="Close">✕</button>'}
+          <h3>${$t('Cart')} <span class="pill">${totals.count}</span></h3>
+          ${onDesktop ? '' : `<button class="icon-btn" data-close aria-label="${$t('Close')}">✕</button>`}
         </div>
         <div class="cart-lines">
           ${[...state.cart.values()].map((line) => {
@@ -270,20 +272,20 @@ export const screen = {
                      </div>`}
                 <div class="cl-disc">
                   ${[0, 10, 15, 20, 25, 50].map((p) =>
-                    `<button class="disc-btn ${line.discountPct === p ? 'on' : ''}" data-disc data-key="${key}" data-p="${p}">${p ? p + '%' : 'Off'}</button>`).join('')}
+                    `<button class="disc-btn ${line.discountPct === p ? 'on' : ''}" data-disc data-key="${key}" data-p="${p}">${p ? p + '%' : $t('Off')}</button>`).join('')}
                 </div>
               </div>
               <div class="cl-right">
                 <div class="cl-price">${fmt(lineDiscPrice(line))}</div>
-                <button class="cl-remove" data-remove="${key}" aria-label="Remove">✕</button>
+                <button class="cl-remove" data-remove="${key}" aria-label="${$t('Remove')}">✕</button>
                 ${line.discountPct ? `<div class="cl-price-was"><s>${fmt(line.price * line.qty)}</s></div>` : ''}
               </div>
             </div>`;
-          }).join('') || '<p class="empty">Cart is empty — scan or tap products above.</p>'}
+          }).join('') || `<p class="empty">${$t('Cart is empty — scan or tap products above.')}</p>`}
         </div>
         <div class="cart-foot">
-          <div class="cart-total"><span>Total</span><strong>${fmt(totals.total)}</strong></div>
-          <button id="chargeBtn" class="btn btn-block" ${totals.count ? '' : 'disabled'}>Charge · ${fmt(totals.total)}</button>
+          <div class="cart-total"><span>${$t('Total')}</span><strong>${fmt(totals.total)}</strong></div>
+          <button id="chargeBtn" class="btn btn-block" ${totals.count ? '' : 'disabled'}>${esc($t('Charge · {amount}', { amount: fmt(totals.total) }))}</button>
         </div>`;
 
       const bar = document.getElementById('cartbar');
@@ -366,7 +368,7 @@ export const screen = {
         return;
       }
       beep('err');
-      toast(`No product or serial matches “${input}”`, 'warn');
+      toast($t('No product or serial matches “{input}”', { input }), 'warn');
       searchInput.focus();
     }
 
@@ -384,11 +386,11 @@ export const screen = {
       const sum = savedSummary(saved, fmt);
       const modal = openModal(`
         <div class="form-modal">
-          <h3>Recovered a sale in progress</h3>
-          <p class="muted">This terminal was interrupted with ${esc(sum.text)} in the cart.</p>
+          <h3>${$t('Recovered a sale in progress')}</h3>
+          <p class="muted">${esc($t('This terminal was interrupted with {summary} in the cart.', { summary: sum.text }))}</p>
           <div class="row">
-            <button class="btn btn-ghost" id="recDiscard">Discard</button>
-            <button class="btn" id="recResume">Resume sale</button>
+            <button class="btn btn-ghost" id="recDiscard">${$t('Discard')}</button>
+            <button class="btn" id="recResume">${$t('Resume sale')}</button>
           </div>
         </div>`);
       modal.querySelector('#recResume').addEventListener('click', async () => {
@@ -397,12 +399,12 @@ export const screen = {
         await persistNow(state.cart);
         closeModal();
         refreshView();
-        toast('Sale restored', 'ok');
+        toast($t('Sale restored'), 'ok');
       });
       modal.querySelector('#recDiscard').addEventListener('click', async () => {
         await clearSaved();
         closeModal();
-        toast('Cart discarded', 'info');
+        toast($t('Cart discarded'), 'info');
       });
     }
     if (!('ontouchstart' in window)) searchInput.focus();

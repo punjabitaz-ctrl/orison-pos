@@ -5,6 +5,7 @@
    sync_outbox" pattern from the architecture doc. */
 
 import { idb } from './db.js';
+import { $t } from './lang.js';
 import { api } from './api.js';
 import { toast, beep, setMoneyFormat } from './ui.js';
 
@@ -151,7 +152,7 @@ export async function push() {
         voidedAt: new Date().toISOString(),
         reason: (r.conflicts || []).map((c) => `${c.serialNumber || ''} ${c.reason}`.trim()).join(', ') || r.reason || 'rejected',
       }, entry.clientTxId);
-      await markTransaction(entry.clientTxId, { status: 'VOIDED', voidReason: 'Server rejected transaction' });
+      await markTransaction(entry.clientTxId, { status: 'VOIDED', voidReason: $t('Server rejected transaction') });
     }
   }
 
@@ -304,7 +305,7 @@ export async function syncNow() {
   if (pulled) {
     const stats = await outboxStats();
     if (stats.pending === 0) {
-      toast('Synced', 'ok', 1800);
+      toast($t('Synced'), 'ok', 1800);
       beep('ok');
     }
     return stats;

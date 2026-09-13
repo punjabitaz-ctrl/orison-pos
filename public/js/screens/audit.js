@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t, N_, dateLocale } from '../lang.js';
+
 /* Audit log: who did what, when. Admin only, append-only, newest first.
 
    This is the screen you open when the numbers do not add up and you need to
@@ -8,21 +10,21 @@
 
 import { api } from '../api.js';
 import { esc, toast, skeleton, emptyState, csvRows, downloadCsv } from '../ui.js';
-import { screenHead, sectionHead, dataTable } from '../components.js';
+import { screenHead, sectionHead, dataTable, roleLabel } from '../components.js';
 
 const ACTIONS = [
-  { id: '', label: 'Everything' },
-  { id: 'store.settings', label: 'Store settings' },
-  { id: 'price.bulk', label: 'Bulk pricing' },
-  { id: 'stock.take', label: 'Stock takes' },
-  { id: 'user.patch', label: 'Staff changes' },
-  { id: 'device.revoke', label: 'Terminal revoked' },
+  { id: '', label: N_('Everything') },
+  { id: 'store.settings', label: N_('Store settings') },
+  { id: 'price.bulk', label: N_('Bulk pricing') },
+  { id: 'stock.take', label: N_('Stock takes') },
+  { id: 'user.patch', label: N_('Staff changes') },
+  { id: 'device.revoke', label: N_('Terminal revoked') },
 ];
 
 function when(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return isNaN(d) ? String(iso) : d.toLocaleString('en-US', {
+  return isNaN(d) ? String(iso) : d.toLocaleString(dateLocale(), {
     month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit',
   });
 }
@@ -43,9 +45,9 @@ export const screen = {
 
     root.innerHTML = `
       ${screenHead({
-        title: 'Audit log',
-        sub: 'Every privileged action, newest first',
-        actions: '<button class="icon-btn" id="auRefresh" aria-label="Refresh">⟳</button>',
+        title: $t('Audit log'),
+        sub: $t('Every privileged action, newest first'),
+        actions: `<button class="icon-btn" id="auRefresh" aria-label="${$t('Refresh')}">⟳</button>`,
       })}
       <div id="auBody">${skeleton('table', 5)}</div>`;
 
@@ -64,7 +66,7 @@ export const screen = {
         nextCursor = res.nextCursor || null;
         total = res.total || entries.length;
       } catch (err) {
-        body.innerHTML = `<p class="empty">${esc((err && err.data && err.data.error) || 'Could not load the audit log.')}</p>`;
+        body.innerHTML = `<p class="empty">${esc((err && err.message) || $t('Could not load the audit log.'))}</p>`;
         loading = false;
         return;
       }
@@ -76,28 +78,28 @@ export const screen = {
       body.innerHTML = `
         <div class="dash-section">
           ${sectionHead({
-            title: `${entries.length} of ${total} entries`,
+            title: $t('{shown} of {total} entries', { shown: entries.length, total }),
             asideHtml: `<div class="seg seg-sm">${ACTIONS.map((a) =>
-              `<button class="seg-btn ${a.id === action ? 'on' : ''}" data-act="${esc(a.id)}">${esc(a.label)}</button>`).join('')}</div>`,
+              `<button class="seg-btn ${a.id === action ? 'on' : ''}" data-act="${esc(a.id)}">${esc($t(a.label))}</button>`).join('')}</div>`,
           })}
           ${entries.length ? dataTable({
-            head: [{ label: 'When' }, { label: 'Who' }, { label: 'Role' }, { label: 'Action' }, { label: 'Detail' }],
+            head: [{ label: $t('When') }, { label: $t('Who') }, { label: $t('Role') }, { label: $t('Action') }, { label: $t('Detail') }],
             bodyHtml: entries.map((e) => `
               <tr>
                 <td>${esc(when(e.at))}</td>
                 <td>${esc(e.userName || '—')}</td>
-                <td>${esc(e.role || '')}</td>
+                <td>${esc(e.role ? $t(roleLabel(e.role)) : '')}</td>
                 <td><span class="k-chip k-payout">${esc(e.action)}</span></td>
                 <td>${esc(e.summary || '')}</td>
               </tr>`).join(''),
           }) : emptyState({
             icon: '🗂',
-            title: 'Nothing logged yet',
-            body: 'Privileged actions appear here as they happen.',
+            title: $t('Nothing logged yet'),
+            body: $t('Privileged actions appear here as they happen.'),
           })}
           <div class="row dash-actions">
-            ${nextCursor ? '<button class="btn btn-ghost" id="auMore">Load 100 more</button>' : ''}
-            ${entries.length ? '<button class="btn btn-ghost" id="auCsv">Export CSV</button>' : ''}
+            ${nextCursor ? `<button class="btn btn-ghost" id="auMore">${$t('Load 100 more')}</button>` : ''}
+            ${entries.length ? `<button class="btn btn-ghost" id="auCsv">${$t('Export CSV')}</button>` : ''}
           </div>
         </div>`;
 
@@ -113,7 +115,7 @@ export const screen = {
         const rows = [['at', 'user', 'role', 'action', 'target_type', 'target_id', 'summary']];
         for (const e of entries) rows.push([e.at, e.userName, e.role, e.action, e.targetType, e.targetId, e.summary]);
         downloadCsv(`orison-audit-${new Date().toISOString().slice(0, 10)}.csv`, csvRows(rows));
-        toast('Audit log exported', 'ok');
+        toast($t('Audit log exported'), 'ok');
       });
     }
 

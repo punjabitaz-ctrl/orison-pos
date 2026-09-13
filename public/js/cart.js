@@ -1,5 +1,7 @@
 'use strict';
 
+import { $tn } from './lang.js';
+
 /* The cart: what is in it, what that leaves on the shelf, and keeping it alive
    across an interruption.
 
@@ -157,6 +159,6 @@ export function savedSummary(saved, fmt) {
   return {
     count,
     total,
-    text: `${count} item${count === 1 ? '' : 's'} · ${fmt ? fmt(total) : total.toFixed(2)}`,
+    text: `${$tn('{n} item', '{n} items', count)} · ${fmt ? fmt(total) : total.toFixed(2)}`,
   };
 }

@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t, $tn, N_, dateLocale } from '../lang.js';
+
 /* Dashboard: role-aware home screen. Cashiers see their own day with the same
    trend context managers get; managers and admins add store-wide KPIs, an
    hour-by-hour read on today, a 14-day revenue chart, a top-seller table, the
@@ -12,7 +14,7 @@ import { fmt, esc, toast, beep, openModal, closeModal, skeleton, emptyState, cur
 import { SYNC_EVENT, getDeviceId } from '../sync.js';
 import { inventoryAlerts } from '../alerts.js';
 import { openPayoutDialog } from '../money-dialogs.js';
-import { screenHead, sectionHead, statRow, dataTable, rankList, rankRow } from '../components.js';
+import { screenHead, sectionHead, statRow, dataTable, rankList, rankRow, roleLabel } from '../components.js';
 import {
   dayKey, shiftDayKey, dayTotals, trend, baselineAverage, hourlyBuckets,
   tradingWindow, busiestHour, topSellers, withinDays, signedNet, kindOf,
@@ -131,63 +133,63 @@ export const screen = {
 
       root.innerHTML = `
         ${screenHead({
-          title: 'Dashboard',
-          sub: `${now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · ${role}`,
-          actions: '<button class="icon-btn" id="dashRefresh" aria-label="Refresh">⟳</button>',
+          title: $t('Dashboard'),
+          sub: `${now.toLocaleDateString(dateLocale(), { weekday: 'long', month: 'long', day: 'numeric' })} · ${$t(roleLabel(role))}`,
+          actions: `<button class="icon-btn" id="dashRefresh" aria-label="${$t('Refresh')}">⟳</button>`,
         })}
 
         <div class="dash-kpis">
           <div class="dash-kpi">
-            <span>Net revenue today</span><strong>${money(d0.net)}</strong>
-            ${trendBadge(netTrend, 'money', 'vs yesterday')}
+            <span>${$t('Net revenue today')}</span><strong>${money(d0.net)}</strong>
+            ${trendBadge(netTrend, 'money', $t('vs yesterday'))}
           </div>
           <div class="dash-kpi">
-            <span>Sales today</span><strong>${d0.tickets}</strong>
-            ${trendBadge(ticketTrend, 'count', 'vs yesterday')}
+            <span>${$t('Sales today')}</span><strong>${d0.tickets}</strong>
+            ${trendBadge(ticketTrend, 'count', $t('vs yesterday'))}
           </div>
           <div class="dash-kpi">
-            <span>Avg ticket</span><strong>${money(d0.avgTicket)}</strong>
-            ${trendBadge(avgTrend, 'money', 'vs yesterday')}
+            <span>${$t('Avg ticket')}</span><strong>${money(d0.avgTicket)}</strong>
+            ${trendBadge(avgTrend, 'money', $t('vs yesterday'))}
           </div>
-          <div class="dash-kpi"><span>Units today</span><strong>${d0.units}</strong></div>
+          <div class="dash-kpi"><span>${$t('Units today')}</span><strong>${d0.units}</strong></div>
           ${isManager ? `
-          <div class="dash-kpi warn"><span>Refunds</span><strong>−${money(d0.refunds)}</strong></div>
+          <div class="dash-kpi warn"><span>${$t('Refunds')}</span><strong>−${money(d0.refunds)}</strong></div>
           <div class="dash-kpi warn">
-            <span>Cash out</span><strong>−${money(d0.cashOut)}</strong>
-            <em class="kpi-split">${money(d0.payouts)} paid · ${money(d0.pickups)} picked up · ${money(d0.expenses)} staff</em>
+            <span>${$t('Cash out')}</span><strong>−${money(d0.cashOut)}</strong>
+            <em class="kpi-split">${esc($t('{paid} paid · {picked} picked up · {staff} staff', { paid: money(d0.payouts), picked: money(d0.pickups), staff: money(d0.expenses) }))}</em>
           </div>
-          <div class="dash-kpi"><span>Collected</span><strong>${money(d0.collections)}</strong></div>
+          <div class="dash-kpi"><span>${$t('Collected')}</span><strong>${money(d0.collections)}</strong></div>
           <div class="dash-kpi dash-gp">
-            <span>Gross profit today</span><strong>${money(d0.gp)}</strong>
-            ${trendBadge(gpTrend, 'money', 'vs 7-day avg')}
+            <span>${$t('Gross profit today')}</span><strong>${money(d0.gp)}</strong>
+            ${trendBadge(gpTrend, 'money', $t('vs 7-day avg'))}
           </div>` : ''}
         </div>
 
         <section class="dash-section">
-          <h3>Shift</h3>
+          <h3>${$t('Shift')}</h3>
           ${myOpenShift().length ? `
             <div class="shift-card">
               <div>
-                <strong>Shift open</strong>
-                <p class="muted">since ${humanDate(myOpenShift()[0].openedAt)} · float ${money(myOpenShift()[0].openingFloat)}</p>
+                <strong>${$t('Shift open')}</strong>
+                <p class="muted">${esc($t('since {when} · float {amount}', { when: humanDate(myOpenShift()[0].openedAt), amount: money(myOpenShift()[0].openingFloat) }))}</p>
               </div>
-              <button class="btn" id="shiftClose">Close &amp; count</button>
+              <button class="btn" id="shiftClose">${$t('Close &amp; count')}</button>
             </div>` : `
             <div class="shift-card">
-              <div><strong>No open shift</strong><p class="muted">Open one to reconcile the till when you close. Sales run fine either way.</p></div>
-              <button class="btn" id="shiftOpen">Open shift</button>
+              <div><strong>${$t('No open shift')}</strong><p class="muted">${$t('Open one to reconcile the till when you close. Sales run fine either way.')}</p></div>
+              <button class="btn" id="shiftOpen">${$t('Open shift')}</button>
             </div>`}
           ${isManager ? shiftSummary(shifts, today) : ''}
         </section>
 
         ${isManager ? `
         <section class="dash-section">
-          ${sectionHead({ title: 'Today by hour', aside: peak ? 'busiest ' + hourLabel(peak.hour) + ' · ' + money(peak.sales) : 'no sales yet today' })}
+          ${sectionHead({ title: $t('Today by hour'), aside: peak ? $t('busiest {hour} · {amount}', { hour: hourLabel(peak.hour), amount: money(peak.sales) }) : $t('no sales yet today') })}
           <div class="dash-chart">${hourChart(hours)}</div>
         </section>
 
         <section class="dash-section">
-          <h3>Revenue — last 14 days</h3>
+          <h3>${$t('Revenue — last 14 days')}</h3>
           <div class="dash-chart">${barChart(report ? reportDays(report) : last14(txs))}</div>
         </section>
 
@@ -195,29 +197,29 @@ export const screen = {
         <section class="dash-section">
           <div class="dash-conf-banner">
             <div>
-              <strong>${openConflicts(conflicts).length} sync conflict${openConflicts(conflicts).length === 1 ? '' : 's'} awaiting review</strong>
-              <p class="muted">Two terminals disagreed on ${openStr(openConflicts(conflicts))}.</p>
+              <strong>${esc($tn('{n} sync conflict awaiting review', '{n} sync conflicts awaiting review', openConflicts(conflicts).length))}</strong>
+              <p class="muted">${esc($t('Two terminals disagreed on {what}.', { what: openStr(openConflicts(conflicts)) }))}</p>
             </div>
-            <button class="btn btn-sm" id="dashReviewConf">Review</button>
+            <button class="btn btn-sm" id="dashReviewConf">${$t('Review')}</button>
           </div>
         </section>` : ''}
         ${conflicts.length && conflicts.some((c) => c.status !== 'OPEN') ? `
         <section class="dash-section">
           <details class="dash-details">
-            <summary>Reviewed conflicts (${conflicts.filter((c) => c.status !== 'OPEN').length})</summary>
+            <summary>${esc($t('Reviewed conflicts ({n})', { n: conflicts.filter((c) => c.status !== 'OPEN').length }))}</summary>
             ${conflicts.filter((c) => c.status !== 'OPEN').slice(0, 10).map((c) => rankRow({
-              name: c.type,
+              name: conflictType(c.type),
               meta: c.summary,
-              rightHtml: `<span class="tag-warn">${esc(c.status)}</span>`,
+              rightHtml: `<span class="tag-warn">${esc(conflictState(c.status))}</span>`,
             })).join('')}
           </details>
         </section>` : ''}
 
         <section class="dash-section">
-          ${sectionHead({ title: 'Top sellers', aside: `last 30 days · ${sellerWindow} sale${sellerWindow === 1 ? '' : 's'}` })}
+          ${sectionHead({ title: $t('Top sellers'), aside: $tn('last 30 days · {n} sale', 'last 30 days · {n} sales', sellerWindow) })}
           ${sellers.length
             ? dataTable({
-                head: [{ label: '#' }, { label: 'Item' }, { label: 'Units', num: true }, { label: 'Revenue', num: true }, { label: 'Margin', num: true }],
+                head: [{ label: '#' }, { label: $t('Item') }, { label: $t('Units'), num: true }, { label: $t('Revenue'), num: true }, { label: $t('Margin'), num: true }],
                 bodyHtml: `
                     ${sellers.map((t, i) => `
                       <tr>
@@ -228,66 +230,66 @@ export const screen = {
                         <td class="num ${t.gp < 0 ? 'neg' : 'gp'}">${money(t.gp)}${t.rev ? ' <em class="muted">' + t.margin.toFixed(0) + '%</em>' : ''}</td>
                       </tr>`).join('')}`,
               })
-            : emptyState({ icon: '🏷', title: 'No sales synced yet', body: 'Top sellers appear once sales reach the server.' })}
+            : emptyState({ icon: '🏷', title: $t('No sales synced yet'), body: $t('Top sellers appear once sales reach the server.') })}
         </section>
 
         <section class="dash-section">
-          <h3>Inventory alerts</h3>
+          <h3>${$t('Inventory alerts')}</h3>
           ${(aOut + aLow + aLocked + aAging)
             ? `<div class="rank-list">
                 ${[
-                  { idx: aOut, idxCls: 'warn', name: 'Out of stock', meta: 'need re-supply' },
-                  { idx: aLow, idxCls: 'warn', name: 'Low stock', meta: 'at or below reorder point' },
-                  { idx: aLocked, name: 'Locked', meta: 'held from sale by admin' },
-                  { idx: aAging, idxCls: 'warn', name: 'Paying dust', meta: 'not sold in 30+ days' },
+                  { idx: aOut, idxCls: 'warn', name: $t('Out of stock'), meta: $t('need re-supply') },
+                  { idx: aLow, idxCls: 'warn', name: $t('Low stock'), meta: $t('at or below reorder point') },
+                  { idx: aLocked, name: $t('Locked'), meta: $t('held from sale by admin') },
+                  { idx: aAging, idxCls: 'warn', name: $t('Paying dust'), meta: $t('not sold in 30+ days') },
                 ].map((r) => rankRow(r)).join('')}
               </div>
               <div class="row dash-actions">
-                <button class="btn" id="dashAlerts">Open alerts</button>
+                <button class="btn" id="dashAlerts">${$t('Open alerts')}</button>
               </div>`
-            : `<p class="muted">All stocked & selling.</p>
-               <button class="btn btn-ghost btn-sm" id="dashAlerts">Open alerts</button>`}
+            : `<p class="muted">${$t('All stocked & selling.')}</p>
+               <button class="btn btn-ghost btn-sm" id="dashAlerts">${$t('Open alerts')}</button>`}
         </section>
 
         <div class="row dash-actions">
-          <button class="btn" id="dashExport">Export today → Drive</button>
-          <button class="btn" id="dashInventory">Inventory</button>
-          <button class="btn btn-ghost" id="dashPayout">Record paid out</button>
+          <button class="btn" id="dashExport">${$t('Export today → Drive')}</button>
+          <button class="btn" id="dashInventory">${$t('Inventory')}</button>
+          <button class="btn btn-ghost" id="dashPayout">${$t('Record paid out')}</button>
         </div>
         ` : `
         <section class="dash-section">
-          <h3>New sale</h3>
-          <button class="btn btn-block" id="dashSell">Open Register</button>
+          <h3>${$t('New sale')}</h3>
+          <button class="btn btn-block" id="dashSell">${$t('Open Register')}</button>
         </section>
 
         <div class="row dash-actions">
-          <button class="btn" id="dashExport">My report today → Drive</button>
-          <button class="btn btn-ghost" id="dashStaff">Time clock</button>
+          <button class="btn" id="dashExport">${$t('My report today → Drive')}</button>
+          <button class="btn btn-ghost" id="dashStaff">${$t('Time clock')}</button>
         </div>
 
         <section class="dash-section">
-          ${sectionHead({ title: 'My day by hour', aside: peak ? 'busiest ' + hourLabel(peak.hour) : 'no sales yet today' })}
+          ${sectionHead({ title: $t('My day by hour'), aside: peak ? $t('busiest {hour}', { hour: hourLabel(peak.hour) }) : $t('no sales yet today') })}
           <div class="dash-chart">${hourChart(hours)}</div>
         </section>
 
         <section class="dash-section">
-          <h3>My recent</h3>
-          ${pending > 0 ? `<p class="muted">${pending} awaiting sync</p>` : ''}
+          <h3>${$t('My recent')}</h3>
+          ${pending > 0 ? `<p class="muted">${esc($tn('{n} awaiting sync', '{n} awaiting sync', pending))}</p>` : ''}
           ${recent.length ? `<div class="hx-list" style="padding:0">${recent.map((t) => `
             <button class="hx-card" data-go-history>
               <div class="hx-left">
                 <span class="hx-date">${humanDate(t.createdAt)}</span>
-                <span class="hx-status st-synced">SERVER</span>
+                <span class="hx-status st-synced">${$t('On server')}</span>
               </div>
               <div class="hx-right"><strong>${money(t.grandTotal)}</strong></div>
             </button>`).join('')}</div>`
-            : emptyState({ icon: '🛒', title: 'No sales yet', body: 'Ring your first sale from the register.' })}
+            : emptyState({ icon: '🛒', title: $t('No sales yet'), body: $t('Ring your first sale from the register.') })}
         </section>
 
-        <button class="btn btn-block" id="dashHistory">View full history</button>
+        <button class="btn btn-block" id="dashHistory">${$t('View full history')}</button>
         `}
 
-        ${!server ? `<p class="muted" style="padding:0 16px 4px">Offline — showing last synced data.</p>` : ''}`;
+        ${!server ? `<p class="muted" style="padding:0 16px 4px">${$t('Offline — showing last synced data.')}</p>` : ''}`;
 
       root.querySelector('#dashRefresh').addEventListener('click', load);
       const sellBtn = root.querySelector('#dashSell');
@@ -319,13 +321,13 @@ export const screen = {
             ${open.map((c) => `
               <div class="conf-item">
                 <div class="rank-main">
-                  <div class="rank-name">${esc(c.type)}</div>
+                  <div class="rank-name">${esc(conflictType(c.type))}</div>
                   <div class="muted">${esc(c.summary)}</div>
-                  <div class="muted" style="font-size:11px">device ${esc((c.deviceId || '').slice(0, 8))} · ${humanDate(c.createdAt)} · tx ${esc(c.loserClientTx || '')}</div>
+                  <div class="muted" style="font-size:11px">${esc($t('device {device} · {when} · tx {tx}', { device: (c.deviceId || '').slice(0, 8), when: humanDate(c.createdAt), tx: c.loserClientTx || '' }))}</div>
                 </div>
                 <div class="conf-acts">
-                  <button class="btn btn-sm" data-conf-act="resolve" data-cid="${esc(c.id)}">Keep winner</button>
-                  <button class="btn btn-sm btn-ghost" data-conf-act="dismiss" data-cid="${esc(c.id)}">Dismiss</button>
+                  <button class="btn btn-sm" data-conf-act="resolve" data-cid="${esc(c.id)}">${$t('Keep winner')}</button>
+                  <button class="btn btn-sm btn-ghost" data-conf-act="dismiss" data-cid="${esc(c.id)}">${$t('Dismiss')}</button>
                 </div>
               </div>`).join('')}
           </div>`;
@@ -334,17 +336,17 @@ export const screen = {
 
     async function exportDay(btn) {
       btn.disabled = true;
-      btn.textContent = 'Exporting…';
+      btn.textContent = $t('Exporting…');
       try {
         const res = await api.post('/api/drive/export', { date: today }, { timeout: 25000 });
-        toast(`Exported ${res.rows} transactions → Drive`, 'ok');
+        toast($tn('Exported {n} transaction → Drive', 'Exported {n} transactions → Drive', res.rows), 'ok');
         beep('ok');
         if (res.url) window.open(res.url, '_blank');
       } catch (err) {
-        toast((err && err.data && err.data.error) || 'Export failed', 'warn');
+        toast((err && err.message) || $t('Export failed'), 'warn');
       }
       btn.disabled = false;
-      btn.textContent = 'Export today → Drive';
+      btn.textContent = $t('Export today → Drive');
     }
 
     function myOpenShift() {
@@ -377,7 +379,7 @@ export const screen = {
         </div>`).join('');
       sumEl.innerHTML = `
         <div class="den-grid">${grid}</div>
-        <div class="den-total">Declared cash <strong data-sum>${money(0)}</strong></div>`;
+        <div class="den-total">${$t('Declared cash')} <strong data-sum>${money(0)}</strong></div>`;
       sumEl.querySelectorAll('.den-qty').forEach((inp) => {
         inp.addEventListener('input', recalc);
         inp.addEventListener('focus', () => inp.select());
@@ -390,21 +392,21 @@ export const screen = {
       const modalEl = openModal(`
         <div class="tx-detail">
           <button class="icon-btn abs-close" data-x>✕</button>
-          <h3>Open shift</h3>
-          <p class="muted">Start with the float you put in the drawer. The till isn't locked either way.</p>
-          <label class="field-label">Opening float (${esc(currencySymbol())})
+          <h3>${$t('Open shift')}</h3>
+          <p class="muted">${$t('Start with the float you put in the drawer. The till isn\'t locked either way.')}</p>
+          <label class="field-label">${esc($t('Opening float ({symbol})', { symbol: currencySymbol() }))}
             <input class="field" id="sh-float" type="number" min="0" step="0.01" placeholder="0.00" value="0">
           </label>
-          <label class="field-label">Note (optional)
-            <input class="field" id="sh-note" placeholder="e.g. morning shift">
+          <label class="field-label">${$t('Note (optional)')}
+            <input class="field" id="sh-note" placeholder="${$t('e.g. morning shift')}">
           </label>
-          <button class="btn btn-block" id="sh-open-confirm" style="--bg:#2e7d32">Open shift</button>
+          <button class="btn btn-block" id="sh-open-confirm" style="--bg:#2e7d32">${$t('Open shift')}</button>
         </div>`);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
       const confirm = modalEl.querySelector('#sh-open-confirm');
       confirm.addEventListener('click', async () => {
         const float = Number(modalEl.querySelector('#sh-float').value);
-        if (!(float >= 0)) { toast('Enter a float', 'warn'); return; }
+        if (!(float >= 0)) { toast($t('Enter a float'), 'warn'); return; }
         confirm.disabled = true;
         try {
           await api.post('/api/shifts/open', {
@@ -413,11 +415,11 @@ export const screen = {
             deviceId: await getDeviceId(),
           });
           closeModal();
-          toast('Shift opened', 'ok'); beep('ok');
+          toast($t('Shift opened'), 'ok'); beep('ok');
           await load();
         } catch (err) {
           confirm.disabled = false;
-          toast((err && err.data && err.data.error) || 'Couldn’t open shift', 'warn');
+          toast((err && err.message) || $t('Couldn’t open shift'), 'warn');
         }
       });
     }
@@ -428,13 +430,13 @@ export const screen = {
       const modalEl = openModal(`
         <div class="tx-detail">
           <button class="icon-btn abs-close" data-x>✕</button>
-          <h3>Close shift</h3>
-          <p class="muted">Opened ${humanDate(shift.openedAt)} · float ${money(shift.openingFloat)}. Count the drawer and enter quantities.</p>
+          <h3>${$t('Close shift')}</h3>
+          <p class="muted">${esc($t('Opened {when} · float {amount}. Count the drawer and enter quantities.', { when: humanDate(shift.openedAt), amount: money(shift.openingFloat) }))}</p>
           <div id="denBox"></div>
-          <label class="field-label">Note (optional)
-            <input class="field" id="shc-note" placeholder="e.g. busy morning, tax collected">
+          <label class="field-label">${$t('Note (optional)')}
+            <input class="field" id="shc-note" placeholder="${$t('e.g. busy morning, tax collected')}">
           </label>
-          <button class="btn btn-block" id="shc-confirm" style="--bg:#0b3d66">Close &amp; reconcile</button>
+          <button class="btn btn-block" id="shc-confirm" style="--bg:#0b3d66">${$t('Close &amp; reconcile')}</button>
         </div>`);
       modalEl.querySelector('#denBox').appendChild(sumEl);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
@@ -456,7 +458,7 @@ export const screen = {
           await load();
         } catch (err) {
           confirm.disabled = false;
-          toast((err && err.data && err.data.error) || 'Couldn’t close shift', 'warn');
+          toast((err && err.message) || $t('Couldn’t close shift'), 'warn');
         }
       });
     }
@@ -465,21 +467,21 @@ export const screen = {
       const modalEl = openModal(`
         <div class="tx-detail">
           <button class="icon-btn abs-close" data-x>✕</button>
-          <h3>Shift closed</h3>
+          <h3>${$t('Shift closed')}</h3>
           <div class="ledger-bal">
-            <div><span>Declared</span><b>${money(s.declaredCash)}</b></div>
-            <div><span>Expected</span><b>${money(s.expectedCash)}</b></div>
-            <div class="lg-total"><span>Over / short</span><strong class="${diff === 0 ? 'gp' : diff > 0 ? 'gp' : 'neg'}">${diff > 0 ? '+' : ''}${money(diff)}</strong></div>
+            <div><span>${$t('Declared')}</span><b>${money(s.declaredCash)}</b></div>
+            <div><span>${$t('Expected')}</span><b>${money(s.expectedCash)}</b></div>
+            <div class="lg-total"><span>${$t('Over / short')}</span><strong class="${diff === 0 ? 'gp' : diff > 0 ? 'gp' : 'neg'}">${diff > 0 ? '+' : ''}${money(diff)}</strong></div>
           </div>
-          <p class="muted">${diff === 0 ? 'The drawer balances exactly.' : diff > 0 ? 'There is more cash than the register expects — check the count and prior payouts.' : 'Cash is less than expected — check the drawer before signing off.'}</p>
-          <button class="btn btn-block" id="res-ok" style="--bg:#2e7d32">Done</button>
+          <p class="muted">${diff === 0 ? $t('The drawer balances exactly.') : diff > 0 ? $t('There is more cash than the register expects — check the count and prior payouts.') : $t('Cash is less than expected — check the drawer before signing off.')}</p>
+          <button class="btn btn-block" id="res-ok" style="--bg:#2e7d32">${$t('Done')}</button>
         </div>`);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
       modalEl.querySelector('#res-ok').addEventListener('click', closeModal);
     }
 
     root.innerHTML = `
-      ${screenHead({ title: 'Dashboard', sub: 'Loading today’s numbers…' })}
+      ${screenHead({ title: $t('Dashboard'), sub: $t('Loading today’s numbers…') })}
       ${skeleton('kpis', isManager ? 8 : 4)}
       ${skeleton('chart', 1)}
       ${skeleton('rows', 3)}`;
@@ -509,10 +511,10 @@ export const screen = {
       const act = btn.dataset.confAct;
       try {
         await api.post('/api/conflicts/review', { id: cid, decision: act });
-        toast('Conflict reviewed', 'ok'); beep('ok');
+        toast($t('Conflict reviewed'), 'ok'); beep('ok');
         await load();
       } catch (err) {
-        toast((err && err.data && err.data.error) || 'Review failed', 'warn');
+        toast((err && err.message) || $t('Review failed'), 'warn');
         btn.disabled = false;
       }
     };
@@ -527,6 +529,12 @@ export const screen = {
   },
 };
 
+/* Conflict codes and review states, as people read them. */
+const CONFLICT_TYPES = { SERIAL_CLAIM: N_('Serial sold twice'), DUPLICATE_CLIENT: N_('Duplicate sale'), CLOCK_SKEW: N_('Terminal clock out of range') };
+const CONFLICT_STATES = { OPEN: N_('Open'), RESOLVED: N_('Resolved'), DISMISSED: N_('Dismissed') };
+const conflictType = (c) => (CONFLICT_TYPES[c] ? $t(CONFLICT_TYPES[c]) : String(c || ''));
+const conflictState = (s) => (CONFLICT_STATES[s] ? $t(CONFLICT_STATES[s]) : String(s || ''));
+
 /* ---- aggregation helpers ---- */
 
 function openConflicts(all) {
@@ -536,7 +544,7 @@ function openConflicts(all) {
 function openStr(open) {
   const reasons = {};
   for (const c of open) reasons[c.type] = (reasons[c.type] || 0) + 1;
-  return Object.keys(reasons).map((k) => `${reasons[k]}× ${k}`).join(', ') || 'a sale';
+  return Object.keys(reasons).map((k) => `${reasons[k]}× ${conflictType(k)}`).join(', ') || $t('a sale');
 }
 
 function last14(txs) {
@@ -572,7 +580,7 @@ function barChart(buckets) {
     const label = b.date.getDate();
     return `
       <g>
-        <title>${b.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} — ${money(b.total)} (${b.count})</title>
+        <title>${b.date.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' })} — ${money(b.total)} (${b.count})</title>
         <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${b.total ? '#1c5d99' : '#dfe6ee'}"></rect>
         <text x="${x + w / 2}" y="${H - 3}" text-anchor="middle" font-size="8" fill="#7b8ca0">${label}</text>
       </g>`;
@@ -581,7 +589,7 @@ function barChart(buckets) {
     const y = Math.round(base + H2 - f * H2);
     return `<line x1="${PAD}" y1="${y}" x2="${W - PAD}" y2="${y}" stroke="#eef2f7" stroke-width="1"></line>`;
   }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" aria-label="Revenue last 14 days">${grid}${bars}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" aria-label="${esc($t('Revenue last 14 days'))}">${grid}${bars}</svg>`;
 }
 
 
@@ -591,7 +599,7 @@ function humanDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d)) return iso;
-  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleString(dateLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 /* Direction chip under a KPI: an arrow, the size of the move, and what it is
    measured against. A zero baseline has no honest percentage, so it shows the
@@ -639,7 +647,7 @@ function hourChart(buckets) {
     const y = Math.round(base + H2 - f * H2);
     return `<line x1="${PAD}" y1="${y}" x2="${W - PAD}" y2="${y}" stroke="#eef2f7" stroke-width="1"></line>`;
   }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Sales by hour today">${grid}${bars}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="${esc($t('Sales by hour today'))}">${grid}${bars}</svg>`;
 }
 
 /* The store's shift picture at a glance: who is still open, what closed today,
@@ -652,16 +660,16 @@ function shiftSummary(shifts, today) {
   const recent = rows.filter((s) => s.status === 'CLOSED').slice(0, 3);
   return `
     ${statRow([
-      { label: 'Open now', value: open.length },
-      { label: 'Closed today', value: closedToday.length },
-      { label: 'Over / short today', valueHtml: `${net > 0 ? '+' : ''}${money(net)}`, cls: net === 0 ? '' : (net > 0 ? 'gp' : 'neg') },
+      { label: $t('Open now'), value: open.length },
+      { label: $t('Closed today'), value: closedToday.length },
+      { label: $t('Over / short today'), valueHtml: `${net > 0 ? '+' : ''}${money(net)}`, cls: net === 0 ? '' : (net > 0 ? 'gp' : 'neg') },
     ], 'shift-stats')}
     ${recent.length ? rankList(recent.map((s) => ({
       name: s.userName,
-      meta: `${humanDate(s.closedAt)} \u00b7 expected ${money(s.expectedCash)}`,
+      meta: $t('{when} · expected {amount}', { when: humanDate(s.closedAt), amount: money(s.expectedCash) }),
       rightHtml: `<b class="${Number(s.overShort) === 0 ? 'gp' : 'neg'}">${Number(s.overShort) > 0 ? '+' : ''}${money(s.overShort)}</b>`,
-    }))) : '<p class="muted">No closed shifts yet.</p>'}
-    <div class="row dash-actions"><button class="btn btn-ghost btn-sm" id="dashStaff">Staff &amp; time clock</button></div>`;
+    }))) : `<p class="muted">${$t('No closed shifts yet.')}</p>`}
+    <div class="row dash-actions"><button class="btn btn-ghost btn-sm" id="dashStaff">${$t('Staff &amp; time clock')}</button></div>`;
 }
 
 /* The server's by-day figures, padded to the last 14 calendar days so the

@@ -1,5 +1,7 @@
 'use strict';
 
+import { tIn, storeLanguage } from './lang.js';
+
 /* Customer display link — the register's side of a second-screen mirror.
 
    The register publishes what the shopper is allowed to see (line names,
@@ -48,7 +50,8 @@ export function publish(frame) {
   /* The display is a separate document with no session and no catalog, so it
      cannot look the store's money format up for itself — every frame carries
      it. Locale and currency are the only store facts that ever cross. */
-  const msg = { ...frame, money: getMoneyFormat(), at: Date.now() };
+  /* ...and the store's language, which the customer reads. */
+  const msg = { ...frame, money: getMoneyFormat(), lang: storeLanguage(), at: Date.now() };
   try { localStorage.setItem(DISPLAY_STATE_KEY, JSON.stringify(msg)); } catch (_) {}
   const c = chan();
   if (c) { try { c.postMessage(msg); } catch (_) {} }
@@ -56,7 +59,7 @@ export function publish(frame) {
 
 function safeLines(lines) {
   return (lines || []).slice(0, 60).map((l) => ({
-    name: String(l.name || 'Item'),
+    name: String(l.name || tIn(storeLanguage(), 'Item')),
     qty: Number(l.qty) || 1,
     amount: Number(l.amount) || 0,
     discountPct: Number(l.discountPct) || 0,

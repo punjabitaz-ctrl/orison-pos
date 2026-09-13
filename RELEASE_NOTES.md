@@ -7,7 +7,36 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.34.0 — printing and the cash drawer
+## Latest: v1.35.0 — English, Arabic and Urdu
+
+**2026-09-12.** The whole app speaks three languages, and Arabic and Urdu read
+right to left.
+
+- **Pick a language on the sign-in screen**, or per till under Settings →
+  Language. The default follows the store.
+- **Receipts and the customer display use the store's language**, whatever the
+  cashier has chosen.
+- **Arabic and Urdu mirror the whole layout.** Money, dates and phone numbers
+  still read the right way round inside them.
+- **Arabic and Urdu receipts go by WhatsApp or email as text**, because the PDF
+  cannot carry those letters. Printed receipts are fine in every language.
+
+**Before go-live:** the translations were not written by a native speaker.
+Have an Arabic and an Urdu speaker read through the app.
+
+**Validation:** backend-sim **PASS 715 / FAIL 0** · client units **PASS 459 /
+FAIL 0**, including a catalogue check that every string on screen is
+translated. Checked in-browser in English, Arabic and Urdu, on desktop and
+phone widths.
+
+### Deploying
+
+**Frontend only.** No backend change in this release, but the backend is still
+awaiting its first deploy. See HANDOVER §9.
+
+---
+
+## v1.34.0 — printing and the cash drawer
 
 **2026-09-12.** Receipts print, and the drawer opens.
 

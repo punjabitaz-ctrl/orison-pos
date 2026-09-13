@@ -1,5 +1,7 @@
 'use strict';
 
+import { $t, $tn } from '../lang.js';
+
 /* Inventory tools (v1.15.0): bulk repricing, stock-take, shelf labels and the
    low-stock reorder worksheet. Each is a modal opened from Products → Tools.
 
@@ -22,7 +24,7 @@ function fmtMoney(v) {
 
 function printNode(html, title) {
   if (!printSheet(html, title)) {
-    toast('The browser blocked the print window — allow pop-ups for this site', 'warn', 4200);
+    toast($t('The browser blocked the print window — allow pop-ups for this site'), 'warn', 4200);
   }
 }
 
@@ -32,43 +34,43 @@ export function bulkPriceModal({ products, onDone }) {
   const categories = [...new Set((products || []).map((p) => p.category).filter(Boolean))].sort();
   const modal = openModal(`
     <div class="form-modal inv-tool">
-      <h3>Bulk price update</h3>
-      <p class="muted">Set a rule; the server recalculates each price and records every change in price history. Preview first — nothing is written until you apply.</p>
+      <h3>${$t('Bulk price update')}</h3>
+      <p class="muted">${$t('Set a rule; the server recalculates each price and records every change in price history. Preview first — nothing is written until you apply.')}</p>
       <div class="two fields-row">
-        <div class="field"><span>Apply to</span>
+        <div class="field"><span>${$t('Apply to')}</span>
           <select id="bpScope">
-            <option value="All">All products</option>
+            <option value="All">${$t('All products')}</option>
             ${categories.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
           </select>
         </div>
-        <div class="field"><span>Field</span>
+        <div class="field"><span>${$t('Field')}</span>
           <select id="bpField">
-            <option value="retail_price">Retail price</option>
-            <option value="cost_price">Cost price</option>
+            <option value="retail_price">${$t('Retail price')}</option>
+            <option value="cost_price">${$t('Cost price')}</option>
           </select>
         </div>
       </div>
       <div class="two fields-row">
-        <div class="field"><span>Change</span>
+        <div class="field"><span>${$t('Change')}</span>
           <select id="bpMode">
-            <option value="pct">By percentage</option>
-            <option value="delta">By amount</option>
-            <option value="set">Set to</option>
+            <option value="pct">${$t('By percentage')}</option>
+            <option value="delta">${$t('By amount')}</option>
+            <option value="set">${$t('Set to')}</option>
           </select>
         </div>
-        <div class="field"><span id="bpValLabel">Percent</span>
+        <div class="field"><span id="bpValLabel">${$t('Percent')}</span>
           <input id="bpValue" type="number" inputmode="decimal" step="0.01" value="0">
         </div>
       </div>
-      <div class="field"><span>Round result to nearest (0 = don't round)</span>
+      <div class="field"><span>${$t('Round result to nearest (0 = don\'t round)')}</span>
         <input id="bpRound" type="number" inputmode="decimal" min="0" step="0.01" value="0">
       </div>
       <div id="bpBody" class="ph-body"></div>
       <p id="bpErr" class="login-err"></p>
       <div class="row">
-        <button class="btn btn-ghost" data-cancel>Close</button>
-        <button class="btn" id="bpPreview">Preview</button>
-        <button class="btn" id="bpApply" disabled>Apply</button>
+        <button class="btn btn-ghost" data-cancel>${$t('Close')}</button>
+        <button class="btn" id="bpPreview">${$t('Preview')}</button>
+        <button class="btn" id="bpApply" disabled>${$t('Apply')}</button>
       </div>
     </div>`);
 
@@ -90,7 +92,7 @@ export function bulkPriceModal({ products, onDone }) {
 
   modal.querySelector('#bpMode').addEventListener('change', (e) => {
     modal.querySelector('#bpValLabel').textContent =
-      e.target.value === 'pct' ? 'Percent' : (e.target.value === 'set' ? 'New price' : 'Amount');
+      e.target.value === 'pct' ? $t('Percent') : (e.target.value === 'set' ? $t('New price') : $t('Amount'));
     invalidate();
   });
   ['#bpScope', '#bpField', '#bpValue', '#bpRound'].forEach((sel) => {
@@ -106,12 +108,12 @@ export function bulkPriceModal({ products, onDone }) {
 
   function renderChanges(res) {
     if (!res.changes.length) {
-      body.innerHTML = emptyState({ icon: '=', title: 'Nothing would change', body: `${res.matched} product${res.matched === 1 ? '' : 's'} matched, but the rule leaves every price where it is.` });
+      body.innerHTML = emptyState({ icon: '=', title: $t('Nothing would change'), body: $tn('{n} product matched, but the rule leaves every price where it is.', '{n} products matched, but the rule leaves every price where it is.', res.matched) });
       return;
     }
     body.innerHTML = `
       ${dataTable({
-        head: [{ label: 'Item' }, { label: 'SKU' }, { label: 'Now', num: true }, { label: 'After', num: true }],
+        head: [{ label: $t('Item') }, { label: $t('SKU') }, { label: $t('Now'), num: true }, { label: $t('After'), num: true }],
         bodyHtml: `
             ${res.changes.slice(0, 200).map((c) => `
               <tr>
@@ -121,7 +123,7 @@ export function bulkPriceModal({ products, onDone }) {
                 <td class="num ${c.newValue > c.oldValue ? 'gp' : 'neg'}">${fmtMoney(c.newValue)}</td>
               </tr>`).join('')}`,
       })}
-      <p class="muted">${res.changed} of ${res.matched} matched product${res.matched === 1 ? '' : 's'} would change${res.changes.length > 200 ? ' (first 200 shown)' : ''}.</p>`;
+      <p class="muted">${esc($tn('{changed} of {n} matched product would change.', '{changed} of {n} matched products would change.', res.matched, { changed: res.changed }))}${res.changes.length > 200 ? ' ' + esc($t('(first 200 shown)')) : ''}</p>`;
   }
 
   modal.querySelector('#bpPreview').addEventListener('click', async () => {
@@ -134,24 +136,24 @@ export function bulkPriceModal({ products, onDone }) {
       applyBtn.disabled = res.changed === 0;
     } catch (e) {
       body.innerHTML = '';
-      err.textContent = (e && e.data && e.data.error) || e.message;
+      err.textContent = (e && e.message) || $t('Something went wrong');
     }
   });
 
   applyBtn.addEventListener('click', async () => {
     if (!pending) return;
     applyBtn.disabled = true;
-    applyBtn.textContent = 'Applying…';
+    applyBtn.textContent = $t('Applying…');
     try {
       const res = await api.post('/api/admin/products/bulk-price', pending);
-      toast(`${res.changed} price${res.changed === 1 ? '' : 's'} updated`, 'ok');
+      toast($tn('{n} price updated', '{n} prices updated', res.changed), 'ok');
       beep('ok');
       closeModal();
       if (onDone) await onDone();
     } catch (e) {
       applyBtn.disabled = false;
-      applyBtn.textContent = 'Apply';
-      err.textContent = (e && e.data && e.data.error) || e.message;
+      applyBtn.textContent = $t('Apply');
+      err.textContent = (e && e.message) || $t('Something went wrong');
     }
   });
 
@@ -168,18 +170,18 @@ export function stockTakeModal({ products, onDone }) {
 
   const modal = openModal(`
     <div class="form-modal inv-tool">
-      <h3>Stock take</h3>
-      <p class="muted">Scan or search an item, enter what is physically on the shelf, then commit. Every line is recorded with its variance and what that variance is worth at cost.</p>
+      <h3>${$t('Stock take')}</h3>
+      <p class="muted">${$t('Scan or search an item, enter what is physically on the shelf, then commit. Every line is recorded with its variance and what that variance is worth at cost.')}</p>
       <div class="field">
-        <span>Scan barcode or search</span>
-        <input id="stSearch" type="search" placeholder="Scan, or type a name or SKU…" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <span>${$t('Scan barcode or search')}</span>
+        <input id="stSearch" type="search" placeholder="${$t('Scan, or type a name or SKU…')}" autocomplete="off" autocapitalize="off" spellcheck="false">
       </div>
       <div id="stMatches" class="cust-results"></div>
       <div id="stSheet"></div>
       <p id="stErr" class="login-err"></p>
       <div class="row">
-        <button class="btn btn-ghost" data-cancel>Close</button>
-        <button class="btn" id="stCommit" disabled>Commit count</button>
+        <button class="btn btn-ghost" data-cancel>${$t('Close')}</button>
+        <button class="btn" id="stCommit" disabled>${$t('Commit count')}</button>
       </div>
     </div>`);
 
@@ -199,7 +201,7 @@ export function stockTakeModal({ products, onDone }) {
 
   function renderSheet() {
     if (!counts.size) {
-      sheet.innerHTML = emptyState({ icon: '📋', title: 'Nothing counted yet', body: 'Scan an item or search for it to start the sheet.' });
+      sheet.innerHTML = emptyState({ icon: '📋', title: $t('Nothing counted yet'), body: $t('Scan an item or search for it to start the sheet.') });
       commit.disabled = true;
       return;
     }
@@ -209,7 +211,7 @@ export function stockTakeModal({ products, onDone }) {
     sheet.innerHTML = `
       ${dataTable({
         extraCls: 'st-table',
-        head: [{ label: 'Item' }, { label: 'Book', num: true }, { label: 'Counted', num: true }, { label: 'Variance', num: true }, { label: '' }],
+        head: [{ label: $t('Item') }, { label: $t('Book'), num: true }, { label: $t('Counted'), num: true }, { label: $t('Variance'), num: true }, { label: '' }],
         bodyHtml: `
             ${rows.map((r) => {
               const book = Number(r.product.onHand) || 0;
@@ -219,11 +221,11 @@ export function stockTakeModal({ products, onDone }) {
                 <td class="num">${book}</td>
                 <td class="num"><input class="field st-count" data-id="${esc(r.product.id)}" type="number" inputmode="numeric" min="0" step="1" value="${r.counted}"></td>
                 <td class="num ${v === 0 ? '' : (v > 0 ? 'gp' : 'neg')}">${v > 0 ? '+' : ''}${v}</td>
-                <td><button class="cl-remove" data-drop="${esc(r.product.id)}" aria-label="Remove line">✕</button></td>
+                <td><button class="cl-remove" data-drop="${esc(r.product.id)}" aria-label="${$t('Remove line')}">✕</button></td>
               </tr>`;
             }).join('')}`,
         footHtml: `<tr>
-            <td colspan="3">${rows.length} line${rows.length === 1 ? '' : 's'} · net variance</td>
+            <td colspan="3">${esc($tn('{n} line · net variance', '{n} lines · net variance', rows.length))}</td>
             <td class="num ${variance === 0 ? '' : (variance > 0 ? 'gp' : 'neg')}">${variance > 0 ? '+' : ''}${variance}</td>
             <td class="num ${value === 0 ? '' : (value > 0 ? 'gp' : 'neg')}">${fmtMoney(value)}</td>
           </tr>`,
@@ -254,8 +256,8 @@ export function stockTakeModal({ products, onDone }) {
       || (p.upc || '').toLowerCase().includes(q)).slice(0, 8);
     matches.innerHTML = hits.map((p) => `
       <button class="cust-row" data-pick="${esc(p.id)}">
-        ${esc(p.name)}<em class="muted">${esc(p.sku || '')} · book ${Number(p.onHand) || 0}</em>
-      </button>`).join('') || '<p class="muted">No countable item matches — serialized stock is counted by serial.</p>';
+        ${esc(p.name)}<em class="muted">${esc(p.sku || '')} · ${esc($t('book {n}', { n: Number(p.onHand) || 0 }))}</em>
+      </button>`).join('') || `<p class="muted">${$t('No countable item matches — serialized stock is counted by serial.')}</p>`;
     matches.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
       const p = countable.find((x) => x.id === b.dataset.pick);
       if (p) { addLine(p); search.value = ''; matches.innerHTML = ''; search.focus(); }
@@ -279,28 +281,28 @@ export function stockTakeModal({ products, onDone }) {
       matches.innerHTML = '';
     } else {
       beep('err');
-      toast(`No countable item matches “${raw}”`, 'warn');
+      toast($t('No countable item matches “{query}”', { query: raw }), 'warn');
     }
   });
 
   commit.addEventListener('click', async () => {
     err.textContent = '';
     commit.disabled = true;
-    commit.textContent = 'Committing…';
+    commit.textContent = $t('Committing…');
     try {
       const res = await api.post('/api/admin/stock-take', {
         counts: [...counts.values()].map((r) => ({ productId: r.product.id, counted: r.counted })),
         note: 'stock take',
       });
       closeModal();
-      toast(`Counted ${res.summary.lines} · ${res.summary.adjusted} adjusted · ${fmtMoney(res.summary.valueDelta)} at cost`,
+      toast($t('Counted {lines} · {adjusted} adjusted · {value} at cost', { lines: res.summary.lines, adjusted: res.summary.adjusted, value: fmtMoney(res.summary.valueDelta) }),
         res.summary.valueDelta < 0 ? 'warn' : 'ok', 5000);
       beep('ok');
       if (onDone) await onDone();
     } catch (e) {
       commit.disabled = false;
-      commit.textContent = 'Commit count';
-      err.textContent = (e && e.data && e.data.error) || e.message;
+      commit.textContent = $t('Commit count');
+      err.textContent = (e && e.message) || $t('Something went wrong');
     }
   });
 
@@ -317,21 +319,21 @@ export function labelsModal({ products, storeName }) {
 
   const modal = openModal(`
     <div class="form-modal inv-tool">
-      <h3>Print shelf labels</h3>
-      <p class="muted">Code 128 barcodes with name and price. Items are labelled by UPC where they have one, otherwise by SKU.</p>
+      <h3>${$t('Print shelf labels')}</h3>
+      <p class="muted">${$t('Code 128 barcodes with name and price. Items are labelled by UPC where they have one, otherwise by SKU.')}</p>
       <div class="field">
-        <span>Search</span>
-        <input id="lbSearch" type="search" placeholder="Filter by name or SKU…" autocomplete="off">
+        <span>${$t('Search')}</span>
+        <input id="lbSearch" type="search" placeholder="${$t('Filter by name or SKU…')}" autocomplete="off">
       </div>
       <div class="row lb-quick">
-        <button class="btn btn-ghost btn-sm" id="lbOne">1 each (shown)</button>
-        <button class="btn btn-ghost btn-sm" id="lbClear">Clear</button>
+        <button class="btn btn-ghost btn-sm" id="lbOne">${$t('1 each (shown)')}</button>
+        <button class="btn btn-ghost btn-sm" id="lbClear">${$t('Clear')}</button>
       </div>
       <div id="lbList" class="ph-body"></div>
       <div id="lbPreview" class="lbl-preview"></div>
       <div class="row">
-        <button class="btn btn-ghost" data-cancel>Close</button>
-        <button class="btn" id="lbPrint" disabled>Print</button>
+        <button class="btn btn-ghost" data-cancel>${$t('Close')}</button>
+        <button class="btn" id="lbPrint" disabled>${$t('Print')}</button>
       </div>
     </div>`);
 
@@ -352,7 +354,7 @@ export function labelsModal({ products, storeName }) {
   function render() {
     const rows = shown().slice(0, 60);
     list.innerHTML = rows.length ? dataTable({
-          head: [{ label: 'Item' }, { label: 'Code' }, { label: 'Price', num: true }, { label: 'Labels', num: true }],
+          head: [{ label: $t('Item') }, { label: $t('Code') }, { label: $t('Price'), num: true }, { label: $t('Labels'), num: true }],
           bodyHtml: `
             ${rows.map((p) => `
               <tr>
@@ -362,7 +364,7 @@ export function labelsModal({ products, storeName }) {
                 <td class="num"><input class="field lb-qty" data-id="${esc(p.id)}" type="number" inputmode="numeric" min="0" max="200" step="1" value="${qty[p.id] || 0}"></td>
               </tr>`).join('')}`,
         })
-      : emptyState({ icon: '🏷', title: 'Nothing to label', body: 'Only products with a UPC or SKU can carry a barcode.' });
+      : emptyState({ icon: '🏷', title: $t('Nothing to label'), body: $t('Only products with a UPC or SKU can carry a barcode.') });
 
     list.querySelectorAll('.lb-qty').forEach((inp) => {
       inp.addEventListener('focus', () => inp.select());
@@ -378,10 +380,10 @@ export function labelsModal({ products, storeName }) {
   function updateTotals() {
     const n = total();
     printBtn.disabled = n === 0;
-    printBtn.textContent = n ? `Print ${n} label${n === 1 ? '' : 's'}` : 'Print';
+    printBtn.textContent = n ? $tn('Print {n} label', 'Print {n} labels', n) : $t('Print');
     const sample = labelsFor(labelable, qty).slice(0, 3);
     preview.innerHTML = sample.length
-      ? `<p class="muted">Preview</p>${labelSheetHtml(sample, { fmt: fmtMoney, store: storeName })}`
+      ? `<p class="muted">${$t('Preview')}</p>${labelSheetHtml(sample, { fmt: fmtMoney, store: storeName })}`
       : '';
   }
 
@@ -410,23 +412,23 @@ export function labelsModal({ products, storeName }) {
 export function reorderModal() {
   const modal = openModal(`
     <div class="form-modal inv-tool">
-      <h3>Reorder worksheet</h3>
-      <p class="muted">What to buy next: shelves at or under their reorder point, or short of the target cover at the current sales rate. Suggestions only — nothing is ordered here.</p>
+      <h3>${$t('Reorder worksheet')}</h3>
+      <p class="muted">${$t('What to buy next: shelves at or under their reorder point, or short of the target cover at the current sales rate. Suggestions only — nothing is ordered here.')}</p>
       <div class="two fields-row">
-        <div class="field"><span>Sales window (days)</span>
+        <div class="field"><span>${$t('Sales window (days)')}</span>
           <input id="roDays" type="number" inputmode="numeric" min="1" max="365" step="1" value="30">
         </div>
-        <div class="field"><span>Target cover (days)</span>
+        <div class="field"><span>${$t('Target cover (days)')}</span>
           <input id="roCover" type="number" inputmode="numeric" min="1" max="180" step="1" value="14">
         </div>
       </div>
       <div class="row">
-        <button class="btn btn-ghost btn-sm" id="roRun">Recalculate</button>
-        <button class="btn btn-ghost btn-sm" id="roCsv" disabled>CSV</button>
-        <button class="btn btn-ghost btn-sm" id="roPrint" disabled>Print</button>
+        <button class="btn btn-ghost btn-sm" id="roRun">${$t('Recalculate')}</button>
+        <button class="btn btn-ghost btn-sm" id="roCsv" disabled>${$t('CSV')}</button>
+        <button class="btn btn-ghost btn-sm" id="roPrint" disabled>${$t('Print')}</button>
       </div>
       <div id="roBody" class="ph-body">${skeleton('table', 4)}</div>
-      <div class="row"><button class="btn btn-ghost" data-cancel>Close</button></div>
+      <div class="row"><button class="btn btn-ghost" data-cancel>${$t('Close')}</button></div>
     </div>`);
 
   const body = modal.querySelector('#roBody');
@@ -437,9 +439,9 @@ export function reorderModal() {
   function tableHtml(items) {
     return dataTable({
           head: [
-            { label: 'Item' }, { label: 'Supplier' }, { label: 'On hand', num: true },
-            { label: 'Sold', num: true }, { label: 'Cover', num: true },
-            { label: 'Order', num: true }, { label: 'Est. cost', num: true },
+            { label: $t('Item') }, { label: $t('Supplier') }, { label: $t('On hand'), num: true },
+            { label: $t('Sold'), num: true }, { label: $t('Cover'), num: true },
+            { label: $t('Order'), num: true }, { label: $t('Est. cost'), num: true },
           ],
           bodyHtml: `
             ${items.map((it) => `
@@ -448,12 +450,12 @@ export function reorderModal() {
                 <td>${esc(it.supplierName || '—')}${it.lastPo ? `<br><span class="muted">${esc(it.lastPo)}</span>` : ''}</td>
                 <td class="num ${it.onHand <= 0 ? 'neg' : ''}">${it.onHand}</td>
                 <td class="num">${it.soldUnits}</td>
-                <td class="num">${it.daysOfCover == null ? '—' : it.daysOfCover + 'd'}</td>
+                <td class="num">${it.daysOfCover == null ? '—' : esc($t('{n}d', { n: it.daysOfCover }))}</td>
                 <td class="num"><strong>${it.suggested}</strong></td>
                 <td class="num">${fmtMoney(it.lineCost)}</td>
               </tr>`).join('')}`,
           footHtml: `<tr>
-            <td colspan="5">${items.length} line${items.length === 1 ? '' : 's'}</td>
+            <td colspan="5">${esc($tn('{n} line', '{n} lines', items.length))}</td>
             <td class="num">${items.reduce((n, x) => n + x.suggested, 0)}</td>
             <td class="num">${fmtMoney(items.reduce((n, x) => n + x.lineCost, 0))}</td>
           </tr>`,
@@ -469,21 +471,21 @@ export function reorderModal() {
     try {
       data = await api.get(`/api/inventory/reorder?days=${days}&cover=${cover}`);
       if (!data.items.length) {
-        body.innerHTML = emptyState({ icon: '✅', title: 'Nothing to reorder', body: 'Every shelf is above its reorder point and covered at the current sales rate.' });
+        body.innerHTML = emptyState({ icon: '✅', title: $t('Nothing to reorder'), body: $t('Every shelf is above its reorder point and covered at the current sales rate.') });
         return;
       }
       body.innerHTML = `
         ${statRow([
-          { label: 'Lines', value: data.summary.lines },
-          { label: 'Units', value: data.summary.units },
-          { label: 'Est. cost', value: fmtMoney(data.summary.cost) },
+          { label: $t('Lines'), value: data.summary.lines },
+          { label: $t('Units'), value: data.summary.units },
+          { label: $t('Est. cost'), value: fmtMoney(data.summary.cost) },
         ])}
         ${tableHtml(data.items)}`;
       csvBtn.disabled = false;
       printBtn.disabled = false;
     } catch (e) {
       data = null;
-      body.innerHTML = `<p class="empty">${esc((e && e.data && e.data.error) || 'Failed to load — check connection.')}</p>`;
+      body.innerHTML = `<p class="empty">${esc((e && e.message) || $t('Failed to load — check connection.'))}</p>`;
     }
   }
 
@@ -496,12 +498,12 @@ export function reorderModal() {
         Number(it.unitCost).toFixed(2), Number(it.lineCost).toFixed(2)]);
     }
     downloadCsv(`orison-reorder-${String(data.asOf).slice(0, 10)}.csv`, csvRows(rows));
-    toast('Reorder worksheet downloaded', 'ok');
+    toast($t('Reorder worksheet downloaded'), 'ok');
   });
 
   printBtn.addEventListener('click', () => {
     if (!data) return;
-    printNode(tableHtml(data.items), `Reorder worksheet · ${String(data.asOf).slice(0, 10)}`);
+    printNode(tableHtml(data.items), $t('Reorder worksheet · {date}', { date: String(data.asOf).slice(0, 10) }));
   });
 
   modal.querySelector('#roRun').addEventListener('click', run);
