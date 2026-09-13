@@ -170,7 +170,7 @@ privileged action. The role is carried in the signed session token; because a
 role **change** revokes that user's sessions immediately, a promotion or
 demotion takes effect at the first request after the change (no 12-hour lag).
 
-Verified route by route against `Code.gs` at v1.43.0. The task-level view —
+Verified route by route against `Code.gs` at v1.44.0. The task-level view —
 what each role can actually do on screen, and what they cannot — is in
 [`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
 
@@ -192,6 +192,8 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/sync/push` — Net-30 charge past a customer's credit limit | needs a `credit` approval covering the overage (`credit_over_limit`) |
 | `/api/repairs`, `/detail`, `/parts`, `/labour`, `/status`, `/deposit`, `/collect` | any signed-in role (all audited) |
 | `/api/repairs/deposit-refund` | admin, manager; a cashier with a single-use `deposit_refund` approval for that ticket |
+| `/api/tradein` (buy a used device) | admin, manager; a cashier with a single-use `tradein` approval bound to the IMEI, capped at the approved amount |
+| `/api/tradeins` (the trade-in register) | admin, manager |
 | `/api/repairs/void` | admin |
 | `/api/drawer/open` | admin, manager; a cashier with a single-use `drawer` approval (audited) |
 | `/api/approve` | any signed-in role asks; the approver must be a different, active manager or admin, and within their own discount limit |

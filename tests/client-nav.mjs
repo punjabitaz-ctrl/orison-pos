@@ -52,8 +52,9 @@ test('menuTiles()', async (t) => {
     // Repairs is counter work: a cashier books a device in with the customer
     // standing there. Refunds and a no-sale drawer open are on the list since
     // v1.37.0 because a manager approves them on the cashier's screen; money
-    // out and management stay off it.
-    assert.deepEqual(menuTiles('cashier').map((x) => x.id), ['refund', 'drawer', 'staff', 'repairs', 'dashboard', 'settings']);
+    // out and management stay off it. Trade-In is on it since v1.44.0: the
+    // cashier takes the device in and a manager approves the amount.
+    assert.deepEqual(menuTiles('cashier').map((x) => x.id), ['refund', 'drawer', 'tradein', 'staff', 'repairs', 'dashboard', 'settings']);
   });
   await t.test('an unknown role is treated as a cashier, not as an admin', () => {
     assert.deepEqual(menuTiles('nonsense').map((x) => x.id), menuTiles('cashier').map((x) => x.id));

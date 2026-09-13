@@ -184,6 +184,7 @@ web-accessible status page without app load.
 | Check a warranty | Repairs → *Check warranty* → scan the IMEI or type the receipt number (any role). |
 | Set a product's warranty | Products → ⚙ on the item → *Warranty*: 1 year (brand-new hardware), 30 days or none (admin/manager). Applies to future sales. |
 | Book in a repair | Menu → *Repairs* → *Book in a repair* (any role) — device, fault, condition, optional deposit. Parts, labour, status and collection from the ticket. Giving a deposit back is admin/manager; voiding a ticket is admin. |
+| Buy a used device (trade-in) | Menu → *Trade-In* → *Buy a device* — seller (customer), ID checked + last characters, product (must be tracked by IMEI), IMEI, condition, amount, cash or store credit. A cashier hands the terminal to a manager to approve. Pay cash from the drawer; the register is below for managers. |
 | Import marketplace orders | Put orders in the Google Sheet's **Orders** tab (Order ref, Date, Channel, SKU, IMEI / Serial, Quantity, Unit price; leave Status empty). Settings → *Marketplace orders* → *Import now*, or wait for the hourly run. Errors are written into the Status column — fix the row, clear Status, run again. |
 | Record an online / marketplace sale | Menu → *Sold Elsewhere* (admin/manager) — channel + order reference; stock moves like any sale. |
 | Open the drawer without a sale | Menu → *Open Drawer* — reason required, written to the audit log; a cashier needs a manager's approval. Needs a Bluetooth receipt printer with the drawer attached. |

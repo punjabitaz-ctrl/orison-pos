@@ -45,6 +45,7 @@ const KIND_LABELS = {
   deposit: N_('Deposit taken'),
   deposit_refund: N_('Deposit refunded'),
   purchase: N_('Stock received'),
+  tradein: N_('Trade-in'),
   stocktake: N_('Stock take'),
 };
 

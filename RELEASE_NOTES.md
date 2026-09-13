@@ -7,7 +7,39 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.43.0 — the books
+## Latest: v1.44.0 — trade-ins
+
+**2026-09-13.**
+
+- **Menu → Trade-In** buys a used phone or laptop from a customer.
+  - Pick the seller and note the ID you checked. Only its last few characters
+    are kept.
+  - Pick the product it goes into, scan the IMEI, and choose its condition.
+  - Pay cash from the drawer, or give store credit they can spend straight
+    away.
+- **Cashiers can take trade-ins** with a manager's approval for the amount.
+- **The device costs what you paid for it.** When it sells, the profit is the
+  real margin on that unit, and it is resold with 30 days of warranty.
+- **Managers see the trade-in register:** every device bought in, from whom,
+  for how much, and whether it has sold.
+- The drawer count, customer store credit, Reports, the daily export and the
+  books all account for trade-ins.
+
+**Validation:** backend-sim **PASS 983 / FAIL 0** · client units **PASS 492 /
+FAIL 0**. Mutation checks confirm the tests catch a missing warranty cap,
+per-device cost, drawer cash and refund cost. Both the manager path and the
+cashier approval path were checked in the browser.
+
+**Layaway** is closed by owner decision.
+
+### Deploying
+
+**Backend redeploy required.** New sheet columns (`Serials.cost`,
+`Serials.source`) and the `TradeIns` tab are created on first use.
+
+---
+
+## v1.43.0 — the books
 
 **2026-09-13.** Sprint 3 of 3. The warranty, marketplace and accounting
 program is complete.

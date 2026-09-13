@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.43.0** — in-app GAAP accounting: P&L, trial balance, journal (`2026-09-13`) |
-| Validation bar | `backend-sim` **PASS 945 / FAIL 0** · client units **PASS 482 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.44.0** — trade-ins: buy used devices at cost per IMEI (`2026-09-13`) |
+| Validation bar | `backend-sim` **PASS 983 / FAIL 0** · client units **PASS 492 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,17 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.44.0** Trade-ins.
+  - `tradeIn_` / `tradeIns_`, with `TradeIns` tab and `TRADEIN_HEADERS`.
+  - A new server-only ledger kind `tradein` is threaded through:
+    `shiftExpectedCash_`, the four store-credit classifiers, `reports_`,
+    `driveExport_`, `accounting_`, and client `stats.signedNet` / `kindInfo`.
+  - Serials gain `cost` and `source`. Serial cost is used in the sale path,
+    repair parts, refunds (`origCostBySerial`) and aging value.
+    `USED_WARRANTY_MAX` = 30.
+  - Screen `public/js/screens/tradein.js` (dialog plus manager register);
+    a cashier goes through the `tradein` approval.
+  - 38 sim checks plus a `client-tradein.mjs` validation test.
 - **v1.43.0** Accounting (Sprint 3).
   - `accounting_` derives GAAP double entry from Transactions plus StockTakes
     for a period (`reportPeriod_`), using `CHART_OF_ACCOUNTS` and
@@ -525,7 +536,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **945 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **983 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -658,9 +669,9 @@ is below, in the order it should be picked up.
    warranty ✅ v1.41.0; marketplace sync ✅ v1.42.0 (*run
    `installMarketplaceTrigger()` on deploy*); in-app GAAP accounting ✅
    v1.43.0. **Program complete.** Natural next step: record supplier
-   payments so Accounts payable clears. Owner closed gift cards and
-   permission switches (not wanted). Still open: trade-in / buyback (cost
-   basis), layaway. *Have a tax adviser check the UAE invoice wording.*
+   payments so Accounts payable clears. Owner closed gift cards,
+   permission switches and layaway (not wanted). Trade-ins ✅ v1.44.0.
+   *Have a tax adviser check the UAE invoice wording.*
 4. ~~**Warranty per serial**~~ — **done v1.41.0**. Cheap now that fitted serials point at
    their invoice. Needs the owner's warranty terms. (Repair refunds are settled:
    services are not refunded, v1.33.0.)

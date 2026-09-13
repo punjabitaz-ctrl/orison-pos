@@ -83,6 +83,23 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
   - pushes through `syncPush_` as device `marketplace-sheet`, with clientTxId `mkt-<hash of ref>`, tender `marketplace` and no tax added
   - writes *Status* and *Note* back, rewrites the **Stock** tab, and records `Meta.marketplace_last`
 
+### Trade-ins (v1.44.0)
+
+- `/api/tradein`:
+  - **Roles:** admin or manager. A cashier needs a single-use `tradein` approval whose ref is `IMEI|nonce` and whose amount covers the price.
+  - **Payload:** `{ customerId, productId, serialNumber, condition, notes, amount, paidBy, idType, idRef }`.
+    - `condition`: `like_new` | `good` | `fair` | `faulty`
+    - `paidBy`: `cash` | `store_credit`
+    - `idType`: `driving_licence` | `passport` | `national_id` | `other`
+    - `idRef`: 2 to 6 characters, never the full document number
+  - **Stock:** the product must be serialized. An IMEI already `IN_STOCK` is a 409. A `SOLD` serial row is reused (bought back).
+  - **Writes:**
+    - the serial, with `cost` = amount and `source = 'tradein'`
+    - a `tradein` Transactions row (tender = paidBy, `external_ref` = `Orison-T######` from `Meta.tradein_seq`)
+    - a `TradeIns` row and the `tradein.create` audit entry
+- `/api/tradeins` (admin, manager): the register, newest first, `?q=` search, with `inStock`.
+- **When sold, fitted or refunded:** a serial's own `cost` wins over the product cost. `source = 'tradein'` caps `warrantyDays` at 30 (`USED_WARRANTY_MAX`).
+
 ### Customers and receivables
 
 - `/api/customers` (search) and `/api/admin/customers` (create) are open to any role since v1.38.0. Only a manager or admin can set a credit limit when creating a customer.
@@ -194,7 +211,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 945 checks
+npm run test:backend   # 983 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.

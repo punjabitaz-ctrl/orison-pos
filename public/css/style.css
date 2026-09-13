@@ -361,7 +361,7 @@ background: var(--card);
 
 .field { display: flex; flex-direction: column; gap: 6px; width: 100%; margin-bottom: 12px; }
 .field span { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
-.field input, .field textarea {
+.field input, .field textarea, .field select {
   width: 100%;
   border: 1.5px solid var(--line);
   border-radius: 11px;
@@ -369,7 +369,7 @@ background: var(--card);
   font-size: 15px;
   background: #fafbfc;
 }
-.field input:focus, .field textarea:focus { outline: none; border-color: var(--navy-3); background: #fff; }
+.field input:focus, .field textarea:focus, .field select:focus { outline: none; border-color: var(--navy-3); background: #fff; }
 .field textarea { resize: vertical; font-family: inherit; }
 
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 4px 0 12px; color: var(--text); }
@@ -863,6 +863,11 @@ background: var(--card);
 .rep-fill { height: 100%; background: #1c5d99; border-radius: 999px; }
 .rep-sub { font-size: 12px; margin-top: 4px; }
 .rep-sub .gp { font-weight: 700; }
+
+/* Trade-in */
+.ti-intro { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.ti-picked { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; }
+.ti-picked .link { background: none; border: 0; padding: 0; color: var(--accent, #1c5d99); font-weight: 600; text-decoration: underline; cursor: pointer; }
 
 /* Accounts - the books */
 .acct-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 4px 16px 8px; }

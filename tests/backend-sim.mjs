@@ -4597,6 +4597,128 @@ check('statement carries the changer/cashier',
   req('/api/admin/store', { taxRate: 0 }, { session: aAdm });
 }
 {
+  section('trade-ins: buying used devices (v1.44.0)');
+
+  const tAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const tMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const tCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const tUsers = req('/api/admin/users/list', {}, { session: tAdm }).data.users;
+  const tAdmId = tUsers.find((u) => u.email === 'tariq@example.com').id;
+  const day = new Date().toISOString().slice(0, 10);
+
+  const used = req('/api/admin/products', { name: 'Trade Phone', sku: 'TI-PH', category: 'TI', costPrice: 400, retailPrice: 300, isSerialized: true, warrantyDays: 365 }, { session: tAdm }).data.id;
+  const cable = req('/api/admin/products', { name: 'Trade Cable', sku: 'TI-CBL', category: 'TI', costPrice: 1, retailPrice: 5, onHand: 5 }, { session: tAdm }).data.id;
+  const seller = req('/api/admin/customers', { name: 'Trade Seller' }, { session: tAdm }).data.customer.id;
+  const base = { productId: used, customerId: seller, condition: 'good', idType: 'driving_licence', idRef: '4821', paidBy: 'cash', amount: 180 };
+  const ti = (p, as) => req('/api/tradein', Object.assign({}, base, p), { session: as || tMgr });
+  const txOf = (q, kind) => req('/api/transactions', {}, { session: tAdm, params: { q } }).data.transactions.find((t) => (t.kind || 'sale') === kind);
+  const booksToday = () => req('/api/accounting', {}, { session: tAdm, params: { from: day, to: day } }).data;
+  const rep0 = req('/api/reports', {}, { session: tAdm, params: { from: day, to: day } }).data.summary;
+  const tShift = req('/api/shifts/open', { openingFloat: 1000 }, { session: tMgr });
+  check('the manager opens a till shift for the trade-ins', tShift.ok === true, JSON.stringify(tShift));
+
+  check('a cashier cannot buy a device without a manager', ti({ serialNumber: 'TI-IMEI-1' }, tCash).status === 403);
+  check('the seller must be a customer', ti({ serialNumber: 'TI-IMEI-1', customerId: '' }).status === 400);
+  check('the ID that was checked is required', ti({ serialNumber: 'TI-IMEI-1', idType: '' }).status === 400);
+  check('only the last few characters of the ID are kept, never the whole number', ti({ serialNumber: 'TI-IMEI-1', idRef: 'D123456789' }).status === 400);
+  check('a condition must be picked', ti({ serialNumber: 'TI-IMEI-1', condition: 'mint' }).status === 400);
+  check('the shop has to pay something', ti({ serialNumber: 'TI-IMEI-1', amount: 0 }).status === 400);
+  check('payment is cash or store credit only', ti({ serialNumber: 'TI-IMEI-1', paidBy: 'card' }).status === 400);
+  check('a trade-in goes into a product tracked by IMEI', ti({ serialNumber: 'TI-IMEI-1', productId: cable }).status === 400);
+
+  const one = ti({ serialNumber: 'TI-IMEI-1', notes: 'small scratch on back' });
+  check('a manager buys a device for cash', one.ok === true && /^Orison-T\d{6}$/.test(one.data.tradeInNo) && one.data.amount === 180, JSON.stringify(one));
+  check('the device is now in stock under its IMEI',
+    req('/api/products', {}, { session: tAdm }).data.find((p) => p.sku === 'TI-PH').serials.includes('TI-IMEI-1'));
+  check('the same IMEI cannot be bought in twice while it is in stock', ti({ serialNumber: 'ti-imei-1' }).status === 409);
+  const tx1 = txOf(one.data.tradeInNo, 'tradein');
+  check('the ledger has a trade-in row paid in cash, not a sale', tx1 && tx1.grandTotal === 180 && tx1.tenders[0].type === 'cash' && !tx1.receiptNo, JSON.stringify(tx1));
+  check('a trade-in cannot be pushed from a terminal', (() => {
+    const r = req('/api/sync/push', { deviceId: 'till-ti', batch: [{ clientTxId: 'ti-fake', kind: 'tradein', userId: tAdmId, grandTotal: 50, tenders: [{ type: 'cash', amount: 50 }], items: [], createdAt: new Date().toISOString() }] }, { session: tAdm }).data.results[0];
+    return r.accepted === false;
+  })());
+
+  /* a cashier, with a manager's approval bound to the IMEI and the amount */
+  const tok = (ref, amount) => req('/api/approve', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'], action: 'tradein', ref, amount }, { session: tCash }).data.approval;
+  const low = tok('TI-IMEI-2|a', 50);
+  check('an approval for less is not enough', ti({ serialNumber: 'TI-IMEI-2', amount: 120, paidBy: 'store_credit', ref: 'TI-IMEI-2|a', approval: low }, tCash).status === 403);
+  const other = tok('TI-IMEI-9|b', 500);
+  check('an approval for another IMEI cannot be spent', ti({ serialNumber: 'TI-IMEI-2', amount: 120, paidBy: 'store_credit', ref: 'TI-IMEI-9|b', approval: other }, tCash).status === 403);
+  const good = tok('TI-IMEI-2|c', 120);
+  const two = ti({ serialNumber: 'TI-IMEI-2', amount: 120, paidBy: 'store_credit', ref: 'TI-IMEI-2|c', approval: good }, tCash);
+  check('with approval, a cashier buys a device for store credit', two.ok === true, JSON.stringify(two));
+  check('the approval works once', ti({ serialNumber: 'TI-IMEI-3', amount: 120, paidBy: 'store_credit', ref: 'TI-IMEI-2|c', approval: good }, tCash).status >= 403);
+  const ledger = req('/api/customers/ledger', {}, { session: tAdm, params: { customerId: seller } }).data;
+  check('the seller now has 120 of store credit to spend', ledger.credit === 120 && ledger.balance === -120, JSON.stringify({ c: ledger.credit, b: ledger.balance }));
+  check('the trade-in is on their statement', (() => {
+    const st = req('/api/customers/statement', {}, { session: tAdm, params: { customerId: seller } }).data;
+    return JSON.stringify(st).indexOf('Trade-in') >= 0;
+  })());
+
+  /* selling a traded-in device again */
+  const sell = (id, sn, price, extra) => req('/api/sync/push', { deviceId: 'till-ti', batch: [Object.assign({ clientTxId: id, userId: tAdmId, grandTotal: price, createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: price }], items: [{ productId: used, quantity: 1, unitPrice: price, serialNumber: sn }] }, extra || {})] }, { session: tAdm }).data.results[0];
+  sell('ti-sale-1', 'TI-IMEI-1', 300);
+  const s1 = req('/api/transactions', {}, { session: tAdm, params: { q: 'ti-sale-1' } }).data.transactions.find((t) => t.clientTxId === 'ti-sale-1');
+  check('its cost is what the shop paid for it, not the product cost', s1 && s1.items[0].unitCost === 180, JSON.stringify(s1 && s1.items));
+  check('so the margin is the real one (300 − 180)', s1 && s1.grossProfit === 120, String(s1 && s1.grossProfit));
+  check('a used device is sold with 30 days of warranty, even on a one-year product', s1 && s1.items[0].warrantyDays === 30, JSON.stringify(s1 && s1.items[0]));
+  req('/api/admin/serials', { productId: used, serialNumbers: ['TI-NEW-1'] }, { session: tAdm });
+  sell('ti-sale-2', 'TI-NEW-1', 300);
+  const s2 = req('/api/transactions', {}, { session: tAdm, params: { q: 'ti-sale-2' } }).data.transactions.find((t) => t.clientTxId === 'ti-sale-2');
+  check('a brand-new unit of the same product keeps its year and the product cost', s2 && s2.items[0].warrantyDays === 365 && s2.items[0].unitCost === 400, JSON.stringify(s2 && s2.items[0]));
+
+  /* buying back a device the shop sold */
+  const back = ti({ serialNumber: 'TI-NEW-1', amount: 150, condition: 'fair' });
+  check('a device sold here can be bought back', back.ok === true && back.data.soldHereBefore === true, JSON.stringify(back));
+  check('and its old sale can no longer be refunded', (() => {
+    const r = req('/api/sync/push', { deviceId: 'till-ti', batch: [{ clientTxId: 'ti-rf-1', kind: 'refund', originalClientTx: 'ti-sale-2', userId: tAdmId, grandTotal: 300, tenders: [{ type: 'cash', amount: 300 }], items: [{ productId: used, quantity: 1, unitPrice: 300, serialNumber: 'TI-NEW-1' }], createdAt: new Date().toISOString() }] }, { session: tAdm }).data.results[0];
+    return r.accepted === false;
+  })());
+  sell('ti-sale-3', 'TI-NEW-1', 260);
+  const s3 = req('/api/transactions', {}, { session: tAdm, params: { q: 'ti-sale-3' } }).data.transactions.find((t) => t.clientTxId === 'ti-sale-3');
+  check('resold, it carries the buy-back price as cost and used-device warranty', s3 && s3.items[0].unitCost === 150 && s3.items[0].warrantyDays === 30, JSON.stringify(s3 && s3.items[0]));
+  check('refunding the resale uses that same cost', (() => {
+    const r = req('/api/sync/push', { deviceId: 'till-ti', batch: [{ clientTxId: 'ti-rf-3', kind: 'refund', originalClientTx: 'ti-sale-3', userId: tAdmId, grandTotal: 260, tenders: [{ type: 'cash', amount: 260 }], items: [{ productId: used, quantity: 1, unitPrice: 260, serialNumber: 'TI-NEW-1' }], createdAt: new Date().toISOString() }] }, { session: tAdm }).data.results[0];
+    const rf = req('/api/transactions', {}, { session: tAdm, params: { q: 'ti-rf-3' } }).data.transactions.find((t) => t.clientTxId === 'ti-rf-3');
+    return r.accepted && rf && rf.items[0].unitCost === 150;
+  })());
+
+  /* the money: reports, books, drawer export, stock value */
+  const rep1 = req('/api/reports', {}, { session: tAdm, params: { from: day, to: day } }).data.summary;
+  check('Reports count what was bought in, apart from sales',
+    Math.abs(rep1.tradeIns - rep0.tradeIns - 450) < 0.005 && rep1.tradeInCount - rep0.tradeInCount === 3 && rep1.grossSales - rep0.grossSales === 860, JSON.stringify([rep0.tradeIns, rep1.tradeIns, rep1.grossSales - rep0.grossSales]));
+  const B = booksToday();
+  const tiEntries = B.journal.filter((j) => j.kind === 'tradein');
+  const ln = (j, code) => j.lines.find((l) => l.code === code) || { debit: 0, credit: 0 };
+  check('the books: a cash trade-in is inventory bought with cash', tiEntries.some((j) => j.ref === one.data.tradeInNo && ln(j, '1200').debit === 180 && ln(j, '1000').credit === 180), JSON.stringify(tiEntries.slice(-3)));
+  check('a store-credit trade-in is inventory owed back as credit', tiEntries.some((j) => j.ref === two.data.tradeInNo && ln(j, '1200').debit === 120 && ln(j, '2200').credit === 120));
+  check('and the books still balance', B.trialBalance.balanced === true);
+  check('the stock value counts a traded-in device at what was paid',
+    (req('/api/inventory/aging', {}, { session: tAdm }).data.items || []).some((i) => i.sku === 'TI-PH' && i.onHand === 2 && Math.abs(i.value - 270) < 0.005),
+    JSON.stringify((req('/api/inventory/aging', {}, { session: tAdm }).data.items || []).find((i) => i.sku === 'TI-PH')));
+
+  const closed = req('/api/shifts/close', { shiftId: tShift.data.shift.id, denoms: {} }, { session: tMgr }).data.shift;
+  check('cash paid for trade-ins comes out of the drawer the shift expects (1000 − 180 − 150)', closed && closed.expectedCash === 670, JSON.stringify(closed));
+
+  /* two units of one product, at different costs, in one sale: a refund returns the right one's cost */
+  req('/api/admin/serials', { productId: used, serialNumbers: ['TI-NEW-2'] }, { session: tAdm });
+  req('/api/sync/push', { deviceId: 'till-ti', batch: [{ clientTxId: 'ti-sale-4', userId: tAdmId, grandTotal: 600, createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 600 }],
+    items: [{ productId: used, quantity: 1, unitPrice: 300, serialNumber: 'TI-NEW-2' }, { productId: used, quantity: 1, unitPrice: 300, serialNumber: 'TI-IMEI-2' }] }] }, { session: tAdm });
+  req('/api/sync/push', { deviceId: 'till-ti', batch: [{ clientTxId: 'ti-rf-4', kind: 'refund', originalClientTx: 'ti-sale-4', userId: tAdmId, grandTotal: 300, createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 300 }],
+    items: [{ productId: used, quantity: 1, unitPrice: 300, serialNumber: 'TI-IMEI-2' }] }] }, { session: tAdm });
+  const rf4 = req('/api/transactions', {}, { session: tAdm, params: { q: 'ti-rf-4' } }).data.transactions.find((t) => t.clientTxId === 'ti-rf-4');
+  check('a refund of the traded-in unit restocks it at its own cost, not the other unit cost', rf4 && rf4.items[0].unitCost === 120, JSON.stringify(rf4 && rf4.items));
+
+  const list = req('/api/tradeins', {}, { session: tMgr }).data.tradeIns;
+  check('managers see the trade-in register with seller, ID check and condition',
+    list.length >= 3 && list.some((r) => r.tradeInNo === one.data.tradeInNo && r.sellerName === 'Trade Seller' && r.idRef === '4821' && r.condition === 'good' && r.inStock === false));
+  check('a cashier cannot read the register', req('/api/tradeins', {}, { session: tCash }).status === 403);
+  check('every trade-in is audited, naming the approver when there was one', (() => {
+    const e = req('/api/audit', {}, { session: tAdm, params: { action: 'tradein.create' } }).data.entries;
+    return e.length === 3 && e.some((x) => /approved by/.test(x.summary));
+  })());
+}
+{
   section('marketplace sync from a Google Sheet (v1.42.0)');
 
   const kAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;

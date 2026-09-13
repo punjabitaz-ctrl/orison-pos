@@ -18,6 +18,7 @@ export const DESTINATIONS = [
   { id: 'expense', label: N_('Staff Expense'), screen: 'dashboard', roles: MANAGER, dialog: 'expense' },
   { id: 'drawer', label: N_('Open Drawer'), screen: 'dashboard', roles: null, dialog: 'drawer' },
   { id: 'external', label: N_('Sold Elsewhere'), screen: 'register', roles: MANAGER, dialog: 'external' },
+  { id: 'tradein', label: N_('Trade-In'), screen: 'tradein', roles: null },
   { id: 'staff', label: N_('Time Clock'), screen: 'staff', roles: null },
   { id: 'customers', label: N_('Customers'), screen: 'customers', roles: MANAGER },
   { id: 'inventory', label: N_('Products'), screen: 'inventory', roles: MANAGER },

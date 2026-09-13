@@ -5,6 +5,60 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.0] — 2026-09-13
+
+Owner decisions: **trade-ins yes, layaway no.** The cost basis is the standard
+one: a traded-in device costs exactly what the shop paid for it, recorded on
+that IMEI.
+
+### Added
+
+- **Trade-ins** (`/api/tradein`; Menu → *Trade-In*). The shop buys a used
+  device from a customer.
+  - **Seller identification:**
+    - the seller must be a customer
+    - the ID that was checked is recorded: driving licence, passport, national
+      ID or other
+    - only the **last 2 to 6 characters** of the ID are stored, never the whole
+      document number
+  - **Device details:** the IMEI, the product it goes into (it must be tracked
+    by IMEI), its condition (like new, good, fair or faulty) and notes.
+  - **Payment:** cash from the drawer, or store credit the seller can spend
+    straight away.
+  - **Who can do it:** admins and managers directly. A cashier needs a manager's
+    approval bound to the IMEI and the amount, single use, like refunds.
+  - **Duplicate protection:** an IMEI already in stock is refused. A device the
+    shop sold before is bought back onto its existing serial row, and its old
+    sale can no longer be refunded.
+  - Every trade-in is numbered `Orison-T000001` and audited
+    (`tradein.create`), naming the approver when there was one.
+- **Trade-in register** (`/api/tradeins`, admin and manager). It lists date,
+  device, seller with the ID checked, condition, amount paid and how, and
+  whether the device is still in stock, with search.
+
+### Changed
+
+- **Cost per serial.** Serials gain `cost` and `source` columns.
+  - A traded-in unit's cost is used when it is sold, fitted as a repair part
+    or refunded.
+  - Stock-aging value counts it at that cost, not at the product's average.
+  - A refund from a basket holding two units of one product now restocks each
+    unit at its own captured cost.
+- **Used devices carry at most 30 days' warranty** when resold, even on a
+  product set to one year. Brand-new units of the same product keep their
+  year.
+- The new `tradein` ledger kind is counted everywhere money is classified:
+  - **Shift drawer:** cash paid out.
+  - **Customer store credit, ledger, statement and receivables:** credit
+    owed.
+  - **Reports:** trade-ins bought, kept separate from sales; the cash tender
+    goes down.
+  - **Drive export:** a *TRADE-INS BOUGHT* line, with the drawer going down.
+  - **Books:** Dr Inventory, Cr Cash or Store credit.
+  - **Dashboard net:** money out.
+  - Terminals cannot push a trade-in; it is a server-only kind.
+- `.field select` is styled like other inputs in every form.
+
 ## [1.43.0] — 2026-09-13
 
 Sprint 3, the last of the warranty, marketplace and accounting program. Owner

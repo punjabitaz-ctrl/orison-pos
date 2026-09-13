@@ -106,8 +106,11 @@ Trade-in/buyback and layaway were not answered and stay open.
 - **Accounting platform integration:** not wanted; accounting is in-app
   (Sprint 3).
 - **Per-role permission switches:** not wanted; manager approval covers it.
+- **Layaway:** not wanted.
 
-## Still open
+## Follow-on
 
-- Trade-in / buyback: the cost basis.
-- Layaway on sales.
+- **Trade-in / buyback** ✅ v1.44.0. Owner said yes. The cost basis is the
+  price paid, recorded per IMEI. The seller's ID check is recorded (last
+  characters only). Resale is capped at 30 days' warranty.
+- Next candidate: supplier payments, so Accounts payable clears.

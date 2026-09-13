@@ -132,6 +132,7 @@ export const screen = {
           <p class="muted rep-sub">
             ${esc($t('Refunds −{refunds} · paid out −{payouts} · collections +{collections}', { refunds: money(sum.refunds), payouts: money(sum.payouts), collections: money(sum.collections) }))}
           </p>
+          ${sum.tradeInCount ? `<p class="muted rep-sub">${esc($t('Trade-ins bought: {amount} · {n} devices', { amount: money(sum.tradeIns), n: sum.tradeInCount }))}</p>` : ''}
         </section>
 
         <div class="rep-grid">
@@ -246,6 +247,7 @@ function exportCsv(data, range) {
   lines.push(['refunds', money(s.refunds)].join(','));
   lines.push(['paid_out', money(s.payouts)].join(','));
   lines.push(['collections', money(s.collections)].join(','));
+  lines.push(['trade_ins_bought', money(s.tradeIns || 0)].join(','));
   lines.push(['net_revenue', money(s.netRevenue)].join(','));
   lines.push(['sales_count', String(s.salesCount)].join(','));
   lines.push(['units', String(s.units)].join(','));

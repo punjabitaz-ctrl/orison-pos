@@ -215,9 +215,9 @@ reasons* table and the owner decisions:
 | Repairs workflow | ✅ Done, v1.31–v1.32 | — |
 | UI translation and RTL | ✅ Done, v1.35.0 | A native-speaker read |
 | D1 Printer and drawer | ✅ Built, v1.34.0 | A test on the real printer |
-| **Trade-in / buyback** | Open | Owner decision on cost basis and used-stock IMEI intake. The largest remaining gap for a phone shop. |
+| **Trade-in / buyback** | ✅ v1.44.0 — cost basis is the price paid, per IMEI; seller ID check recorded; 30-day warranty on resale | — |
 | **Warranty per serial** | ✅ v1.41.0 — 30 days, or 1 year for brand-new hardware | — |
-| **Layaway / deposits on sales and special orders** | Open | Repairs hold deposits; a sale cannot. Needs a liability treatment like `deposit`. |
+| **Layaway / deposits on sales and special orders** | Closed — owner decision (not wanted) | — |
 | **Store credit as an object / gift cards** | Closed — owner: no gift cards | — |
 | **Accounting integration** | ✅ v1.43.0 — in-app GAAP books (Menu → Accounts), no platform (owner decision) | — |
 | **Marketplace API sync** | ✅ v1.42.0 — imported from a Google Sheets file (owner decision) | — |

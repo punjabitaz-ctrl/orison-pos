@@ -19,6 +19,7 @@ const TITLES = {
   drawer: N_('A manager needs to approve opening the drawer'),
   deposit_refund: N_('A manager needs to approve giving the deposit back'),
   credit: N_('A manager needs to approve going over the credit limit'),
+  tradein: N_('A manager needs to approve buying this device'),
 };
 
 function layer() {

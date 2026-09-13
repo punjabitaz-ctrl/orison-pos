@@ -113,6 +113,8 @@ function dispatch_(action, session, payload, params) {
     case '/api/repairs/deposit': return repairDeposit_(session, payload);
     case '/api/repairs/collect': return repairCollect_(session, payload);
     case '/api/repairs/deposit-refund': return repairDepositRefund_(session, payload);
+    case '/api/tradein':         return tradeIn_(session, payload);
+    case '/api/tradeins':        return tradeIns_(session, params);
     case '/api/drawer/open':     return drawerOpen_(session, payload);
     case '/api/approve':         return approve_(session, payload);
     case '/api/warranty':        return warrantyLookup_(session, params);
@@ -350,7 +352,7 @@ var META_HEADERS    = ['key', 'value'];
 var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at'];
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable', 'warranty_days'];
-var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
+var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at', 'cost', 'source'];
 var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by', 'tax_inclusive', 'tax_rate'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at', 'credit_limit', 'trn'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status', 'closed_by'];
@@ -1720,7 +1722,7 @@ function login_(payload) {
  *  PINs are only ever checked by the server, so approvals need a connection.
  * ------------------------------------------------------------------ */
 
-var APPROVAL_ACTIONS = { refund: 1, discount: 1, drawer: 1, deposit_refund: 1, credit: 1 };
+var APPROVAL_ACTIONS = { refund: 1, discount: 1, drawer: 1, deposit_refund: 1, credit: 1, tradein: 1 };
 var APPROVAL_TTL_MS = 24 * 3600 * 1000;
 
 /* A sale can need two approvals at once (a big discount charged past a credit
@@ -2155,7 +2157,9 @@ function syncPush_(session, payload) {
             if (claimId) errors[errSn].conflictId = claimId;
             continue;
           }
-          resolved.push({ product: product, serial: serial, quantity: 1, unitPrice: unitPrice, discountPct: clampPct_(num_(item.discountPct)) });
+          /* a traded-in device was bought at its own price: that is its cost */
+          resolved.push({ product: product, serial: serial, quantity: 1, unitPrice: unitPrice, discountPct: clampPct_(num_(item.discountPct)),
+            unitCost: num_(serial.cost) > 0 ? num_(serial.cost) : undefined });
         } else if (itemType === 'service') {
           // No stock tracked for a service / offering.
           resolved.push({ product: product, serial: null, quantity: 1, unitPrice: unitPrice, onHand: null, discountPct: clampPct_(num_(item.discountPct)) });
@@ -2426,6 +2430,8 @@ function resolvedItems_(resolved) {
     /* the warranty the customer was sold, fixed at the moment of sale */
     if (!r.isRefundLine) {
       var wdays = productWarrantyDays_(r.product);
+      /* one year is for brand-new hardware; a device the shop bought used gets 30 days at most */
+      if (r.serial && String(r.serial.source) === 'tradein') wdays = Math.min(wdays, USED_WARRANTY_MAX);
       if (wdays > 0) it.warrantyDays = wdays;
     }
     return it;
@@ -2550,7 +2556,7 @@ function indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows) {
 var CASH_OUT_KINDS = { payout: 'Paid out', pickup: 'Cash pick-up', expense: 'Staff expense' };
 
 /* Ledger kinds that only the server writes. Never accepted from a device. */
-var SERVER_ONLY_KINDS = { deposit: 1, deposit_refund: 1 };
+var SERVER_ONLY_KINDS = { deposit: 1, deposit_refund: 1, tradein: 1 };
 
 function hasDepositTender_(tenders) {
   if (!Array.isArray(tenders)) return false;
@@ -2703,12 +2709,14 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
   var byProduct = {};
   var origItems = itobjs_(original.items_json);
   var origCostByProduct = {};
+  var origCostBySerial = Object.create(null);
   for (var oi = 0; oi < origItems.length; oi++) {
     var o = origItems[oi];
     var opk = String(o.productId || '');
     if (!byProduct[opk]) byProduct[opk] = { qty: 0, serials: [] };
     byProduct[opk].qty += o.quantity || 1;
     if (o.serialNumber) byProduct[opk].serials.push(String(o.serialNumber));
+    if (o.serialNumber && typeof o.unitCost === 'number' && o.unitCost > 0) origCostBySerial[String(o.serialNumber)] = o.unitCost;
     if (typeof o.unitCost === 'number' && o.unitCost > 0 && !origCostByProduct[opk]) {
       origCostByProduct[opk] = o.unitCost;
     }
@@ -2764,7 +2772,7 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
         continue;
       }
       line.serials.splice(line.serials.indexOf(sn), 1);
-      resolved.push({ product: product, serial: serial, quantity: 1, unitPrice: unitPrice, unitCost: origCostByProduct[String(product.id)] });
+      resolved.push({ product: product, serial: serial, quantity: 1, unitPrice: unitPrice, unitCost: origCostBySerial[sn] || origCostByProduct[String(product.id)] });
     } else {
       var qty = Math.max(1, item.quantity || 1);
       var line2 = byProduct[String(product.id)];
@@ -3091,7 +3099,7 @@ function customerMoney_(txRows, cid) {
         if (ty === 'store_credit') credit -= amt;
         else if (ty === 'net30' || ty === 'account') account += amt;
       }
-    } else if (kind === 'refund') {
+    } else if (kind === 'refund' || kind === 'tradein') {
       for (var m = 0; m < tenders.length; m++) {
         if (String(tenders[m].type || '') === 'store_credit') credit += num_(tenders[m].amount);
       }
@@ -3250,7 +3258,7 @@ function customerLedger_(session, params) {
         if (ty === 'store_credit') credit -= amt;
         else if (ty === 'net30' || ty === 'account') account += amt;
       }
-    } else if (kind === 'refund') {
+    } else if (kind === 'refund' || kind === 'tradein') {
       for (var m = 0; m < tenders.length; m++) {
         if (String(tenders[m].type || '') === 'store_credit') credit += num_(tenders[m].amount);
       }
@@ -3330,7 +3338,7 @@ function customerStatement_(session, params) {
         var amt = num_(tenders[k].amount);
         if (ty === 'store_credit' || ty === 'net30' || ty === 'account') debit += amt;
       }
-    } else if (kind === 'refund') {
+    } else if (kind === 'refund' || kind === 'tradein') {
       for (var m = 0; m < tenders.length; m++) {
         if (String(tenders[m].type || '') === 'store_credit') credit += num_(tenders[m].amount);
       }
@@ -3342,6 +3350,7 @@ function customerStatement_(session, params) {
     var label = kind === 'sale' ? 'Sale'
       : kind === 'refund' ? 'Refund'
       : kind === 'payment' ? 'Payment received'
+      : kind === 'tradein' ? 'Trade-in'
       : isCashOutKind_(kind) ? CASH_OUT_KINDS[String(kind)]
       : String(kind || 'sale');
     var detail = itemNames.slice(0, 3).join(', ');
@@ -3404,7 +3413,7 @@ function receivables_(session) {
           if (ty === 'store_credit') credit -= amt;
           else if (ty === 'net30' || ty === 'account') account += amt;
         }
-      } else if (kind === 'refund') {
+      } else if (kind === 'refund' || kind === 'tradein') {
         for (var m = 0; m < tenders.length; m++) {
           if (String(tenders[m].type || '') === 'store_credit') credit += num_(tenders[m].amount);
         }
@@ -3826,7 +3835,7 @@ function reports_(session, params) {
   var byProduct = Object.create(null);
   var byCustomerTx = Object.create(null);
   var byChannel = Object.create(null);
-  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0, discounts: 0, approvedDiscounts: 0 };
+  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0, discounts: 0, approvedDiscounts: 0, tradeIns: 0, tradeInCount: 0 };
 
   function costOf_(t) {
     var items = itobjs_(t.items_json);
@@ -3967,6 +3976,15 @@ function reports_(session, params) {
         dje.amount -= num_(tenders[dj].amount);
         dje.count += 1;
       }
+    } else if (kind === 'tradein') {
+      /* stock bought from a customer: money out, never a sale or a cost of one */
+      summary.tradeIns += num_(t.grand_total);
+      summary.tradeInCount += 1;
+      for (var tn = 0; tn < tenders.length; tn++) {
+        var tne = byTender[String(tenders[tn].type || 'cash')] || (byTender[String(tenders[tn].type || 'cash')] = { amount: 0, count: 0 });
+        tne.amount -= num_(tenders[tn].amount);
+        tne.count += 1;
+      }
     } else if (kind === 'payment') {
       summary.collections += num_(t.grand_total);
       c.sales += num_(t.grand_total); c.count += 0;
@@ -4021,6 +4039,8 @@ function reports_(session, params) {
       depositsApplied: round2_(summary.depositsApplied),
       depositsRefunded: round2_(summary.depositsRefunded),
       depositsHeld: depositsHeld_(),
+      tradeIns: round2_(summary.tradeIns),
+      tradeInCount: summary.tradeInCount,
       netRevenue: summary.grossSales - summary.refunds - summary.payouts - summary.pickups - summary.expenses,
       salesCount: summary.salesCount,
       units: summary.units,
@@ -4248,6 +4268,10 @@ function accounting_(session, params) {
       e = entry(t.created_at, 'deposit_refund', ref, 'Deposit refunded on ' + String(t.counterparty || ''));
       post(e, '2100', grossC);
       tenders(e, t, -1, grossC);
+    } else if (kind === 'tradein') {
+      e = entry(t.created_at, 'tradein', ref, 'Trade-in bought from ' + String(t.counterparty || ''));
+      post(e, '1200', grossC);
+      tenders(e, t, -1, grossC);
     } else if (kind === 'purchase') {
       e = entry(t.created_at, 'purchase', ref, String(t.note || 'Stock received') + (t.counterparty ? ' · ' + String(t.counterparty) : ''));
       post(e, '1200', grossC);
@@ -4400,11 +4424,15 @@ function inventoryAging_(session) {
   }
 
   var serialAvailable = {};
+  /* a traded-in device carries its own cost; the rest are at the product's */
+  var serialCostKnown = {}, serialCostUnknown = {};
   var serRows = readRows_('Serials', SERIAL_HEADERS);
   for (var s = 0; s < serRows.length; s++) {
     if (String(serRows[s].status) !== 'IN_STOCK') continue;
     var spid = String(serRows[s].product_id);
     serialAvailable[spid] = (serialAvailable[spid] || 0) + 1;
+    if (num_(serRows[s].cost) > 0) serialCostKnown[spid] = (serialCostKnown[spid] || 0) + num_(serRows[s].cost);
+    else serialCostUnknown[spid] = (serialCostUnknown[spid] || 0) + 1;
   }
 
   var summary = {
@@ -4427,7 +4455,9 @@ function inventoryAging_(session) {
     var parsed = Date.parse(lastInTs);
     if (!isNaN(parsed)) ageDays = Math.max(0, Math.floor((nowMs - parsed) / dayMs));
     var bucket = ageDays >= 90 ? 'd90' : ageDays >= 60 ? 'd60' : ageDays >= 30 ? 'd30' : 'current';
-    var value = round2_(onHand * num_(p.cost_price));
+    var value = isSerialized
+      ? round2_((serialCostKnown[String(p.id)] || 0) + (serialCostUnknown[String(p.id)] || 0) * num_(p.cost_price))
+      : round2_(onHand * num_(p.cost_price));
 
     items.push({
       id: String(p.id),
@@ -5558,6 +5588,7 @@ function repairParts_(session, payload) {
         var qty = Math.max(1, Math.floor(num_(ln.quantity) || 1));
         var price = Math.max(0, num_(ln.unitPrice));
         var serial = String(ln.serialNumber || '').trim();
+        var partCost = num_(prod.cost_price);
         var isService = String(prod.item_type) === 'service';
 
         if (String(prod.is_serialized) === '1') {
@@ -5569,6 +5600,7 @@ function repairParts_(session, payload) {
           }
           if (!found) throw statusError_(404, 'Serial not found: ' + serial);
           if (String(found.status) !== 'IN_STOCK') throw statusError_(409, 'Already gone: ' + serial);
+          if (num_(found.cost) > 0) partCost = num_(found.cost);
           serialPatches[String(found.id)] = { status: 'SOLD', tx_id: 'repair:' + id, updated_at: stamp };
           found.status = 'SOLD';
           productPatches[String(prod.id)] = { on_hand: Math.max(0, num_(prod.on_hand) - qty), updated_at: stamp };
@@ -5582,7 +5614,7 @@ function repairParts_(session, payload) {
 
         var line = {
           productId: String(prod.id), name: String(prod.name || ''), sku: String(prod.sku || ''),
-          quantity: qty, unitPrice: round2_(price), unitCost: num_(prod.cost_price),
+          quantity: qty, unitPrice: round2_(price), unitCost: partCost,
           serialNumber: serial, fittedAt: stamp, fittedBy: String(session.uid || ''),
         };
         parts.push(line);
@@ -6089,6 +6121,166 @@ function repairDepositRefund_(session, payload) {
 }
 
 /* ------------------------------------------------------------------ *
+ *  Trade-ins (v1.44.0)
+ *
+ *  The shop buys a used device from a customer. The device joins stock under
+ *  its IMEI, and its cost is exactly what was paid for it: a cost recorded on
+ *  that one serial, not averaged into the product, so the margin when it is
+ *  sold again is the real one. The seller is paid in cash from the drawer or
+ *  in store credit, which they can spend on the spot.
+ *
+ *  Second-hand buying needs a record of who sold it: a customer, the kind of
+ *  ID that was checked and the last few characters of it - never the whole
+ *  document number. A used device is resold with at most 30 days' warranty;
+ *  the one-year cover is for brand-new hardware only.
+ *
+ *  Online only, like repair money: the IMEI check has to see the whole shop.
+ * ------------------------------------------------------------------ */
+
+var TRADEIN_HEADERS = ['id', 'store_id', 'tradein_no', 'customer_id', 'seller_name', 'id_type', 'id_ref',
+  'product_id', 'product_name', 'serial_number', 'condition', 'notes', 'amount', 'paid_by',
+  'tx_id', 'user_id', 'approved_by', 'created_at'];
+var TRADEIN_CONDITIONS = { like_new: 'Like new', good: 'Good', fair: 'Fair', faulty: 'Faulty' };
+var TRADEIN_ID_TYPES = { driving_licence: 'Driving licence', passport: 'Passport', national_id: 'National ID', other: 'Other ID' };
+var TRADEIN_PAY = { cash: 1, store_credit: 1 };
+var USED_WARRANTY_MAX = 30;
+
+function formatTradeInNo_(n) {
+  var digits = String(Math.max(0, Math.floor(num_(n))));
+  while (digits.length < RECEIPT_PAD) digits = '0' + digits;
+  return 'Orison-T' + digits;
+}
+
+function tradeIn_(session, payload) {
+  payload = payload || {};
+  var serialNumber = String(payload.serialNumber || '').trim();
+  /* the approval names the IMEI, so one given for another device cannot be spent here */
+  var approval = approvalOrRole_(session, payload, 'tradein', String(payload.ref || ''));
+  if (approval && String(approval.r).split('|')[0] !== serialNumber) throw statusError_(403, 'The approval is not valid for this - ask again');
+
+  var productId = String(payload.productId || '');
+  var customerId = String(payload.customerId || '');
+  var condition = String(payload.condition || '');
+  var idType = String(payload.idType || '');
+  var idRef = String(payload.idRef || '').replace(/\s+/g, '').toUpperCase();
+  var paidBy = String(payload.paidBy || '');
+  var notes = String(payload.notes || '').trim().slice(0, 300);
+  var amountC = cents_(payload.amount);
+
+  if (!serialNumber || serialNumber.length > 40) throw statusError_(400, 'Enter the device IMEI or serial number');
+  if (!Object.prototype.hasOwnProperty.call(TRADEIN_CONDITIONS, condition)) throw statusError_(400, 'Pick the device condition');
+  if (!(amountC > 0)) throw statusError_(400, 'Enter what the shop is paying for it');
+  if (!Object.prototype.hasOwnProperty.call(TRADEIN_PAY, paidBy)) throw statusError_(400, 'Pay in cash or store credit');
+  if (!customerId) throw statusError_(400, 'A trade-in needs the seller as a customer');
+  if (!Object.prototype.hasOwnProperty.call(TRADEIN_ID_TYPES, idType)) throw statusError_(400, 'Record the ID that was checked');
+  if (idRef.length < 2 || idRef.length > 6) throw statusError_(400, 'Enter the last 2 to 6 characters of the ID - not the whole number');
+  if (approval && approval.m != null && amountC > cents_(approval.m)) throw statusError_(403, 'That is more than was approved');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var product = null;
+    var prodRows = readRows_('Products', PRODUCT_HEADERS);
+    for (var i = 0; i < prodRows.length; i++) {
+      if (String(prodRows[i].id) === productId) { product = prodRows[i]; break; }
+    }
+    if (!product || String(product.active) !== '1') throw statusError_(404, 'Product not found');
+    if (String(product.is_serialized) !== '1') throw statusError_(400, 'Trade-ins go into a product tracked by IMEI or serial');
+
+    var customer = null;
+    var custRows = readRows_('Customers', CUSTOMERS_HEADERS);
+    for (var c = 0; c < custRows.length; c++) {
+      if (String(custRows[c].id) === customerId) { customer = custRows[c]; break; }
+    }
+    if (!customer) throw statusError_(404, 'Customer not found');
+
+    var serialRows = readRows_('Serials', SERIAL_HEADERS);
+    var existing = null;
+    for (var s = 0; s < serialRows.length; s++) {
+      if (String(serialRows[s].serial_number).toLowerCase() === serialNumber.toLowerCase()) { existing = serialRows[s]; break; }
+    }
+    if (existing && String(existing.status) !== 'SOLD') throw statusError_(409, 'That IMEI is already in stock here');
+    if (approval && !consumeApproval_(approval)) throw statusError_(409, 'That approval has already been used');
+
+    var store = getStore_();
+    var now = new Date().toISOString();
+    var k = kv_();
+    var seq = num_(k.tradein_seq);
+    if (!(seq >= 0)) seq = 0;
+    setKv_('tradein_seq', seq + 1);
+    var tradeInNo = formatTradeInNo_(seq + 1);
+    var amount = amountC / 100;
+    var sellerName = String(customer.name || '');
+
+    /* a device the shop once sold keeps its one serial row: it simply comes back */
+    var serialFields = { product_id: productId, status: 'IN_STOCK', tx_id: '', updated_at: now, cost: amount, source: 'tradein' };
+    if (existing) {
+      applyPatches_('Serials', SERIAL_HEADERS, 'id', { [String(existing.id)]: serialFields });
+      serialNumber = String(existing.serial_number);
+    } else {
+      appendRows_('Serials', SERIAL_HEADERS, [Object.assign({ id: Utilities.getUuid(), serial_number: serialNumber }, serialFields)]);
+    }
+    applyPatches_('Products', PRODUCT_HEADERS, 'id', { [productId]: { updated_at: now } });
+
+    var txId = Utilities.getUuid();
+    appendRows_('Transactions', TX_HEADERS, [{
+      id: txId, store_id: store.id, user_id: String(session.uid || ''), device_id: 'server',
+      client_tx_id: 'tin-' + txId.slice(0, 8), kind: 'tradein', original_client_tx: '',
+      counterparty: sellerName, grand_total: amount, status: 'COMPLETED',
+      tenders_json: JSON.stringify([{ type: paidBy, amount: amount }]), items_json: '[]',
+      note: 'Trade-in ' + tradeInNo + ': ' + String(product.name || '') + ' · ' + serialNumber, created_at: now,
+      subtotal: '', tax_amount: '', discount_pct: '', customer_id: customerId,
+      receipt_no: '', channel: 'in_store', external_ref: tradeInNo,
+      approved_by: approval ? String(approval.u) : '',
+    }]);
+    var id = Utilities.getUuid();
+    appendRows_('TradeIns', TRADEIN_HEADERS, [{
+      id: id, store_id: store.id, tradein_no: tradeInNo, customer_id: customerId, seller_name: sellerName,
+      id_type: idType, id_ref: idRef, product_id: productId, product_name: String(product.name || ''),
+      serial_number: serialNumber, condition: condition, notes: notes, amount: amount, paid_by: paidBy,
+      tx_id: txId, user_id: String(session.uid || ''), approved_by: approval ? String(approval.u) : '', created_at: now,
+    }]);
+    logAudit_(session, 'tradein.create', 'tradein', id,
+      tradeInNo + ': bought ' + String(product.name || '') + ' ' + serialNumber + ' (' + TRADEIN_CONDITIONS[condition] + ') from '
+      + sellerName + ' for ' + amount.toFixed(2) + (paidBy === 'cash' ? ' cash' : ' store credit')
+      + (existing ? ' - a device sold here before' : '')
+      + (approval ? ' (approved by ' + approval.approverName + ')' : ''), '');
+    return {
+      id: id, tradeInNo: tradeInNo, transactionId: txId, amount: amount, paidBy: paidBy,
+      serialNumber: serialNumber, productId: productId, productName: String(product.name || ''),
+      soldHereBefore: !!existing, customer: customerDto_(customer), createdAt: now,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function tradeIns_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var q = String((params && params.q) || '').trim().toLowerCase();
+  var rows = readRows_('TradeIns', TRADEIN_HEADERS);
+  rows.sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); });
+  var statusBySn = Object.create(null);
+  var serialRows = readRows_('Serials', SERIAL_HEADERS);
+  for (var s = 0; s < serialRows.length; s++) statusBySn[String(serialRows[s].serial_number)] = String(serialRows[s].status);
+  var out = [];
+  for (var i = 0; i < rows.length && out.length < 200; i++) {
+    var r = rows[i];
+    if (q && (String(r.tradein_no) + ' ' + String(r.seller_name) + ' ' + String(r.serial_number) + ' ' + String(r.product_name)).toLowerCase().indexOf(q) < 0) continue;
+    out.push({
+      id: String(r.id), tradeInNo: String(r.tradein_no), createdAt: String(r.created_at),
+      sellerName: String(r.seller_name), customerId: String(r.customer_id),
+      idType: String(r.id_type), idRef: String(r.id_ref),
+      productId: String(r.product_id), productName: String(r.product_name), serialNumber: String(r.serial_number),
+      condition: String(r.condition), notes: String(r.notes), amount: num_(r.amount), paidBy: String(r.paid_by),
+      inStock: statusBySn[String(r.serial_number)] === 'IN_STOCK',
+      userName: auditName_(String(r.user_id)),
+    });
+  }
+  return { tradeIns: out };
+}
+
+/* ------------------------------------------------------------------ *
  *  Shifts: soft lifecycle for till reconciliation.
  *
  *  open  → float + opening frame. close → the cashier declares the physical
@@ -6221,6 +6413,11 @@ function shiftExpectedCash_(shift, allTxRows) {
            same money is never counted twice. */
         for (var dq = 0; dq < tenders.length; dq++) {
           if (String(tenders[dq].type || '') === 'cash') expected += num_(tenders[dq].amount);
+        }
+      } else if (kind === 'tradein') {
+        /* the shop bought a device: cash paid out of the drawer */
+        for (var tq = 0; tq < tenders.length; tq++) {
+          if (String(tenders[tq].type || '') === 'cash') expected -= num_(tenders[tq].amount);
         }
       } else if (kind === 'deposit_refund') {
         for (var dr = 0; dr < tenders.length; dr++) {
@@ -7238,7 +7435,7 @@ function driveExport_(session, payload, params) {
   var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note' + (isStore ? ',cost,gross_profit' : '') + '\n';
   var sales = 0, refunds = 0, payouts = 0, pickups = 0, expenses = 0, collections = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
   var cashDrawer = 0, cardTotal = 0;
-  var depositsIn = 0, depositsApplied = 0, depositsRefunded = 0;
+  var depositsIn = 0, depositsApplied = 0, depositsRefunded = 0, tradeIns = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
     var k = String(t.kind || 'sale');
@@ -7250,6 +7447,7 @@ function driveExport_(session, payload, params) {
     else if (k === 'payment') collections += v;
     else if (k === 'deposit') depositsIn += v;
     else if (k === 'deposit_refund') depositsRefunded += v;
+    else if (k === 'tradein') tradeIns += v;
     else if (k !== 'purchase') sales += v;
 
     /* What the drawer should actually hold is a TENDER question, not a kind
@@ -7262,7 +7460,7 @@ function driveExport_(session, payload, params) {
       if (dty === 'card') cardTotal += (k === 'refund' || k === 'deposit_refund' ? -dta : dta);
       if (dty === 'deposit' && k === 'sale') depositsApplied += dta;
       if (dty !== 'cash') continue;
-      if (k === 'refund' || k === 'deposit_refund') cashDrawer -= dta;
+      if (k === 'refund' || k === 'deposit_refund' || k === 'tradein') cashDrawer -= dta;
       else if (k === 'sale' || k === 'payment' || k === 'deposit') cashDrawer += dta;
     }
     if (isCashOutKind_(k)) cashDrawer -= v;
@@ -7316,6 +7514,7 @@ function driveExport_(session, payload, params) {
   csv += ',,DEPOSITS IN,,' + String(round2_(depositsIn)) + ',\n';
   csv += ',,DEPOSITS APPLIED,,' + String(round2_(depositsApplied)) + ',\n';
   csv += ',,DEPOSITS REFUNDED,,' + String(round2_(depositsRefunded)) + ',\n';
+  csv += ',,TRADE-INS BOUGHT,,' + String(round2_(tradeIns)) + ',\n';
   csv += ',,CARD,,' + String(round2_(cardTotal)) + ',\n';
   csv += ',,CASH IN DRAWER,,' + String(round2_(cashDrawer)) + ',\n';
   csv += ',,NET CASH,,' + String(net) + ',\n';

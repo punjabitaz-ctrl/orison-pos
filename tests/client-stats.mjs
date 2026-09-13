@@ -59,6 +59,7 @@ test('signedNet() — money in minus money out', () => {
   assert.equal(signedNet({ kind: 'sale', grandTotal: 100 }), 100);
   assert.equal(signedNet({ kind: 'payment', grandTotal: 40 }), 40, 'a collection is cash in');
   assert.equal(signedNet({ kind: 'refund', grandTotal: 25 }), -25);
+  assert.equal(signedNet({ kind: 'tradein', grandTotal: 180 }), -180, 'buying a device is money out');
   assert.equal(signedNet({ kind: 'payout', grandTotal: 60 }), -60);
   assert.equal(signedNet({ grandTotal: 10 }), 10, 'legacy blank kind counts as a sale');
 });
