@@ -6,6 +6,8 @@
 > edits) and #6 (channel gate).
 > ✅ v1.37.0 closed Cashiers #1 (manager approval) and Admin #2 (discount
 > limits and reporting).
+> ✅ v1.38.0 closed Cashiers #2 (create customers), #3 (balance and credit
+> limits) and #4 (whole-shop lookup).
 
 **Date:** 2026-09-12 · **Baseline:** v1.35.0 · **Method:** every route in
 `backend/Code.gs` `dispatch_` was read for its `requireRole_` gate and any role

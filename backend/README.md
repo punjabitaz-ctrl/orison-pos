@@ -50,7 +50,7 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 - **Receipt numbers** (v1.22.0): `Orison-S000001`, gap-free. The number is allocated at push, inside the lock that appends the sale, and only for sales and refunds. The prefix is `Meta` `receipt_prefix`.
 - **Channels** (v1.27.0): `channel` (`in_store`, `online`, `marketplace`, `phone`, `other`) and `external_ref` on every transaction. Reports carry `byChannel`. A non-`in_store` sale from a cashier is refused (v1.36.0).
 - **Conflict registry:** `SERIAL_CLAIM`, `DUPLICATE_CLIENT` and `CLOCK_SKEW` rows in `Conflicts`, via `/api/conflicts` and `/api/conflicts/review` (`dismiss` | `resolve`), admin and manager.
-- **History:** `/api/transactions`, capped at 100 rows with keyset paging (`cursor`) and server-side search (`q`: receipt number, client id, customer, item, IMEI, amount). A cashier gets their own rows.
+- **History:** `/api/transactions`, capped at 100 rows with keyset paging (`cursor`) and server-side search (`q`: receipt number, client id, customer, item, IMEI, amount). A cashier gets their own rows; with `lookup=1` and a query of at least four characters, a cashier searches every sale and refund in the shop (20 rows, `own` flag, no cost or margin).
 - **Cash drawer** (v1.34.0): `/api/drawer/open` records a no-sale open with its reason and terminal in the audit log. Admin and manager act alone; a cashier needs a single-use `drawer` approval (v1.37.0).
 
 ### Repairs (v1.31.0–v1.32.0)
@@ -68,7 +68,10 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 
 ### Customers and receivables
 
-- `/api/customers` (search, any role) and `/api/admin/customers` (create, admin and manager).
+- `/api/customers` (search) and `/api/admin/customers` (create) are open to any role since v1.38.0. Only a manager or admin can set a credit limit when creating a customer.
+- `/api/customers/balance?customerId=` (any role): `owes`, `storeCredit`, `balance`, `creditLimit`, `available`. Totals only.
+- `/api/admin/customers/patch` (admin, manager): `creditLimit` (0 = none), `name`, `phone`, `email`, `note`. Audited as `customer.update`.
+- **Credit limits at push:** a Net-30 charge that takes `owes` past `credit_limit` is refused with `credit_over_limit` unless the sale carries a `credit` approval for at least the overage. Earlier sales in the same batch count. A sale can carry `approvals: { discount, credit }`.
 - `/api/customers/ledger`, `/api/customers/receivables` (30/60/90+ aging) and `/api/customers/statement` (chronological debit and credit lines, with a running balance that closes on the ledger balance). All three are admin and manager.
 
 ### Shifts and time clock
@@ -121,7 +124,7 @@ Tabs are created, and new columns added, on first use; nothing needs creating by
 | `Products` | id, sku, upc, name, category, cost_price, retail_price, is_serialized, on_hand, item_type (`product`/`service`), locked, reorder_point, last_sold_at, active, updated_at, taxable |
 | `Serials` | id, product_id, serial_number, status (`IN_STOCK`/`SOLD`/`VOIDED`), tx_id, updated_at |
 | `Transactions` | id, store_id, user_id, device_id, client_tx_id, kind, original_client_tx, counterparty, grand_total, status, tenders_json, items_json, note, created_at, subtotal, tax_amount, discount_pct, customer_id, receipt_no, channel, external_ref, approved_by |
-| `Customers` | id, store_id, name, phone, email, note, created_at |
+| `Customers` | id, store_id, name, phone, email, note, created_at, credit_limit |
 | `Shifts` | id, store_id, user_id, device_id, opened_at, closed_at, opening_float, cash_expected, cash_declared, over_short, tenders_json, note, status |
 | `TimeClock` | id, store_id, user_id, device_id, clock_in, clock_out, minutes, note, status |
 | `Conflicts` | id, store_id, type, serial_number, device_id, loser_client_tx, winner_tx_id, summary, status, created_at, reviewed_at, reviewed_by, dedupe_key |
@@ -165,7 +168,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 795 checks
+npm run test:backend   # 821 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.

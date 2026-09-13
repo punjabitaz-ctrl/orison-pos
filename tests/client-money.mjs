@@ -469,3 +469,21 @@ describe('refund price of a discounted sale', async () => {
     assert.equal(paidUnitPrice({ unitPrice: 20, discountPct: 50 }), 20);
   });
 });
+
+/* ── credit limits (v1.38.0) ───────────────────────────────── */
+
+describe('creditOverage()', async () => {
+  const { creditOverage } = await import('../public/js/money.js');
+
+  it('is zero with no limit, however much is owed', () => {
+    assert.equal(creditOverage({ owes: 9000, creditLimit: 0 }, 500), 0);
+    assert.equal(creditOverage(null, 500), 0);
+  });
+  it('is zero within the limit', () => {
+    assert.equal(creditOverage({ owes: 100, creditLimit: 250 }, 150), 0);
+  });
+  it('is the amount past the limit', () => {
+    assert.equal(creditOverage({ owes: 200, creditLimit: 250 }, 100), 50);
+    assert.equal(creditOverage({ owes: 0.1, creditLimit: 0.2 }, 0.2), 0.1);
+  });
+});

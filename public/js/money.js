@@ -121,6 +121,15 @@ export function needsDiscountApproval(items, orderPct, role, store) {
   return deepestDiscountPct(items, orderPct) > discountLimit(role, store) + 0.001;
 }
 
+/* How much of a Net-30 charge would go past the customer's credit limit.
+   A limit of 0 means none. Positive means a manager has to approve. */
+export function creditOverage(balance, terms) {
+  const limit = Number(balance && balance.creditLimit) || 0;
+  if (limit <= 0) return 0;
+  const owes = Number(balance && balance.owes) || 0;
+  return Math.max(0, round2(owes + (Number(terms) || 0) - limit));
+}
+
 export async function createRefund({ original, items, method, note, user, clientTxId: presetId, approval, cap }) {
   let grandTotal = round2(items.reduce((s, it) => s + (it.unitPrice || 0) * (it.quantity || 1), 0));
   if (cap != null && Number(cap) >= 0) grandTotal = Math.min(grandTotal, round2(cap));

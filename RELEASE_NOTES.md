@@ -7,7 +7,29 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.37.0 — a manager approves at the till
+## Latest: v1.38.0 — cashiers can serve account customers
+
+**2026-09-13.** Sprint 3 of 5.
+
+- **Cashiers can add a new customer** at checkout.
+- **Checkout shows what the customer owes**, their credit limit and what is
+  left, before anything is charged to account.
+- **Credit limits.** Managers set one on any customer. Going over it needs a
+  manager's approval at the till.
+- **Look up any sale in the shop** from History → *Whole shop*, to check a
+  return or a warranty claim. Cost and margin are never shown.
+
+**Validation:** backend-sim **PASS 821 / FAIL 0** · client units **PASS 474 /
+FAIL 0**. Checked in the browser: the balance line, the credit-limit approval
+and the whole-shop lookup.
+
+### Deploying
+
+**Backend redeploy required.** Existing customers start with no credit limit.
+
+---
+
+## v1.37.0 — a manager approves at the till
 
 **2026-09-13.** Sprint 2 of 5.
 

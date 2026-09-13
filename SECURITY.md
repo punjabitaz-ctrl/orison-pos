@@ -170,7 +170,7 @@ privileged action. The role is carried in the signed session token; because a
 role **change** revokes that user's sessions immediately, a promotion or
 demotion takes effect at the first request after the change (no 12-hour lag).
 
-Verified route by route against `Code.gs` at v1.37.0. The task-level view —
+Verified route by route against `Code.gs` at v1.38.0. The task-level view —
 what each role can actually do on screen, and what they cannot — is in
 [`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
 
@@ -185,14 +185,17 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/shifts/open`, `/close`, `/api/timeclock/punch`, `/api/pin`, `/api/logout` | any signed-in user, own records only |
 | `/api/products`, `/api/sync/pull` | any; cost prices only to admin, manager |
 | `/api/config` | any; the staff roster only to admin, manager |
-| `/api/customers` (search) | any signed-in role |
+| `/api/customers` (search), `/api/customers/balance` (totals only), `/api/admin/customers` (create; no credit limit) | any signed-in role |
+| `/api/admin/customers/patch` (credit limit, details) | admin, manager |
+| `/api/transactions?lookup=1` | a cashier, store-wide, sales and refunds only, ≥4-character search, 20 rows, no cost or margin |
+| `/api/sync/push` — Net-30 charge past a customer's credit limit | needs a `credit` approval covering the overage (`credit_over_limit`) |
 | `/api/repairs`, `/detail`, `/parts`, `/labour`, `/status`, `/deposit`, `/collect` | any signed-in role (all audited) |
 | `/api/repairs/deposit-refund` | admin, manager; a cashier with a single-use `deposit_refund` approval for that ticket |
 | `/api/repairs/void` | admin |
 | `/api/drawer/open` | admin, manager; a cashier with a single-use `drawer` approval (audited) |
 | `/api/approve` | any signed-in role asks; the approver must be a different, active manager or admin, and within their own discount limit |
 | `/api/reports`, `/api/price-history`, `/api/inventory/aging`, `/api/inventory/reorder` | admin, manager |
-| `/api/customers/ledger`, `/receivables`, `/statement`, `/api/admin/customers` | admin, manager |
+| `/api/customers/ledger`, `/receivables`, `/statement` | admin, manager |
 | `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` | admin, manager |
 | `/api/purchase-orders`, `/detail`, `/receive` | admin, manager |
 | `/api/conflicts`, `/api/conflicts/review`, `/api/admin/unlock` | admin, manager |
@@ -231,7 +234,7 @@ target, a summary and the terminal.
 - **Money:** refunds, paid out, cash pick-ups, staff expenses and payments on account, written as they sync; no-sale drawer opens; Drive exports.
 - **Stock:** stock adjustments with a reason; stock takes; product create and edit, field by field; bulk repricing; serials added; suppliers; purchase orders created, received and cancelled.
 - **Repairs:** every repair action.
-- **People and access:** manager approvals; sign-ins; the attempt that trips a lockout; lockout releases; new staff; staff edits; PIN resets; revoke-all; terminal revocations; customer creation; conflict reviews.
+- **People and access:** manager approvals; customer changes (credit limits); sign-ins; the attempt that trips a lockout; lockout releases; new staff; staff edits; PIN resets; revoke-all; terminal revocations; customer creation; conflict reviews.
 - **The business:** store settings, scheduled reports and backups.
 
 **Deliberately not recorded:**

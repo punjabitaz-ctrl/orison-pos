@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.37.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.38.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -30,7 +30,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Till shifts**: open with a float, close with a count in the store's own notes and coins, and see *declared / expected / over-or-short*.
 - **Cash out by reason**: Paid Out, Cash Pick Up and Staff Expense are separate kinds, and each is split in reports and the export.
 - **Refunds**: validated against the original sale and any earlier refunds, with stock returned, for what the customer actually paid. A cashier refunds with a manager's approval.
-- **Customers**: Net-30 accounts, a per-customer ledger, collections, receivables with 30/60/90+ day aging, and printable or CSV statements.
+- **Customers**: Net-30 accounts with optional credit limits, a per-customer ledger, collections, receivables with 30/60/90+ day aging, and printable or CSV statements. Any cashier can add a customer at checkout and see what they owe before charging to account; going past a credit limit needs a manager's approval.
 - **Audit log** (admin only): append-only, filterable, exportable. It covers refunds and cash-outs, stock adjustments with a reason, product and price edits, purchase orders, staff and PIN changes, sign-ins and lockouts, repairs and drawer opens.
 
 ### Stock
@@ -51,7 +51,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Reports**: gross sales, refunds, cash out by reason, collections, deposits, net revenue, gross profit at the cost captured at sale, and average ticket. Broken down by day, category, cashier, tender and channel, with CSV export.
 - **Scheduled reports**: daily, weekly and monthly emails to the admins you choose. Every cadence ships off.
 - **Nightly backups** to a Drive folder **POS Backup**. The last 30 nights and the first of each of the last 12 months are kept.
-- **History search**: find sales by receipt number, customer, item, IMEI or amount. Pages load 100 at a time, never more.
+- **History search**: find sales by receipt number, customer, item, IMEI or amount. Pages load 100 at a time, never more. Cashiers see their own sales, and can switch to *Whole shop* to look up any sale for a return or warranty check.
 
 ### Staff and security
 
@@ -154,8 +154,8 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 ## Development
 
 ```bash
-npm test              # backend logic vs an in-memory Apps Script mock (795 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (471 checks)
+npm test              # backend logic vs an in-memory Apps Script mock (821 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (474 checks)
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
 npm run test:pdf      # receipt PDF/share smoke test in a headless browser
 npm run test:all      # all four
@@ -201,7 +201,7 @@ One feature = one validated revision = one git tag. Every release bumps `public/
 - Auth and session data live in each browser's IndexedDB and are **not** shared across devices. Every device syncs to the same backend.
 - Sheet writes are serialized with Apps Script `LockService`. That is fine for one store or a few; it is not built for heavy scale.
 - **Roles, in short**:
-  - **Cashiers**: sell, run their own shift and clock, and handle repairs. With a manager's approval they also refund, give over-limit discounts, open the drawer without a sale and give deposits back.
+  - **Cashiers**: sell, run their own shift and clock, and handle repairs. They add customers, see a customer's balance at checkout and look up any sale in the shop. With a manager's approval they also refund, give over-limit discounts, charge past a credit limit, open the drawer without a sale and give deposits back.
   - **Managers**: add refunds, cash out, customers and ledgers, products and stock, purchase orders, reports, conflict review and lockout release.
   - **Admins alone**: staff, PINs, terminals, store settings, suppliers, bulk pricing, stock takes, PO cancellation, repair voids, backups, scheduled reports and the audit log.
 - Still English by design: CSV column headers, the Sheets workbook and report emails.

@@ -170,6 +170,8 @@ web-accessible status page without app load.
 | Reprice / count stock | Products → Tools → *Bulk price* or *Stock take* (**admin only**). |
 | See why a price changed | Products → 📈 on any item (admin/manager). |
 | Send a customer their statement | Customers → ledger → *Statement* (admin/manager). |
+| Set a customer's credit limit | Customers → the customer → *Set credit limit* (admin/manager). 0 means none; going over at the till needs approval. |
+| Check a return rung on another till | History → tick *Whole shop* → search the receipt number or IMEI (any cashier). |
 | See what's sat in stock too long | Products → *Aging* (admin/manager). |
 | Refund a sale | History → the sale → *Refund items*. A cashier's refund asks a manager to approve on the spot; **services are never refundable**. |
 | Approve at the till | When a cashier's screen asks for approval, the manager types **their own** email and PIN. It needs a connection. |

@@ -7,7 +7,7 @@ import { $t, $tn, N_ } from '../lang.js';
 
 import { fmt, fmtFor, esc, toast, beep } from '../ui.js';
 import { enqueueTransaction, pushImmediate, newClientTxId } from '../sync.js';
-import { saleTotals, round2, deepestDiscountPct, discountLimit } from '../money.js';
+import { saleTotals, round2, deepestDiscountPct, discountLimit, creditOverage } from '../money.js';
 import { api } from '../api.js';
 import { publishCheckout, publishThanks, publishIdle } from '../customer-display.js';
 import { screenHead } from '../components.js';
@@ -83,7 +83,31 @@ export const screen = {
     let amount = 0;
     let customer = null;
     const role = (state.user || {}).role || 'cashier';
-    const canManage = role === 'admin' || role === 'manager';
+
+    /* What the chosen customer already owes, and their headroom, so the
+       cashier knows before charging to account (v1.38.0). */
+    function balanceLine() {
+      const b = customer && customer.balance;
+      if (!b) return customer && customer.balanceError ? `<p class="co-bal muted">${esc($t('Balance unavailable offline'))}</p>` : '';
+      const parts = [$t('Owes {amount}', { amount: fmt(b.owes) })];
+      if (b.creditLimit > 0) parts.push($t('limit {limit} · {available} available', { limit: fmt(b.creditLimit), available: fmt(b.available) }));
+      const over = creditOverage(b, termsAmount());
+      return `<p class="co-bal ${over > 0 ? 'co-bal-over' : 'muted'}">${esc(parts.join(' · '))}${over > 0
+        ? ` — ${esc($t('{amount} over the limit, a manager approves it', { amount: fmt(over) }))}` : ''}</p>`;
+    }
+
+    function termsAmount() {
+      return round2(tenders.filter((t) => t.type === 'net30').reduce((s, t) => s + t.amount, 0));
+    }
+
+    async function loadBalance(c) {
+      try {
+        c.balance = await api.get('/api/customers/balance?customerId=' + encodeURIComponent(c.id));
+      } catch (_) {
+        c.balanceError = true;
+      }
+      if (customer === c) render();
+    }
 
     function overLimit() {
       return deepestDiscountPct(sale.items, sale.orderPct) > discountLimit(role, state.store) + 0.001;
@@ -158,7 +182,8 @@ export const screen = {
             <div class="co-cust-chip">
               <span>${esc(customer.name)}</span>
               <button class="cl-remove" id="custClear" aria-label="${$t('Clear customer')}">✕</button>
-            </div>` : ''}
+            </div>
+            ${balanceLine()}` : ''}
           </section>
 
           <section class="co-items">
@@ -304,7 +329,7 @@ export const screen = {
               <button class="cust-row" data-id="${esc(c.id)}" data-name="${esc(c.name)}">
                 ${esc(c.name)}<em class="muted">${esc(c.phone || c.email || '')}</em>
               </button>`).join('');
-            const create = canManage ? `<button class="cust-row cust-new" data-create="1" data-name="${esc(q)}">＋ ${esc($t('New customer: {name}', { name: q }))}</button>` : '';
+            const create = `<button class="cust-row cust-new" data-create="1" data-name="${esc(q)}">＋ ${esc($t('New customer: {name}', { name: q }))}</button>`;
             custResults.innerHTML = rows + create;
           }, 300);
         });
@@ -317,11 +342,13 @@ export const screen = {
               customer = { id: res.customer.id, name: res.customer.name };
               toast($t('Customer added'), 'ok', 1800);
               render();
+              loadBalance(customer);
             } catch (_) { toast($t('Could not add customer'), 'warn'); }
             return;
           }
           customer = { id: btn.dataset.id, name: btn.dataset.name };
           render();
+          loadBalance(customer);
         });
       }
       const custClear = root.querySelector('#custClear');
@@ -344,7 +371,7 @@ export const screen = {
       /* Over the seller's discount limit: a manager approves this sale, bound
          to its id, before anything is queued. Cancelling leaves the cart as is. */
       const clientTxId = newClientTxId();
-      let approval;
+      const approvals = {};
       if (overLimit()) {
         const { requestApproval } = await import('../approval-dialog.js');
         const pct = deepestDiscountPct(sale.items, sale.orderPct);
@@ -353,14 +380,26 @@ export const screen = {
           detail: $t('{pct}% off · total {amount}', { pct, amount: fmt(sale.total) }),
         });
         if (!granted) return;
-        approval = granted.approval;
+        approvals.discount = granted.approval;
+        toast($t('Approved by {name}', { name: granted.approver.name }), 'ok', 2200);
+      }
+      /* Past the customer's credit limit: a manager approves the overage. */
+      const over = customer && customer.balance ? creditOverage(customer.balance, termsAmount()) : 0;
+      if (over > 0) {
+        const { requestApproval } = await import('../approval-dialog.js');
+        const granted = await requestApproval({
+          action: 'credit', ref: clientTxId, amount: over,
+          detail: $t('{name} would owe {amount} over their limit', { name: customer.name, amount: fmt(over) }),
+        });
+        if (!granted) return;
+        approvals.credit = granted.approval;
         toast($t('Approved by {name}', { name: granted.approver.name }), 'ok', 2200);
       }
 
       beep('ok');
       await enqueueTransaction({
         clientTxId,
-        approval,
+        approvals,
         userId: state.user.id,
         cashier: `${state.user.firstName} ${state.user.lastName || ''}`,
         grandTotal: sale.total,

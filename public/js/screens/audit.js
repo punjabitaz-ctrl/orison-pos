@@ -57,6 +57,7 @@ export const ACTION_GROUPS = [
     { id: 'session.revoke_all', label: N_('Sessions revoked') },
     { id: 'device.revoke', label: N_('Terminal revoked') },
     { id: 'customer.create', label: N_('New customers') },
+    { id: 'customer.update', label: N_('Customer changes') },
     { id: 'conflict.review', label: N_('Conflict reviews') },
   ] },
   { label: N_('The business'), actions: [

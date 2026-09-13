@@ -37,6 +37,12 @@ export const screen = {
     let query = '';
     let matched = 0;
     let nextCursor = null;
+    /* A cashier's history is their own sales. "Whole shop" looks up any sale or
+       refund by receipt number, IMEI, customer or amount, to check a return or
+       a warranty claim (v1.38.0). Managers already see everything. */
+    const isManager = user.role === 'admin' || user.role === 'manager';
+    let wholeShop = false;
+    let lookupNote = '';
 
     /* The server searches and pages; a terminal never holds the whole ledger.
        `more` appends the next 100 rather than replacing what is on screen. */
@@ -44,6 +50,19 @@ export const screen = {
       try {
         const qs = ['limit=100'];
         if (query) qs.push('q=' + encodeURIComponent(query));
+        lookupNote = '';
+        if (wholeShop && !isManager) {
+          if (query.length < 4) {
+            serverTxs = [];
+            matched = 0;
+            nextCursor = null;
+            loaded = true;
+            lookupNote = $t('Type at least four characters to look up a sale');
+            render();
+            return;
+          }
+          qs.push('lookup=1');
+        }
         if (more && nextCursor) qs.push('cursor=' + encodeURIComponent(nextCursor));
         const res = await api.get('/api/transactions?' + qs.join('&'));
         matched = res.matched == null ? (res.transactions || []).length : res.matched;
@@ -67,6 +86,8 @@ export const screen = {
           items: t.items.map((i) => ({ productId: i.productId, name: i.name, quantity: i.quantity, unitPrice: i.unitPrice, discountPct: i.discountPct, serialNumber: i.serialNumber, unitCost: i.unitCost })),
           clientTxId: t.clientTxId,
           receiptNo: t.receiptNo || '',
+          approvedBy: t.approvedBy || '',
+          notMine: t.own === false,
         }));
         serverTxs = more ? serverTxs.concat(page) : page;
         loaded = true;
@@ -78,7 +99,7 @@ export const screen = {
 
     async function render() {
       const local = await idb.getAll('transactions');
-      const all = mergeById([...local, ...serverTxs]);
+      const all = wholeShop && !isManager ? serverTxs.slice() : mergeById([...local, ...serverTxs]);
       all.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
       const stat = {
@@ -99,7 +120,9 @@ export const screen = {
             <input id="hxSearch" type="search" placeholder="${$t('Receipt no., customer, item, IMEI or amount…')}"
                    value="${esc(query)}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
           </div>
+          ${isManager ? '' : `<label class="check hx-scope"><input id="hxWhole" type="checkbox" ${wholeShop ? 'checked' : ''}> ${$t('Whole shop')}</label>`}
         </div>
+        ${lookupNote ? `<p class="muted scr-note">${esc(lookupNote)}</p>` : ''}
         ${query ? `<p class="muted scr-note">${esc($tn('{n} match for “{query}”', '{n} matches for “{query}”', matched, { query }))} · <button class="linklike" id="hxClear">${$t('clear')}</button></p>` : ''}
         <div class="hx-list">
           ${all.length ? all.map((t) => {
@@ -109,6 +132,7 @@ export const screen = {
               <div class="hx-left">
                 <span class="hx-date">${humanDate(t.createdAt)}</span>
                 <span class="hx-cashier">${esc(t.cashier || '—')}</span>
+                ${t.notMine ? `<span class="k-chip k-payout">${esc($t('Another till'))}</span>` : ''}
                 <span class="hx-status st-${(t.status || 'PENDING').toLowerCase()}">${esc(statusLabel(t.status))}</span>
                 ${t.kind && t.kind !== 'sale' ? `<span class="k-chip ${k.cls}">${esc($t(k.label))}</span>` : ''}
               </div>
@@ -144,6 +168,12 @@ export const screen = {
         /* typing then re-rendering must not steal the caret away */
         if (query) { search.focus(); search.setSelectionRange(query.length, query.length); }
       }
+      const whole = root.querySelector('#hxWhole');
+      if (whole) whole.addEventListener('change', () => {
+        wholeShop = whole.checked;
+        nextCursor = null;
+        loadServer(false);
+      });
       const clear = root.querySelector('#hxClear');
       if (clear) clear.addEventListener('click', () => { query = ''; nextCursor = null; loadServer(false); });
       const more = root.querySelector('#hxMore');
@@ -173,6 +203,7 @@ export const screen = {
           <button class="icon-btn abs-close" data-x>✕</button>
           <h3>${k.sign < 0 ? '−' : ''}${fmt(t.total)} <span class="k-chip ${k.cls}">${esc($t(k.label))}</span></h3>
           <p class="muted">${esc(humanDate(t.createdAt))} · ${esc(t.cashier || '—')} · ${esc(statusLabel(t.status))}</p>
+          ${t.approvedBy ? `<p class="muted">🔑 ${esc($t('Approved by {name}', { name: t.approvedBy }))}</p>` : ''}
           ${t.originalClientTx ? `<p class="muted">${esc($t('refund of {ref}', { ref: t.originalClientTx }))}</p>` : ''}
           ${t.counterparty ? `<p class="muted">${esc(t.counterparty)}</p>` : ''}
           ${t.customer ? `<p class="muted">${esc($t('Customer: {name}', { name: t.customer }))}</p>` : ''}

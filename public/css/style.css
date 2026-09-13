@@ -1514,3 +1514,5 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; in
 .approval h3 { display: flex; gap: 8px; align-items: center; }
 .approval .apv-detail { font-weight: 700; margin: 4px 0 8px; }
 .approval .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.co-bal { font-size: 13px; margin: 6px 0 0; }
+.co-bal-over { color: var(--danger); font-weight: 700; }

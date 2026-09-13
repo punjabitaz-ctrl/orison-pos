@@ -5,6 +5,45 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.0] — 2026-09-13
+
+Sprint 3 of the staff-gaps program: what cashiers could not do.
+
+### Added
+
+- **Cashiers can create customers**, at checkout or through
+  `/api/admin/customers`, which is now open to any signed-in role and audited
+  to whoever made the customer. Only a manager or admin can give a credit limit
+  at creation. Ledgers, statements and collections stay manager-only.
+- **Balance at checkout.** Picking a customer shows what they owe, their credit
+  limit and how much headroom is left. The data comes from
+  `/api/customers/balance` (any role), which returns totals only and no ledger
+  lines.
+- **Credit limits.** Customers gain `credit_limit`, where 0 means no limit.
+  - Managers set it from the customer's ledger via
+    `/api/admin/customers/patch`, which also corrects name, phone, email and
+    note, and is audited as `customer.update`.
+  - At push, a Net-30 charge that would take the customer past the limit is
+    refused with `credit_over_limit`, unless it carries a `credit` approval
+    covering the overage.
+  - Earlier sales in the same batch count toward the limit, so splitting a
+    charge cannot slip under it.
+  - Checkout shows the overage in red and asks for approval when the sale is
+    completed.
+- **Several approvals on one sale.** A transaction can carry
+  `approvals: { discount, credit }`, so a sale that is both heavily discounted
+  and past a credit limit needs both. A single `approval` still works.
+- **Whole-shop lookup.** A cashier's History has a *Whole shop* switch that
+  searches every sale and refund in the shop (`lookup=1`, at least four
+  characters, 20 results). Other tills' sales are marked, and cost and margin
+  are never included. Cash-outs are never returned. Refunding one still needs
+  an approval.
+- **History shows who approved** a sale or refund.
+
+### Changed
+
+- `/api/customers` search results and the customer ledger carry `creditLimit`.
+
 ## [1.37.0] — 2026-09-13
 
 Sprint 2 of the staff-gaps program: manager approval and discount limits.

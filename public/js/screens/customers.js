@@ -114,8 +114,10 @@ export const screen = {
             <div><span>${$t('Holds credit')}</span><b class="gp">${fmt(l.credit)}</b></div>
             <div class="lg-total"><span>${$t('Balance')}</span><strong class="${l.balance > 0 ? 'neg' : 'gp'}">${l.balance > 0 ? '' : '+ '}${fmt(l.balance)}</strong></div>
             <div class="lg-aging">${agingChips(l.aging)}</div>
+            <div><span>${$t('Credit limit')}</span><b>${l.customer.creditLimit > 0 ? fmt(l.customer.creditLimit) : esc($t('No limit'))}</b></div>
           </div>
           <div class="ledger-actions">
+            <button class="btn btn-sm btn-ghost" id="limitBtn">${$t('Set credit limit')}</button>
             ${l.balance > 0 ? `<button class="btn btn-sm" id="collectBtn" style="--bg:#2e7d32">${$t('Collect payment')}</button>` : ''}
             <button class="btn btn-sm btn-ghost" id="stmtBtn">${$t('Statement')}</button>
           </div>
@@ -137,6 +139,36 @@ export const screen = {
       const collectBtn = modalEl.querySelector('#collectBtn');
       if (collectBtn) collectBtn.addEventListener('click', () => openCollectModal(l));
       modalEl.querySelector('#stmtBtn').addEventListener('click', () => openStatement(l));
+      modalEl.querySelector('#limitBtn').addEventListener('click', () => openLimitModal(l));
+    }
+
+    /* A limit of 0 means none. Going past one at checkout needs a manager's
+       approval for the overage (v1.38.0). */
+    function openLimitModal(l) {
+      const modalEl = openModal(`
+        <div class="form-modal">
+          <h3>${esc($t('Credit limit for {name}', { name: l.customer.name }))}</h3>
+          <p class="muted">${esc($t('The most this customer may owe on account. 0 means no limit. Going over it at the till needs a manager to approve.'))}</p>
+          <div class="field"><span>${esc($t('Credit limit ({symbol})', { symbol: currencySymbol() }))}</span>
+            <input id="limVal" type="number" inputmode="decimal" min="0" step="0.01" value="${l.customer.creditLimit || 0}"></div>
+          <p id="limErr" class="login-err"></p>
+          <div class="row">
+            <button class="btn btn-ghost" data-cancel type="button">${$t('Cancel')}</button>
+            <button class="btn" id="limSave" type="button">${$t('Save')}</button>
+          </div>
+        </div>`);
+      modalEl.querySelector('[data-cancel]').addEventListener('click', () => openLedger(l.customer.id));
+      modalEl.querySelector('#limSave').addEventListener('click', async () => {
+        const v = parseFloat(modalEl.querySelector('#limVal').value);
+        if (isNaN(v) || v < 0) { modalEl.querySelector('#limErr').textContent = $t('A credit limit cannot be negative'); return; }
+        try {
+          await api.post('/api/admin/customers/patch', { id: l.customer.id, creditLimit: v });
+          toast($t('Credit limit saved'), 'ok'); beep('ok');
+          openLedger(l.customer.id);
+        } catch (err) {
+          modalEl.querySelector('#limErr').textContent = (err && err.message) || $t('Could not save');
+        }
+      });
     }
 
     async function openStatement(l) {

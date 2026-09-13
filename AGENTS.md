@@ -80,7 +80,7 @@ node tests/pdf-send-smoke.mjs     # receipt PDF/share — unrunnable on the curr
 npm run test:client               # client unit tests, incl. the translation-catalogue check
 ```
 
-Baseline at v1.37.0: backend-sim **795 / 0**, client **471 / 0**.
+Baseline at v1.38.0: backend-sim **821 / 0**, client **474 / 0**.
 
 - `npm test` == backend sim only. `npm run test:client` runs the pure-Node
   client unit suites via `node:test` + `fake-indexeddb`. `npm run test:all`
@@ -149,7 +149,11 @@ Baseline at v1.37.0: backend-sim **795 / 0**, client **471 / 0**.
   failed approval with 401, and bind every approval to a reference chosen
   before it was requested.
 - Sales over the seller's discount limit need a `discount` approval; the
-  limit is checked server-side on the deepest effective line discount.
+  limit is checked server-side on the deepest effective line discount. Net-30
+  past a customer's `credit_limit` needs a `credit` approval. Read approvals
+  through `approvalFor_(tx, action)` — a sale may carry several.
+- A customer's money is computed in one place, `customerMoney_`. Don't add a
+  second copy of that arithmetic.
 - `deposit` and `deposit_refund` are server-written only; a device can never
   push them or tender `deposit`.
 - Services are never refundable (`service_not_refundable`), checked first.

@@ -1420,7 +1420,10 @@ section('discounts & tax');
   const joeId = joe.data.customer.id;
   check('customer id is a uuid', /^[0-9a-f-]{36}$/.test(joeId));
   check('create needs a name', req('/api/admin/customers', { phone: 'x' }, { session: custAdmTok }).status === 400);
-  check('cashier cannot create a customer', req('/api/admin/customers', { name: 'Nope' }, { session: custCashTok }).status === 403);
+  /* v1.38.0: a cashier opens a new customer's account at the counter */
+  const byCashier = req('/api/admin/customers', { name: 'Counter Walk-in', creditLimit: 5000 }, { session: custCashTok });
+  check('a cashier can create a customer', byCashier.ok === true, JSON.stringify(byCashier));
+  check('but cannot give them a credit limit while doing it', byCashier.data.customer.creditLimit === 0);
 
   const foundByName = req('/api/customers', {}, { session: custCashTok, params: { q: 'joe' } }).data.customers;
   const foundByPhone = req('/api/customers', {}, { session: custCashTok, params: { q: '1212' } }).data.customers;
@@ -4143,6 +4146,104 @@ check('statement carries the changer/cashier',
   check('reports total the discounts given', pRep.summary.discounts > 0 && pRep.summary.approvedDiscounts >= 2, JSON.stringify(pRep.summary));
   check('and break them down by cashier, with how many were approved',
     amara && amara.discounts >= 10 + 15 + 60 && amara.approvedDiscounts >= 2, JSON.stringify(amara));
+}
+{
+  section('cashier gaps: customers, credit limits, sale lookup (v1.38.0)');
+
+  const cAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const cMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const cCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const cDiego = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const cUsers = req('/api/admin/users/list', {}, { session: cAdm }).data.users;
+  const amaraId = cUsers.find((u) => u.email === 'amara@example.com').id;
+  const diegoId = cUsers.find((u) => u.email === 'diego@example.com').id;
+  req('/api/admin/store', { taxRate: 0 }, { session: cAdm });
+  const cProd = req('/api/admin/products', { name: 'Credit Widget', sku: 'CRD-1', category: 'CRD', costPrice: 10, retailPrice: 100, onHand: 100 }, { session: cAdm }).data.id;
+
+  const acct = req('/api/admin/customers', { name: 'Hassan Trading LLC', phone: '0501112222' }, { session: cCash }).data.customer;
+  check('a cashier-created customer is audited to that cashier',
+    req('/api/audit', {}, { session: cAdm, params: { action: 'customer.create' } }).data.entries
+      .some((e) => e.targetId === acct.id && e.role === 'cashier'));
+
+  check('a cashier cannot set a credit limit', req('/api/admin/customers/patch', { id: acct.id, creditLimit: 250 }, { session: cCash }).status === 403);
+  check('a negative limit is refused', req('/api/admin/customers/patch', { id: acct.id, creditLimit: -1 }, { session: cMgr }).status === 400);
+  const setLim = req('/api/admin/customers/patch', { id: acct.id, creditLimit: 250 }, { session: cMgr });
+  check('a manager sets a 250 credit limit', setLim.ok && setLim.data.customer.creditLimit === 250, JSON.stringify(setLim));
+  check('and it is audited with before and after',
+    req('/api/audit', {}, { session: cAdm, params: { action: 'customer.update' } }).data.entries
+      .some((e) => e.targetId === acct.id && /credit limit 0 → 250/.test(e.summary)));
+
+  const bal0 = req('/api/customers/balance', {}, { session: cCash, params: { customerId: acct.id } });
+  check('a cashier can see the balance and headroom', bal0.ok && bal0.data.owes === 0 && bal0.data.available === 250, JSON.stringify(bal0.data));
+  check('search results carry the credit limit',
+    req('/api/customers', {}, { session: cCash, params: { q: 'hassan' } }).data.customers[0].creditLimit === 250);
+
+  const onAccount = (clientTxId, amount, approval, as) => req('/api/sync/push', { deviceId: 'till-crd', batch: [{
+    clientTxId, userId: amaraId, customerId: acct.id, discountPct: 0, grandTotal: amount, createdAt: new Date().toISOString(),
+    tenders: [{ type: 'net30', amount }], items: [{ productId: cProd, quantity: amount / 100, unitPrice: 100 }], approval }] }, { session: as || cCash }).data.results[0];
+
+  check('200 on account, under the 250 limit, goes through', onAccount('tx-crd-1', 200).accepted === true);
+  check('the balance now shows it owed', req('/api/customers/balance', {}, { session: cCash, params: { customerId: acct.id } }).data.available === 50);
+  const overLim = onAccount('tx-crd-2', 100);
+  check('another 100 would take it to 300: refused', overLim.accepted === false && overLim.conflicts[0].reason === 'credit_over_limit', JSON.stringify(overLim));
+  check('a manager selling it is held to the limit too', onAccount('tx-crd-2m', 100, null, cMgr).accepted === false);
+  const small = req('/api/approve', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'], action: 'credit', ref: 'tx-crd-3', amount: 20 }, { session: cCash }).data.approval;
+  check('an approval smaller than the overage does not cover it', onAccount('tx-crd-3', 100, small).accepted === false);
+  const enough = req('/api/approve', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'], action: 'credit', ref: 'tx-crd-4', amount: 50 }, { session: cCash }).data.approval;
+  const okOver = onAccount('tx-crd-4', 100, enough);
+  check('an approval covering the 50 overage lets it through', okOver.accepted === true, JSON.stringify(okOver));
+  check('and names the approver',
+    req('/api/transactions', {}, { session: cAdm, params: { q: 'tx-crd-4' } }).data.transactions[0].approvedBy === 'Sarah Lindqvist');
+  const payDown = req('/api/sync/push', { deviceId: 'till-crd', batch: [{ clientTxId: 'tx-crd-pay', kind: 'payment', customerId: acct.id,
+    userId: amaraId, grandTotal: 300, createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 300 }] }] }, { session: cMgr }).data.results[0];
+  check('once paid down, charging to account works again', payDown.accepted === true && onAccount('tx-crd-5', 100).accepted === true);
+  const noLimit = req('/api/admin/customers', { name: 'No Limit Ltd' }, { session: cCash }).data.customer;
+  check('a customer with no limit is not held to one',
+    req('/api/sync/push', { deviceId: 'till-crd', batch: [{ clientTxId: 'tx-crd-nolim', userId: amaraId, customerId: noLimit.id, discountPct: 0, grandTotal: 5000,
+      createdAt: new Date().toISOString(), tenders: [{ type: 'net30', amount: 5000 }], items: [{ productId: cProd, quantity: 50, unitPrice: 100 }] }] }, { session: cCash }).data.results[0].accepted === true);
+  const split = req('/api/sync/push', { deviceId: 'till-crd', batch: [
+    { clientTxId: 'tx-crd-b1', userId: amaraId, customerId: acct.id, discountPct: 0, grandTotal: 100, createdAt: new Date().toISOString(), tenders: [{ type: 'net30', amount: 100 }], items: [{ productId: cProd, quantity: 1, unitPrice: 100 }] },
+    { clientTxId: 'tx-crd-b2', userId: amaraId, customerId: acct.id, discountPct: 0, grandTotal: 100, createdAt: new Date().toISOString(), tenders: [{ type: 'net30', amount: 100 }], items: [{ productId: cProd, quantity: 1, unitPrice: 100 }] },
+  ] }, { session: cCash }).data.results;
+  check('a batch cannot split its way past the limit (100 owed, 250 limit: the first fits, the second does not)',
+    split[0].accepted === true && split[1].accepted === false && split[1].conflicts[0].reason === 'credit_over_limit', JSON.stringify(split));
+
+  /* --- store-wide lookup --- */
+  req('/api/sync/push', { deviceId: 'till-diego', batch: [{ clientTxId: 'tx-lookup-diego', userId: diegoId, discountPct: 0, grandTotal: 100,
+    createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 100 }], items: [{ productId: cProd, quantity: 1, unitPrice: 100 }] }] }, { session: cDiego });
+  const diegoRow = req('/api/transactions', {}, { session: cAdm, params: { q: 'tx-lookup-diego' } }).data.transactions[0];
+  check('a cashier\'s normal history does not show a colleague\'s sale',
+    req('/api/transactions', {}, { session: cCash, params: { q: 'tx-lookup-diego' } }).data.transactions.length === 0);
+  const look = req('/api/transactions', {}, { session: cCash, params: { q: diegoRow.receiptNo, lookup: '1' } }).data;
+  check('a lookup by receipt number finds it', look.lookup === true && look.transactions.length === 1, JSON.stringify(look));
+  const lr = look.transactions[0] || {};
+  check('marked as someone else\'s, and still without cost or margin',
+    lr.own === false && lr.grossProfit === undefined && (lr.items || []).every((i) => i.unitCost === undefined), JSON.stringify(lr));
+  check('a lookup needs at least four characters',
+    req('/api/transactions', {}, { session: cCash, params: { q: 'Or', lookup: '1' } }).status === 400);
+  const po = req('/api/sync/push', { deviceId: 'till-crd', batch: [{ clientTxId: 'tx-lookup-payout', kind: 'payout', counterparty: 'Lookup Payee', userId: amaraId,
+    grandTotal: 5, createdAt: new Date().toISOString(), tenders: [] }] }, { session: cMgr });
+  check('a lookup never shows cash-outs',
+    po.data.results[0].accepted === true && req('/api/transactions', {}, { session: cCash, params: { q: 'Lookup Payee', lookup: '1' } }).data.transactions.length === 0);
+  const rfTok = req('/api/approve', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'], action: 'refund', ref: 'rf-lookup-1' }, { session: cCash }).data.approval;
+  const rfOther = req('/api/sync/push', { deviceId: 'till-amara', batch: [{ clientTxId: 'rf-lookup-1', kind: 'refund', originalClientTx: 'tx-lookup-diego',
+    userId: amaraId, grandTotal: 100, createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 100 }], approval: rfTok,
+    items: [{ productId: cProd, quantity: 1, unitPrice: 100 }] }] }, { session: cCash }).data.results[0];
+  check('with approval, a cashier refunds a sale a colleague rang', rfOther.accepted === true, JSON.stringify(rfOther));
+
+  /* a sale that needs both a discount and a credit approval carries both */
+  const bothOwed = req('/api/customers/balance', {}, { session: cCash, params: { customerId: acct.id } }).data.owes;
+  const needOver = bothOwed + 170 - 250;
+  const mk = (action, extra) => req('/api/approve', Object.assign({ email: 'sarah@example.com', pin: CREDS['sarah@example.com'], action, ref: 'tx-crd-both' }, extra), { session: cCash }).data.approval;
+  const both = (approvals) => req('/api/sync/push', { deviceId: 'till-crd', batch: [{
+    clientTxId: 'tx-crd-both', userId: amaraId, customerId: acct.id, discountPct: 15, grandTotal: 170, createdAt: new Date().toISOString(),
+    tenders: [{ type: 'net30', amount: 170 }], items: [{ productId: cProd, quantity: 2, unitPrice: 100 }], approvals }] }, { session: cCash }).data.results[0];
+  const discTok = mk('discount', { pct: 15 });
+  const oneOnly = both({ discount: discTok });
+  check('with only the discount approved, the credit limit still refuses it',
+    needOver > 0 && oneOnly.accepted === false && oneOnly.conflicts[0].reason === 'credit_over_limit', JSON.stringify({ needOver, oneOnly }));
+  const bothOk = both({ discount: discTok, credit: mk('credit', { amount: needOver }) });
+  check('with both approvals it goes through', bothOk.accepted === true, JSON.stringify(bothOk));
 }
 {
   section('setup() deploy entry point (v1.35.1)');

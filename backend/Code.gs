@@ -90,6 +90,8 @@ function dispatch_(action, session, payload, params) {
     case '/api/logout':          return logout_(session);
     case '/api/admin/products':  return adminProducts_(session, payload);
     case '/api/admin/customers': return adminCustomers_(session, payload);
+    case '/api/admin/customers/patch': return adminCustomerPatch_(session, payload);
+    case '/api/customers/balance': return customerBalance_(session, params);
     case '/api/admin/serials':   return adminSerials_(session, payload);
     case '/api/admin/inventory': return adminInventory_(session, payload);
     case '/api/admin/products/patch': return adminProductsPatch_(session, payload);
@@ -344,7 +346,7 @@ var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
 var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by'];
-var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at'];
+var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at', 'credit_limit'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 var SUPPLIER_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'address', 'payment_terms', 'active', 'created_at'];
@@ -1697,6 +1699,15 @@ function login_(payload) {
 var APPROVAL_ACTIONS = { refund: 1, discount: 1, drawer: 1, deposit_refund: 1, credit: 1 };
 var APPROVAL_TTL_MS = 24 * 3600 * 1000;
 
+/* A sale can need two approvals at once (a big discount charged past a credit
+   limit), so a transaction carries `approvals: { discount, credit }`. A lone
+   `approval` still counts for whichever action it was granted for. */
+function approvalFor_(tx, action) {
+  var map = tx && tx.approvals;
+  if (map && typeof map === 'object' && map[action]) return map[action];
+  return tx ? tx.approval : null;
+}
+
 function signApproval_(payload) {
   var body = Utilities.base64EncodeWebSafe(JSON.stringify(payload));
   return body + '.' + hmacHex_(sessionSecret_(), 'approval:' + body);
@@ -2156,12 +2167,34 @@ function syncPush_(session, payload) {
         }
         var sellerRole = String((session && session.role) || 'cashier');
         if (deepest > discountLimitFor_(sellerRole, store) + 0.001) {
-          var dAppr = tx.approval ? verifyApproval_(tx.approval, 'discount', String(tx.clientTxId || ''), userRows) : null;
+          var dTok = approvalFor_(tx, 'discount');
+          var dAppr = dTok ? verifyApproval_(dTok, 'discount', String(tx.clientTxId || ''), userRows) : null;
           if (!dAppr || num_(dAppr.p) + 0.001 < deepest || discountLimitFor_(dAppr.approverRole, store) + 0.001 < deepest) {
             errors.push({ reason: 'discount_over_limit', pct: deepest });
             hasErrors = true;
           } else {
             saleApprovedBy = String(dAppr.u);
+          }
+        }
+      }
+
+      /* Credit limits (v1.38.0). Charging to account past a customer's limit
+         needs a manager's 'credit' approval for this sale, covering at least
+         the overage. A limit of 0 means no limit. Earlier sales in this same
+         batch count, so a split batch cannot slip under it. */
+      var terms = termsAmount_(tx.tenders);
+      if (!hasErrors && terms > 0 && custId && customerIds[custId] && num_(customerIds[custId].credit_limit) > 0) {
+        var limitC = num_(customerIds[custId].credit_limit);
+        var owed = customerMoney_(txRows.concat(newTxRows), custId).account;
+        var over = round2_(owed + terms - limitC);
+        if (over > 0.005) {
+          var cTok = approvalFor_(tx, 'credit');
+          var cAppr = cTok ? verifyApproval_(cTok, 'credit', String(tx.clientTxId || ''), userRows) : null;
+          if (!cAppr || (cAppr.m != null && cents_(cAppr.m) < cents_(over))) {
+            errors.push({ reason: 'credit_over_limit', over: over });
+            hasErrors = true;
+          } else if (!saleApprovedBy) {
+            saleApprovedBy = String(cAppr.u);
           }
         }
       }
@@ -2560,8 +2593,9 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
   if (role !== 'admin' && role !== 'manager') {
     /* A cashier's refund goes through with a manager's approval bound to this
        refund's own clientTxId (v1.37.0). Without one it is refused as before. */
-    approval = tx.approval ? verifyApproval_(tx.approval, 'refund', String(tx.clientTxId || ''), userRows) : null;
-    if (!approval) return { errors: [{ reason: tx.approval ? 'approval_invalid' : 'unauthorized_role' }] };
+    var rTok = approvalFor_(tx, 'refund');
+    approval = rTok ? verifyApproval_(rTok, 'refund', String(tx.clientTxId || ''), userRows) : null;
+    if (!approval) return { errors: [{ reason: rTok ? 'approval_invalid' : 'unauthorized_role' }] };
   }
   /* Services provided are not refunded - the work was done. Checked first, so
      the refusal says why rather than surfacing as some later arithmetic error,
@@ -2837,6 +2871,14 @@ function transactions_(session, params) {
 
   /* cashier scope: own rows only; admin/manager see the full store ledger. */
   var isStore = isStoreRole_(session && session.role);
+  /* A cashier checking a return or a warranty claim can look up any sale or
+     refund in the shop by a search of at least four characters (v1.38.0).
+     Customer documents only - never cash-outs - and never cost or margin. */
+  var lookup = !isStore && String((params && params.lookup) || '') === '1';
+  if (lookup) {
+    if (q.length < 4) throw statusError_(400, 'Type at least four characters to look up a sale');
+    limit = Math.min(limit, 20);
+  }
 
   var qUserRows = readRows_('Users', USER_HEADERS);
   var qNameById = {};
@@ -2851,7 +2893,10 @@ function transactions_(session, params) {
   var txRows = readRows_('Transactions', TX_HEADERS)
     .filter(function (t) {
       if (String(t.status) !== 'COMPLETED') return false;
-      if (!isStore && String(t.user_id) !== String(session.uid)) return false;
+      if (lookup) {
+        var lk = String(t.kind || 'sale');
+        if (lk !== 'sale' && lk !== 'refund') return false;
+      } else if (!isStore && String(t.user_id) !== String(session.uid)) return false;
       if (kindFilter && String(t.kind || 'sale') !== kindFilter) return false;
       if (from && String(t.created_at || '') < from) return false;
       if (to && String(t.created_at || '') > to) return false;
@@ -2939,12 +2984,14 @@ function transactions_(session, params) {
     }
     /* Gross profit is a manager/admin figure and stays off cashier responses. */
     if (isStore) out[out.length - 1].grossProfit = grossProfit;
+    if (lookup) out[out.length - 1].own = String(t.user_id) === String(session.uid);
   }
   return {
     transactions: out,
     matched: matched,
     nextCursor: txRows.length > out.length ? String(out[out.length - 1].createdAt) : null,
     query: q,
+    lookup: lookup,
   };
 }
 
@@ -2964,14 +3011,125 @@ function customers_(session, payload, params) {
     var c = rows[i];
     var hay = (String(c.name || '') + ' ' + String(c.phone || '') + ' ' + String(c.email || '')).toLowerCase();
     if (hay.indexOf(q) >= 0) {
-      out.push({ id: String(c.id), name: String(c.name || ''), phone: String(c.phone || ''), email: String(c.email || '') });
+      out.push(customerDto_(c));
     }
   }
   return { customers: out };
 }
 
-function adminCustomers_(session, payload) {
+/* What a customer's completed transactions add up to. "account" is what they
+   owe on Net-30, "credit" the store credit they hold, "balance" the two netted
+   (positive = they owe the shop). One definition, used by the ledger, the
+   checkout balance and the credit-limit check at push. */
+function customerMoney_(txRows, cid) {
+  var credit = 0, account = 0;
+  for (var j = 0; j < txRows.length; j++) {
+    var t = txRows[j];
+    if (String(t.status) !== 'COMPLETED' || String(t.customer_id || '') !== cid) continue;
+    var kind = String(t.kind || 'sale');
+    var tenders = [];
+    try { tenders = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
+    if (kind === 'sale') {
+      for (var k = 0; k < tenders.length; k++) {
+        var ty = String(tenders[k].type || '');
+        var amt = num_(tenders[k].amount);
+        if (ty === 'store_credit') credit -= amt;
+        else if (ty === 'net30' || ty === 'account') account += amt;
+      }
+    } else if (kind === 'refund') {
+      for (var m = 0; m < tenders.length; m++) {
+        if (String(tenders[m].type || '') === 'store_credit') credit += num_(tenders[m].amount);
+      }
+    } else if (kind === 'payment') {
+      account -= num_(t.grand_total);
+    }
+  }
+  return { credit: round2_(credit), account: round2_(account), balance: round2_(account - credit) };
+}
+
+function termsAmount_(tenders) {
+  var sum = 0;
+  for (var i = 0; i < (tenders || []).length; i++) {
+    var ty = String((tenders[i] || {}).type || '');
+    if (ty === 'net30' || ty === 'account') sum += num_(tenders[i].amount);
+  }
+  return round2_(sum);
+}
+
+function customerDto_(c) {
+  return {
+    id: String(c.id), name: String(c.name || ''), phone: String(c.phone || ''), email: String(c.email || ''),
+    creditLimit: num_(c.credit_limit) > 0 ? num_(c.credit_limit) : 0,
+  };
+}
+
+/* What the cashier needs before charging to account: what is owed, the limit,
+   and the headroom. No ledger lines, no history - those stay with managers. */
+function customerBalance_(session, params) {
+  if (!session || !session.uid) throw statusError_(401, 'Sign in first');
+  var cid = String((params && params.customerId) || '');
+  if (!cid) throw statusError_(400, 'customerId is required');
+  var rows = readRows_('Customers', CUSTOMERS_HEADERS);
+  var cust = null;
+  for (var i = 0; i < rows.length; i++) if (String(rows[i].id) === cid) { cust = rows[i]; break; }
+  if (!cust) throw statusError_(404, 'Customer not found');
+  var money = customerMoney_(readRows_('Transactions', TX_HEADERS), cid);
+  var dto = customerDto_(cust);
+  return {
+    customer: dto,
+    owes: money.account,
+    storeCredit: money.credit,
+    balance: money.balance,
+    creditLimit: dto.creditLimit,
+    available: dto.creditLimit > 0 ? round2_(Math.max(0, dto.creditLimit - money.account)) : null,
+  };
+}
+
+/* Managers set a customer's credit limit and correct their details. */
+function adminCustomerPatch_(session, payload) {
   requireRole_(session, ['admin', 'manager']);
+  payload = payload || {};
+  var id = String(payload.id || '');
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var rows = readRows_('Customers', CUSTOMERS_HEADERS);
+    var cust = null;
+    for (var i = 0; i < rows.length; i++) if (String(rows[i].id) === id) { cust = rows[i]; break; }
+    if (!cust) throw statusError_(404, 'Customer not found');
+    var patch = {};
+    var changes = [];
+    if (payload.name != null) {
+      var nm = String(payload.name).trim().slice(0, 120);
+      if (!nm) throw statusError_(400, 'Customer name is required');
+      if (nm !== String(cust.name)) { patch.name = nm; changes.push('name ' + cust.name + ' → ' + nm); }
+    }
+    ['phone', 'email', 'note'].forEach(function (f) {
+      if (payload[f] != null && String(payload[f]).trim() !== String(cust[f] || '')) {
+        patch[f] = String(payload[f]).trim().slice(0, 200);
+        changes.push(f + ' changed');
+      }
+    });
+    if (payload.creditLimit != null && payload.creditLimit !== '') {
+      var lim = num_(payload.creditLimit);
+      if (!(lim >= 0)) throw statusError_(400, 'A credit limit cannot be negative');
+      lim = round2_(lim);
+      if (lim !== num_(cust.credit_limit)) { patch.credit_limit = lim; changes.push('credit limit ' + num_(cust.credit_limit) + ' → ' + lim); }
+    }
+    if (!changes.length) return { customer: customerDto_(cust), changed: false };
+    applyPatches_('Customers', CUSTOMERS_HEADERS, 'id', { [id]: patch });
+    for (var k in patch) cust[k] = patch[k];
+    logAudit_(session, 'customer.update', 'customer', id, String(cust.name) + ': ' + changes.join(', '), payload.deviceId);
+    return { customer: customerDto_(cust), changed: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function adminCustomers_(session, payload) {
+  /* any signed-in role since v1.38.0: a cashier with a new customer at the
+     counter must be able to open their account. Ledgers stay with managers. */
+  if (!session || !session.uid) throw statusError_(401, 'Sign in first');
   var name = String((payload && payload.name) || '').trim();
   if (!name) throw statusError_(400, 'Customer name is required');
   var row = {
@@ -2983,9 +3141,12 @@ function adminCustomers_(session, payload) {
     note: String((payload && payload.note) || '').trim(),
     created_at: new Date().toISOString(),
   };
+  if (isStoreRole_(session.role) && payload && payload.creditLimit != null && payload.creditLimit !== '') {
+    row.credit_limit = Math.max(0, round2_(num_(payload.creditLimit)));
+  }
   appendRows_('Customers', CUSTOMERS_HEADERS, [row]);
   logAudit_(session, 'customer.create', 'customer', row.id, row.name + (row.phone ? ' · ' + row.phone : ''), payload && payload.deviceId);
-  return { customer: { id: row.id, name: row.name, phone: row.phone, email: row.email } };
+  return { customer: customerDto_(row) };
 }
 
 /* How a customer's dollars lie:
@@ -3047,7 +3208,7 @@ function customerLedger_(session, params) {
   });
 
   return {
-    customer: { id: cust.id, name: String(cust.name || ''), phone: String(cust.phone || ''), email: String(cust.email || '') },
+    customer: customerDto_(cust),
     credit: credit,
     account: account,
     balance: account - credit,

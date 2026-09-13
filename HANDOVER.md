@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.37.0** — Sprint 2 of the staff-gaps program: manager approval at the till, discount limits (`2026-09-13`) |
-| Validation bar | `backend-sim` **PASS 795 / FAIL 0** · client units **PASS 471 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.38.0** — Sprint 3 of the staff-gaps program: cashiers create customers, balance and credit limits, whole-shop lookup (`2026-09-13`) |
+| Validation bar | `backend-sim` **PASS 821 / FAIL 0** · client units **PASS 474 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,17 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.38.0** Staff-gaps Sprint 3. Customer creation open to any role (credit
+  limit manager-only). `customerMoney_` is the single balance computation,
+  used by `/api/customers/balance` (any role, totals only) and the push-time
+  `credit_over_limit` check (counts earlier rows in the batch). New
+  `/api/admin/customers/patch` → `customer.update`. `Customers.credit_limit`.
+  `approvalFor_(tx, action)` reads `tx.approvals[action]` or falls back to
+  `tx.approval`. `/api/transactions?lookup=1` for cashiers: store-wide sales
+  and refunds, ≥4 characters, 20 rows, `own` flag. Client: the checkout
+  balance line and credit approval, a credit-limit editor on the ledger, the
+  History *Whole shop* switch, and the approver shown on a transaction. 26 sim
+  checks.
 - **v1.37.0** Staff-gaps Sprint 2. `/api/approve` → HMAC over
   `'approval:'+body` (never a session), bound to action + ref, 24 h,
   re-verified on use (`verifyApproval_`), single-use via CacheService for
@@ -454,7 +465,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **795 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **821 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -579,8 +590,8 @@ is below, in the order it should be picked up.
      manager team list.
    - ~~Manager approval by PIN; discount limits and report~~ — **done v1.37.0**
      (defaults cashier 10 %, manager 50 %; *owner may change them in Settings*).
-   - **Cashiers:** create customers, see balance at checkout (+ optional
-     credit limit), read-only lookup of another cashier's sale by receipt/IMEI.
+   - ~~**Cashiers:** create customers, balance and credit limit, whole-shop
+     lookup~~ — **done v1.38.0**.
    - **Managers:** reset cashier PINs; correct time punches and force-close a
      forgotten shift, with a reason, audited.
 3. **Business review items still open** (review §3): trade-in / buyback

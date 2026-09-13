@@ -246,6 +246,7 @@ export async function enqueueTransaction(tx) {
     items: tx.items,
   };
   if (tx.approval) payload.approval = tx.approval;
+  if (tx.approvals && Object.keys(tx.approvals).length) payload.approvals = tx.approvals;
   await idb.put('outbox', {
     clientTxId,
     payload,
