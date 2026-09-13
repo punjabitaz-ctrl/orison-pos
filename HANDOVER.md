@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.42.0** — marketplace orders imported from a Google Sheet (`2026-09-13`) |
-| Validation bar | `backend-sim` **PASS 914 / FAIL 0** · client units **PASS 482 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.43.0** — in-app GAAP accounting: P&L, trial balance, journal (`2026-09-13`) |
+| Validation bar | `backend-sim` **PASS 945 / FAIL 0** · client units **PASS 482 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,18 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.43.0** Accounting (Sprint 3).
+  - `accounting_` derives GAAP double entry from Transactions plus StockTakes
+    for a period (`reportPeriod_`), using `CHART_OF_ACCOUNTS` and
+    `TENDER_ACCOUNTS`.
+  - Posting is in cents; unbalanced residuals are squared to 6900.
+  - Returns P&L, trial balance, movements and journal.
+  - `refundSplit_` (tax share of the original) now also drives Reports
+    gross profit on refunds. **Fixed:** that path used to subtract cost.
+  - Admin *Accounts* screen `public/js/screens/accounts.js` with
+    journal / trial-balance CSV.
+  - 31 sim checks, including whole-day reconciliation with Reports.
+  - Accounts payable only accrues: no supplier-payment record exists yet.
 - **v1.42.0** Marketplace sync (Sprint 2).
   - `marketplaceSettings_` (Script Property `MARKETPLACE_SHEET_ID`,
     `Meta.marketplace_user`).
@@ -513,7 +525,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **914 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **945 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -644,8 +656,9 @@ is below, in the order it should be picked up.
      Unlock button~~ — **done v1.39.0**.
 3. **Program in flight** — `docs/superpowers/plans/2026-09-13-warranty-marketplace-accounting-program.md`:
    warranty ✅ v1.41.0; marketplace sync ✅ v1.42.0 (*run
-   `installMarketplaceTrigger()` on deploy*); **in-app GAAP accounting
-   (v1.43.0)** next. Owner closed gift cards and
+   `installMarketplaceTrigger()` on deploy*); in-app GAAP accounting ✅
+   v1.43.0. **Program complete.** Natural next step: record supplier
+   payments so Accounts payable clears. Owner closed gift cards and
    permission switches (not wanted). Still open: trade-in / buyback (cost
    basis), layaway. *Have a tax adviser check the UAE invoice wording.*
 4. ~~**Warranty per serial**~~ — **done v1.41.0**. Cheap now that fitted serials point at

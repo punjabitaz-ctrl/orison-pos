@@ -170,7 +170,7 @@ privileged action. The role is carried in the signed session token; because a
 role **change** revokes that user's sessions immediately, a promotion or
 demotion takes effect at the first request after the change (no 12-hour lag).
 
-Verified route by route against `Code.gs` at v1.42.0. The task-level view —
+Verified route by route against `Code.gs` at v1.43.0. The task-level view —
 what each role can actually do on screen, and what they cannot — is in
 [`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
 
@@ -211,6 +211,7 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/admin/users`, `/users/patch` | admin |
 | `/api/admin/revoke`, `/api/admin/devices`, `/api/admin/revoke-device` | admin |
 | `/api/admin/store`, `/api/reports/schedule`, `/api/backup/status`, `/api/backup/run` | admin |
+| `/api/accounting` (the books: P&L, trial balance, journal) | admin |
 | `/api/audit` | admin |
 
 A sale on any `channel` other than `in_store` (Sold Elsewhere) is refused from a

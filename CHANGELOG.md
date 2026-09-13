@@ -5,6 +5,63 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.43.0] — 2026-09-13
+
+Sprint 3, the last of the warranty, marketplace and accounting program. Owner
+decision: **accounting follows generally accepted accounting principles, in the
+app, with no external platform.**
+
+### Added
+
+- **The books** (`/api/accounting`, admin only). Double-entry accounts are
+  derived from the ledger for any period, so they cannot drift from the sales
+  they describe. The basis is accrual:
+  - A sale is revenue when made, whether paid in cash, on account or through a
+    marketplace that settles later.
+  - Cost of goods sold is recognised with the sale, at the cost captured when
+    it was sold.
+  - A repair deposit is a liability until it is applied.
+  - Tax collected is a liability, never revenue.
+- **Chart of accounts.**
+  - Assets: 1000 Cash, 1010 Card clearing, 1020 Bank transfers, 1030 Cash in
+    transit, 1100 Accounts receivable, 1150 Marketplace receivable, 1200
+    Inventory.
+  - Liabilities: 2000 Sales tax / VAT payable, 2100 Customer deposits, 2200
+    Store credit, 2300 Accounts payable.
+  - Revenue: 4000 Product sales, 4010 Service sales, 4100 Sales returns.
+  - Expenses: 5000 Cost of goods sold, 5100 Inventory shrinkage, 6000 Paid out,
+    6100 Staff expenses, 6900 Rounding.
+- **One balanced journal entry per event:**
+  - **Sales:** tenders are debited to their accounts, and change handed back
+    comes off cash. Revenue is split into products and services, tax goes to
+    tax payable, and cost moves from inventory to cost of goods sold.
+  - **Refunds:** sales returns plus the share of tax in the refund are debited,
+    and the refund method is credited. The unit goes back to inventory at its
+    cost.
+  - **Paid out, staff expenses and cash pick-ups** (to cash in transit).
+  - **Payments on account, deposits taken, and deposits refunded.**
+  - **Stock received** from a purchase order goes to inventory and accounts
+    payable.
+  - **Stock-take differences** go to shrinkage.
+  - Everything is posted in cents. An entry that does not balance to the cent
+    is squared to Rounding and counted.
+- The endpoint returns the **profit and loss** (net sales, gross profit,
+  expenses, net income), the **trial balance**, **balance movements** for
+  cash, receivables, inventory, tax, deposits, store credit and payables, and
+  the **journal**.
+- **Accounts screen** (Menu → *Accounts*, admin). It has period presets, a
+  balance check, the P&L, balance movements, the trial balance and the latest
+  50 journal entries, plus **Journal CSV** and **Trial balance CSV** exports
+  with stable English column names for accounting software.
+
+### Fixed
+
+- **Reports gross profit after a refund.** A refund used to take the returned
+  units' cost off gross profit, so a full refund left a sale showing a loss of
+  its cost. It now takes off the refunded margin: the refund less the tax in
+  it, less the cost restocked. This is the same rule the books use, and the
+  simulator reconciles the two.
+
 ## [1.42.0] — 2026-09-13
 
 Sprint 2 of the warranty, marketplace and accounting program. Owner decision:

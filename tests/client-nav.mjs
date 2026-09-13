@@ -45,6 +45,8 @@ test('menuTiles()', async (t) => {
     for (const id of manager) assert.ok(admin.includes(id), `admin is missing ${id}`);
     assert.ok(admin.includes('audit'), 'the audit log is an admin destination');
     assert.ok(!manager.includes('audit'), 'a manager must not see the audit log');
+    assert.ok(admin.includes('accounts'), 'the books are an admin destination');
+    assert.ok(!manager.includes('accounts'), 'a manager must not see the books');
   });
   await t.test('a cashier sees only what their role may open', () => {
     // Repairs is counter work: a cashier books a device in with the customer

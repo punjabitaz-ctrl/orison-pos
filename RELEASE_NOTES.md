@@ -7,7 +7,45 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.42.0 — marketplace orders from a Google Sheet
+## Latest: v1.43.0 — the books
+
+**2026-09-13.** Sprint 3 of 3. The warranty, marketplace and accounting
+program is complete.
+
+- **Menu → Accounts** (admin) shows the shop's books for any period:
+  - profit and loss
+  - trial balance
+  - how cash, receivables, inventory, tax, deposits, store credit and
+    payables moved
+  - the journal behind them
+- **The books are kept to generally accepted accounting principles.**
+  - Sales are revenue when made, with their cost recognised at the same time.
+  - Tax and deposits are liabilities.
+  - Change handed back never counts as cash kept.
+  - A stock-take shortage is shrinkage.
+- **Export** the journal and the trial balance as CSV for your accountant.
+- **Fixed:** Reports now lowers gross profit by a refund's margin rather than
+  its cost, so it agrees with the books.
+
+**Validation:** backend-sim **PASS 945 / FAIL 0** · client units **PASS 482 /
+FAIL 0**.
+- Every journal entry balances to the cent, and the trial balance nets to zero.
+- Revenue, gross profit, cash out and deposits reconcile with Reports over the
+  same day, across all 2,000+ ledger rows in the simulator.
+- Mutation checks confirm the tests fail if change is kept as cash or if the
+  refund fix is reverted.
+- The screen was checked in the browser.
+
+**Supplier payments** are made outside the POS, so Accounts payable shows
+stock received in the period.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.42.0 — marketplace orders from a Google Sheet
 
 **2026-09-13.** Sprint 2 of 3.
 

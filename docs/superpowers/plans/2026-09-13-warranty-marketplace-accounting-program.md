@@ -60,7 +60,7 @@ Trade-in/buyback and layaway were not answered and stay open.
 - Settings card: sheet link, *Import now*, last run summary. Audited as
   `marketplace.import`.
 
-## Sprint 3 — v1.43.0 · Accounting (GAAP, in-app)
+## Sprint 3 — v1.43.0 · Accounting (GAAP, in-app) ✅ shipped
 
 - Chart of accounts:
 

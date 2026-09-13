@@ -13,7 +13,7 @@ import { fmt, esc, toast, beep, csvCell, downloadCsv } from '../ui.js';
 
 const DAYS = [N_('Sun'), N_('Mon'), N_('Tue'), N_('Wed'), N_('Thu'), N_('Fri'), N_('Sat')];
 
-const PRESETS = [
+export const PRESETS = [
   { id: 'today', label: N_('Today') },
   { id: 'week', label: N_('This week') },
   { id: 'month', label: N_('This month') },
@@ -28,7 +28,7 @@ function keyOf(d) {
   return `${y}-${m}-${dd}`;
 }
 
-function rangeFor(preset, from, to) {
+export function rangeFor(preset, from, to) {
   const today = new Date();
   if (preset === 'today') return { from: keyOf(today), to: keyOf(today) };
   if (preset === 'week') {

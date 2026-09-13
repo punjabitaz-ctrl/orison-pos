@@ -864,6 +864,19 @@ background: var(--card);
 .rep-sub { font-size: 12px; margin-top: 4px; }
 .rep-sub .gp { font-weight: 700; }
 
+/* Accounts - the books */
+.acct-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 4px 16px 8px; }
+.acct-exports { display: flex; gap: 8px; margin-inline-start: auto; }
+.acct-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+@media (max-width: 720px) { .acct-grid { grid-template-columns: 1fr; } }
+.acct-note { font-size: 12px; margin: 6px 0; }
+.acct-pnl tr.acct-sub td { font-weight: 700; border-top: 1px solid var(--line-2); }
+.acct-code { color: var(--muted); font-variant-numeric: tabular-nums; }
+.acct-journal tbody.acct-entry + tbody.acct-entry tr:first-child td { border-top: 1.5px solid var(--line-2); }
+.acct-journal tbody.acct-entry tr + tr td { border-top: 0; }
+.acct-journal td { vertical-align: top; }
+.acct-journal td.acct-cr { padding-inline-start: 28px; }
+
 /* Purchases — suppliers + purchase orders */
 .scr-actions { display: flex; gap: 8px; align-items: center; }
 .po-block { padding: 14px 16px 4px; }

@@ -1801,7 +1801,10 @@ check('statement carries the changer/cashier',
       e.gp += (t.subtotal || 0) - Math.round((t.subtotal || 0) * 100 * (t.discountPct || 0) / 100) / 100 - costTotal;
       if (String(t.user_id) === diegoId) { eDiego.sales += t.grandTotal; eDiego.count += 1; }
     } else if (k === 'refund') {
-      e.refunds += t.grandTotal; e.gp -= costTotal;
+      /* v1.43.0: a refund takes back its margin - its revenue less the tax in it, less the cost restocked */
+      const origSale = dto.find((o) => o.clientTxId === t.originalClientTx && (o.kind || 'sale') === 'sale');
+      const rTaxC = origSale && origSale.grandTotal > 0 ? Math.min(Math.round(t.grandTotal * 100), Math.round(Math.round(t.grandTotal * 100) * Math.round(origSale.taxAmount * 100) / Math.round(origSale.grandTotal * 100))) : 0;
+      e.refunds += t.grandTotal; e.gp -= (Math.round(t.grandTotal * 100) - rTaxC) / 100 - costTotal;
       if (String(t.user_id) === diegoId) eDiego.sales -= t.grandTotal;
     } else if (k === 'payout') {
       e.payouts += t.grandTotal;
@@ -4475,6 +4478,123 @@ check('statement carries the changer/cashier',
   check('an expired one says expired', outCover.warranty && outCover.warranty.status === 'expired');
   const foreign = req('/api/repairs', { customerName: 'W Cust', customerPhone: '0501', deviceMake: 'Other', deviceModel: 'Shop', deviceSerial: 'NOT-OURS-123', reportedFault: 'Dead' }, { session: wCash }).data;
   check('a device we never sold has no warranty record', foreign.warranty === null);
+}
+{
+  section('accounting: GAAP double entry (v1.43.0)');
+
+  const aAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const aMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const aCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const aUsers = req('/api/admin/users/list', {}, { session: aAdm }).data.users;
+  const aAdmId = aUsers.find((u) => u.email === 'tariq@example.com').id;
+  req('/api/admin/store', { taxRate: 8 }, { session: aAdm });
+
+  const day = new Date().toISOString().slice(0, 10);
+  const books = () => req('/api/accounting', {}, { session: aAdm, params: { from: day, to: day } }).data;
+  const bal = (b, code) => { const a = b.trialBalance.accounts.find((x) => x.code === code); return a ? a.balance : 0; };
+  const near = (a, b) => Math.abs(a - b) < 0.005;
+  const lineOf = (entry, code) => (entry && entry.lines.find((l) => l.code === code)) || { debit: 0, credit: 0 };
+
+  check('a manager cannot open the books', req('/api/accounting', {}, { session: aMgr }).status === 403);
+  check('nor can a cashier', req('/api/accounting', {}, { session: aCash }).status === 403);
+
+  const A0 = books();
+  check('the chart of accounts is returned', A0.accounts.length === 19 && A0.accounts[0].code === '1000' && A0.accounts[18].code === '6900');
+
+  const chg = req('/api/admin/products', { name: 'Acct Charger', sku: 'ACC-CHG', category: 'ACC', costPrice: 4, retailPrice: 20, onHand: 10 }, { session: aAdm }).data.id;
+  const setup = req('/api/admin/products', { name: 'Acct Setup', sku: 'ACC-SVC', category: 'ACC', costPrice: 0, retailPrice: 30, onHand: 0, itemType: 'service' }, { session: aAdm }).data.id;
+  const cust = req('/api/admin/customers', { name: 'Acct Account Customer', creditLimit: 500 }, { session: aAdm }).data.customer.id;
+  const push = (tx) => req('/api/sync/push', { deviceId: 'till-acct', batch: [Object.assign({ userId: aAdmId, grandTotal: 1, createdAt: new Date().toISOString(), discountPct: 0 }, tx)] }, { session: aAdm }).data.results[0];
+  const txOf = (id) => req('/api/transactions', {}, { session: aAdm, params: { q: id } }).data.transactions.find((t) => t.clientTxId === id);
+
+  /* a cash sale with change: 2 chargers and a setup = 70 + 8 % tax = 75.60, 80 handed over */
+  push({ clientTxId: 'acct-s1', tenders: [{ type: 'cash', amount: 80 }], items: [{ productId: chg, quantity: 2, unitPrice: 20 }, { productId: setup, quantity: 1, unitPrice: 30 }] });
+  const s1 = txOf('acct-s1');
+  check('the sale is 75.60 with 5.60 tax', s1 && s1.grandTotal === 75.6 && s1.taxAmount === 5.6, JSON.stringify(s1 && { g: s1.grandTotal, t: s1.taxAmount }));
+  /* on account */
+  push({ clientTxId: 'acct-s2', customerId: cust, tenders: [{ type: 'net30', amount: 21.6 }], items: [{ productId: chg, quantity: 1, unitPrice: 20 }] });
+  const s2 = txOf('acct-s2');
+  /* half of the first sale's chargers come back as store credit */
+  push({ clientTxId: 'acct-r1', kind: 'refund', originalClientTx: 'acct-s1', grandTotal: 21.6, tenders: [{ type: 'store_credit', amount: 21.6 }], items: [{ productId: chg, quantity: 1, unitPrice: 20 }] });
+  const r1 = txOf('acct-r1');
+  check('the refund and the sale on account went through', !!s2 && !!r1, JSON.stringify([!!s2, !!r1]));
+  /* money in on account, cash out of the drawer */
+  req('/api/sync/push', { deviceId: 'till-acct', batch: [
+    { clientTxId: 'acct-p1', kind: 'payment', userId: aAdmId, customerId: cust, grandTotal: 10, tenders: [{ type: 'card', amount: 10 }], createdAt: new Date().toISOString(), items: [] },
+    { clientTxId: 'acct-po', kind: 'payout', userId: aAdmId, grandTotal: 5, tenders: [], counterparty: 'Window cleaner', createdAt: new Date().toISOString(), items: [] },
+    { clientTxId: 'acct-pu', kind: 'pickup', userId: aAdmId, grandTotal: 100, tenders: [], createdAt: new Date().toISOString(), items: [] },
+    { clientTxId: 'acct-ex', kind: 'expense', userId: aAdmId, grandTotal: 7, tenders: [], createdAt: new Date().toISOString(), items: [] },
+  ] }, { session: aMgr });
+  /* a repair deposit, applied when the job is collected */
+  const job = req('/api/repairs', { customerName: 'Acct Repair', deviceMake: 'Nokia', reportedFault: 'Port' }, { session: aAdm }).data;
+  req('/api/repairs/deposit', { id: job.id, amount: 25 }, { session: aAdm });
+  req('/api/repairs/labour', { id: job.id, add: { description: 'Port clean', amount: 30 } }, { session: aAdm });
+  const jobRes = req('/api/repairs/collect', { id: job.id, tenders: [{ type: 'cash', amount: 7.4 }] }, { session: aAdm });
+  const jobInv = jobRes.data || {};
+  check('the repair job is collected', jobRes.ok === true, JSON.stringify(jobRes));
+  /* stock received from a supplier, and a count that comes up one short */
+  const sup = req('/api/suppliers', { name: 'Acct Wholesale' }, { session: aAdm }).data.id;
+  const po = req('/api/purchase-orders', { supplierId: sup, lines: [{ productId: chg, quantity: 5, unitCost: 4 }], status: 'ORDERED' }, { session: aAdm }).data.id;
+  req('/api/purchase-orders/receive', { id: po, lines: [{ productId: chg, quantity: 5 }] }, { session: aAdm });
+  const onHandNow = req('/api/products', {}, { session: aAdm }).data.find((p) => p.sku === 'ACC-CHG').onHand;
+  req('/api/admin/stock-take', { counts: [{ productId: chg, counted: onHandNow - 1 }], note: 'acct count' }, { session: aAdm });
+
+  const A1 = books();
+  const J = A1.journal;
+  const entryFor = (kind, ref) => J.find((j) => j.kind === kind && j.ref === ref);
+
+  check('every journal entry balances to the cent',
+    J.length > 0 && J.every((j) => Math.round(j.lines.reduce((s, l) => s + l.debit * 100 - l.credit * 100, 0)) === 0),
+    JSON.stringify(J.find((j) => Math.round(j.lines.reduce((s, l) => s + l.debit * 100 - l.credit * 100, 0)) !== 0)));
+  check('the trial balance balances', A1.trialBalance.balanced === true && near(A1.trialBalance.debit, A1.trialBalance.credit), JSON.stringify([A1.trialBalance.debit, A1.trialBalance.credit]));
+  check('no line carries both a debit and a credit', J.every((j) => j.lines.every((l) => !(l.debit && l.credit))));
+
+  const e1 = entryFor('sale', s1.receiptNo);
+  check('a cash sale: cash up by the total, not by what was handed over (change is not kept)', near(lineOf(e1, '1000').debit, 75.6), JSON.stringify(e1));
+  check('the tax is a liability, not revenue', near(lineOf(e1, '2000').credit, 5.6));
+  check('product and service revenue are split', near(lineOf(e1, '4000').credit, 40) && near(lineOf(e1, '4010').credit, 30), JSON.stringify(e1 && e1.lines));
+  check('cost of goods sold is recognised with the sale, at captured cost', near(lineOf(e1, '5000').debit, 8) && near(lineOf(e1, '1200').credit, 8));
+  const e2 = entryFor('sale', s2.receiptNo);
+  check('a sale on account is a receivable', near(lineOf(e2, '1100').debit, 21.6) && near(lineOf(e2, '4000').credit, 20));
+  const er = J.find((j) => j.kind === 'refund' && j.memo.indexOf(s1.receiptNo) >= 0);
+  check('a refund: returns and the tax in it are debited, store credit owed', near(lineOf(er, '4100').debit, 20) && near(lineOf(er, '2000').debit, 1.6) && near(lineOf(er, '2200').credit, 21.6), JSON.stringify(er));
+  check('and the unit goes back on the shelf at its cost', near(lineOf(er, '1200').debit, 4) && near(lineOf(er, '5000').credit, 4));
+  const ep = entryFor('payment', 'acct-p1');
+  check('a payment on account moves the receivable to card clearing', near(lineOf(ep, '1010').debit, 10) && near(lineOf(ep, '1100').credit, 10), JSON.stringify(ep));
+  check('paid out, a pick-up and a staff expense each leave cash',
+    near(lineOf(entryFor('payout', 'acct-po'), '6000').debit, 5) && near(lineOf(entryFor('pickup', 'acct-pu'), '1030').debit, 100)
+    && near(lineOf(entryFor('expense', 'acct-ex'), '6100').debit, 7) && near(lineOf(entryFor('pickup', 'acct-pu'), '1000').credit, 100));
+  const ed = J.find((j) => j.kind === 'deposit' && j.memo.indexOf(job.ticketNo) >= 0);
+  check('a deposit is a liability, not revenue', near(lineOf(ed, '1000').debit, 25) && near(lineOf(ed, '2100').credit, 25) && !lineOf(ed, '4010').credit, JSON.stringify(ed));
+  const ej = entryFor('sale', jobInv.receiptNo);
+  check('collecting the job applies the deposit and earns service revenue',
+    near(lineOf(ej, '2100').debit, 25) && lineOf(ej, '4010').credit > 0 && !lineOf(ej, '4000').credit, JSON.stringify(ej));
+  check('stock received is inventory owed to the supplier', J.some((j) => j.kind === 'purchase' && near(lineOf(j, '1200').debit, 20) && near(lineOf(j, '2300').credit, 20)));
+  check('a count one short is shrinkage at cost', J.some((j) => j.kind === 'stocktake' && near(lineOf(j, '5100').debit, 4) && near(lineOf(j, '1200').credit, 4)),
+    JSON.stringify(J.filter((j) => j.kind === 'stocktake').slice(-1)));
+
+  const d = (code) => Math.round((bal(A1, code) - bal(A0, code)) * 100) / 100;
+  check('P&L movements: paid out 5, staff 7, shrinkage 4',
+    near(A1.pnl.paidOut - A0.pnl.paidOut, 5) && near(A1.pnl.staffExpenses - A0.pnl.staffExpenses, 7) && near(A1.pnl.shrinkage - A0.pnl.shrinkage, 4));
+  check('store credit owed rose by the refund, receivables by the sale less the payment',
+    near(d('2200'), -21.6) && near(d('1100'), 11.6), JSON.stringify([d('2200'), d('1100')]));
+  check('net income is gross profit less expenses', near(A1.pnl.netIncome, A1.pnl.grossProfit - A1.pnl.expenses));
+  check('net sales are revenue less returns', near(A1.pnl.netSales, A1.pnl.productSales + A1.pnl.serviceSales - A1.pnl.returns));
+
+  /* the books agree with Reports over the same day */
+  const rep = req('/api/reports', {}, { session: aAdm, params: { from: day, to: day } }).data.summary;
+  check('revenue reconciles with Reports: gross sales less tax', near(A1.pnl.productSales + A1.pnl.serviceSales, rep.grossSales - rep.tax),
+    JSON.stringify([A1.pnl.productSales + A1.pnl.serviceSales, rep.grossSales - rep.tax]));
+  check('gross profit reconciles with Reports', near(A1.pnl.grossProfit, rep.grossProfit), JSON.stringify([A1.pnl.grossProfit, rep.grossProfit]));
+  check('cash out reconciles with Reports', near(A1.pnl.paidOut, rep.payouts) && near(A1.pnl.staffExpenses, rep.expenses)
+    && near(A1.movements.find((m) => m.code === '1030').change, rep.pickups));
+  check('deposits held moved by what was taken less applied less refunded',
+    near(A1.movements.find((m) => m.code === '2100').change, rep.depositsIn - rep.depositsApplied - rep.depositsRefunded),
+    JSON.stringify([A1.movements.find((m) => m.code === '2100').change, rep.depositsIn, rep.depositsApplied, rep.depositsRefunded]));
+
+  const future = req('/api/accounting', {}, { session: aAdm, params: { from: '2031-01-01', to: '2031-01-31' } }).data;
+  check('a period with no activity is empty, and still balanced', future.journal.length === 0 && future.trialBalance.balanced && future.pnl.netIncome === 0);
+  req('/api/admin/store', { taxRate: 0 }, { session: aAdm });
 }
 {
   section('marketplace sync from a Google Sheet (v1.42.0)');

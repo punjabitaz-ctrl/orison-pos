@@ -118,6 +118,12 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 - **Drive export** `/api/drive/export`:
   - admins and managers export the store's day, with a summary block: SALES, TAX COLLECTED, REFUNDS, PAID OUT, CASH PICK-UP, STAFF EXPENSE, COLLECTIONS, DEPOSITS IN / APPLIED / REFUNDED, CARD, CASH IN DRAWER, NET CASH
   - cashiers export their own rows
+- **Accounting** `/api/accounting` (admin, v1.43.0), `?from=&to=` like Reports:
+  - GAAP double entry derived from the ledger on an accrual basis; `CHART_OF_ACCOUNTS` runs from 1000 Cash to 6900 Rounding
+  - one balanced entry per completed transaction (`sale`, `refund`, `payout`, `pickup`, `expense`, `payment`, `deposit`, `deposit_refund`, `purchase`) and per stock-take session
+  - tenders map through `TENDER_ACCOUNTS`; change is taken off cash; refund tax is the original sale's tax share (`refundSplit_`), which Reports gross profit also uses
+  - posting is in cents, with residuals squared to 6900 Rounding
+  - returns `pnl`, `trialBalance` (`balanced`), `movements`, `journal`, `checks`
 - **Scheduled reports** `/api/reports/schedule` (admin): recipients and per-cadence switches.
   - Triggers: `reportDaily` 06:00, `reportWeekly` 07:00, `reportMonthly` 08:00 every 30 days.
   - Each covers the period that just closed. **Monthly is a rolling 30 days, not a calendar month.**
@@ -188,7 +194,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 914 checks
+npm run test:backend   # 945 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.

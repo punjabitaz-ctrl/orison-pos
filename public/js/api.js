@@ -45,7 +45,7 @@ async function clearToken() {
 
 /* One 15s timeout for every call mapped a slow report onto "offline", which
    hid the real cause. Reads that legitimately take longer get longer. */
-const SLOW_CALLS = ['/api/reports', '/api/drive/export', '/api/backup/run', '/api/audit', '/api/inventory/reorder'];
+const SLOW_CALLS = ['/api/reports', '/api/accounting', '/api/drive/export', '/api/backup/run', '/api/audit', '/api/inventory/reorder'];
 
 function defaultTimeout(action) {
   return SLOW_CALLS.some((p) => action.indexOf(p) === 0) ? 60000 : 15000;

@@ -71,6 +71,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/customers/statement': return customerStatement_(session, params);
     case '/api/customers/receivables': return receivables_(session);
     case '/api/reports':         return reports_(session, params);
+    case '/api/accounting':      return accounting_(session, params);
     case '/api/shifts':          return shifts_(session, params);
     case '/api/shifts/open':     return shiftOpen_(session, payload);
     case '/api/shifts/close':    return shiftClose_(session, payload);
@@ -3798,7 +3799,9 @@ function reports_(session, params) {
   var prodById = {};
   for (var pi = 0; pi < prodRows.length; pi++) prodById[String(prodRows[pi].id)] = prodRows[pi];
 
-  var txRows = readRows_('Transactions', TX_HEADERS).filter(function (t) {
+  var allTxRows = readRows_('Transactions', TX_HEADERS);
+  var saleByClient = saleIndex_(allTxRows);
+  var txRows = allTxRows.filter(function (t) {
     return String(t.status) === 'COMPLETED'
       && String(t.created_at || '') >= fromIso
       && String(t.created_at || '') <= toIso;
@@ -3931,8 +3934,11 @@ function reports_(session, params) {
       }
     } else if (kind === 'refund') {
       summary.refunds += num_(t.grand_total);
-      summary.grossProfit -= costTotal;
-      c.sales -= num_(t.grand_total); c.gp -= costTotal;
+      /* a return gives back its revenue (less the tax in it) and puts the
+         cost back on the shelf: profit falls by the margin, not the cost */
+      var refundGp = refundSplit_(t, saleByClient).netC / 100 - costTotal;
+      summary.grossProfit -= refundGp;
+      c.sales -= num_(t.grand_total); c.gp -= refundGp;
       for (var ri = 0; ri < tenders.length; ri++) {
         var re = byTender[String(tenders[ri].type || 'cash')] || (byTender[String(tenders[ri].type || 'cash')] = { amount: 0, count: 0 });
         re.amount -= num_(tenders[ri].amount);
@@ -4033,6 +4039,304 @@ function reports_(session, params) {
     }).sort(function (a, b) { return b.sales - a.sales; }),
     topProducts: byProductOut,
     topCustomers: topCust,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Accounting (v1.43.0)
+ *
+ *  Double-entry books kept to generally accepted accounting principles,
+ *  derived from the ledger rather than stored beside it, so they can never
+ *  drift from the sales they describe. Accrual basis: a sale is revenue when
+ *  it is made, whether it was paid in cash, on account or by a marketplace
+ *  that settles later; a deposit is a liability until it is applied; cost of
+ *  goods sold is recognised with the sale at the cost captured when it was
+ *  sold. Everything is posted in cents, and an entry that does not balance to
+ *  the cent is squared to Rounding, never left open.
+ * ------------------------------------------------------------------ */
+
+var CHART_OF_ACCOUNTS = [
+  { code: '1000', name: 'Cash', type: 'asset' },
+  { code: '1010', name: 'Card clearing', type: 'asset' },
+  { code: '1020', name: 'Bank transfers', type: 'asset' },
+  { code: '1030', name: 'Cash in transit', type: 'asset' },
+  { code: '1100', name: 'Accounts receivable', type: 'asset' },
+  { code: '1150', name: 'Marketplace receivable', type: 'asset' },
+  { code: '1200', name: 'Inventory', type: 'asset' },
+  { code: '2000', name: 'Sales tax / VAT payable', type: 'liability' },
+  { code: '2100', name: 'Customer deposits', type: 'liability' },
+  { code: '2200', name: 'Store credit', type: 'liability' },
+  { code: '2300', name: 'Accounts payable', type: 'liability' },
+  { code: '4000', name: 'Product sales', type: 'revenue' },
+  { code: '4010', name: 'Service sales', type: 'revenue' },
+  { code: '4100', name: 'Sales returns', type: 'contra_revenue' },
+  { code: '5000', name: 'Cost of goods sold', type: 'expense' },
+  { code: '5100', name: 'Inventory shrinkage', type: 'expense' },
+  { code: '6000', name: 'Paid out', type: 'expense' },
+  { code: '6100', name: 'Staff expenses', type: 'expense' },
+  { code: '6900', name: 'Rounding', type: 'expense' },
+];
+
+/* Where each way of paying lands. A tender the books do not know is cash,
+ * the same default the drawer and Reports use. */
+var TENDER_ACCOUNTS = { cash: '1000', card: '1010', transfer: '1020', net30: '1100', account: '1100', marketplace: '1150', deposit: '2100', store_credit: '2200' };
+var CASH_OUT_ACCOUNTS = { payout: '6000', expense: '6100', pickup: '1030' };
+
+function tenderAccount_(type) {
+  var ty = String(type || 'cash');
+  return Object.prototype.hasOwnProperty.call(TENDER_ACCOUNTS, ty) ? TENDER_ACCOUNTS[ty] : '1000';
+}
+
+/* Completed sales by the id the terminal gave them, which is what a refund
+ * points back at. */
+function saleIndex_(txRows) {
+  var out = Object.create(null);
+  for (var i = 0; i < txRows.length; i++) {
+    var t = txRows[i];
+    if (String(t.status) !== 'COMPLETED') continue;
+    if (String(t.kind || '') !== '' && String(t.kind) !== 'sale') continue;
+    out[String(t.client_tx_id || '')] = t;
+  }
+  return out;
+}
+
+/* A refund row stores what went back to the customer, tax included. The tax
+ * in it is the original sale's share of tax in its total, so a half refund
+ * gives back half the tax; the rest is the revenue being returned. */
+function refundSplit_(refund, saleByClient) {
+  var grossC = cents_(refund.grand_total);
+  var orig = saleByClient[String(refund.original_client_tx || '')];
+  var taxC = 0;
+  if (orig) {
+    var og = cents_(orig.grand_total), ot = cents_(orig.tax_amount);
+    if (og > 0 && ot > 0) taxC = Math.min(grossC, Math.round(grossC * ot / og));
+  }
+  return { grossC: grossC, taxC: taxC, netC: grossC - taxC };
+}
+
+/* Cost of a row's lines: the cost captured when it was sold, else the
+ * product's cost now (legacy rows) - the same rule Reports uses. */
+function itemsCostC_(t, prodById) {
+  var items = itobjs_(t.items_json);
+  var cost = 0;
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i] || {};
+    var prod = prodById[String(it.productId || '')];
+    var costPer = (typeof it.unitCost === 'number' && it.unitCost > 0) ? it.unitCost
+      : (prod ? num_(prod.cost_price) : 0);
+    cost += (it.quantity || 1) * costPer;
+  }
+  return Math.round(cost * 100);
+}
+
+function isServiceLine_(it, prodById) {
+  var pid = String((it && it.productId) || '');
+  if (pid === 'repair-labour') return true;
+  var prod = prodById[pid];
+  return !!(prod && String(prod.item_type) === 'service');
+}
+
+/* The period a report covers, as UTC instants. Date-only values are local
+ * calendar days in the store's time zone. Defaults to the last 30 days. */
+function reportPeriod_(params) {
+  var from = String((params && params.from) || '');
+  var to = String((params && params.to) || '');
+  var nowMs = Date.now();
+  var tzMin = num_(getStore_().tzOffsetMin);
+  if (!from || !to) {
+    from = new Date(nowMs - 29 * 86400000 + tzMin * 60000).toISOString().slice(0, 10);
+    to = new Date(nowMs + 86400000 + tzMin * 60000).toISOString().slice(0, 10);
+  }
+  var fromIso = from.indexOf('T') >= 0 ? from : dateOnlyToIso_(from, tzMin, false);
+  var toIso = to.indexOf('T') >= 0 ? to : dateOnlyToIso_(to, tzMin, true);
+  if (fromIso > toIso) { var tmp = fromIso; fromIso = toIso; toIso = tmp; }
+  return { fromIso: fromIso, toIso: toIso, tzMin: tzMin };
+}
+
+function accounting_(session, params) {
+  requireRole_(session, ['admin']);
+  var period = reportPeriod_(params);
+  var fromIso = period.fromIso, toIso = period.toIso;
+  var inPeriod = function (iso) { iso = String(iso || ''); return iso >= fromIso && iso <= toIso; };
+
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var prodById = Object.create(null);
+  for (var pi = 0; pi < prodRows.length; pi++) prodById[String(prodRows[pi].id)] = prodRows[pi];
+  var allTx = readRows_('Transactions', TX_HEADERS);
+  var saleByClient = saleIndex_(allTx);
+  var accountName = Object.create(null);
+  for (var ai = 0; ai < CHART_OF_ACCOUNTS.length; ai++) accountName[CHART_OF_ACCOUNTS[ai].code] = CHART_OF_ACCOUNTS[ai].name;
+
+  var entries = [];
+  function entry(date, kind, ref, memo) {
+    var e = { date: String(date || ''), kind: kind, ref: String(ref || ''), memo: String(memo || ''), post: Object.create(null), order: [] };
+    entries.push(e);
+    return e;
+  }
+  function post(e, code, dC) {
+    if (!dC) return;
+    if (e.post[code] == null) { e.post[code] = 0; e.order.push(code); }
+    e.post[code] += dC;
+  }
+  function tenders(e, t, sign, fallbackC) {
+    var list = [];
+    try { list = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
+    if (!Array.isArray(list) || !list.length) { post(e, '1000', sign * fallbackC); return fallbackC; }
+    var total = 0;
+    for (var i = 0; i < list.length; i++) {
+      var a = cents_((list[i] || {}).amount);
+      post(e, tenderAccount_((list[i] || {}).type), sign * a);
+      total += a;
+    }
+    return total;
+  }
+
+  var txRows = allTx.filter(function (t) { return String(t.status) === 'COMPLETED' && inPeriod(t.created_at); });
+  txRows.sort(function (a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
+
+  for (var r = 0; r < txRows.length; r++) {
+    var t = txRows[r];
+    var kind = String(t.kind || 'sale');
+    var ref = String(t.receipt_no || t.external_ref || t.client_tx_id || '');
+    var grossC = cents_(t.grand_total);
+    var e;
+    if (kind === 'sale') {
+      e = entry(t.created_at, 'sale', ref, String(t.channel || '') === 'marketplace' ? 'Marketplace sale ' + String(t.external_ref || '') : 'Sale');
+      var tendered = tenders(e, t, 1, grossC);
+      /* cash handed back is money that never stayed in the drawer */
+      if (tendered > grossC) post(e, '1000', -(tendered - grossC));
+      var taxC = cents_(t.tax_amount);
+      var netC = grossC - taxC;
+      var items = itobjs_(t.items_json);
+      var allW = 0, svcW = 0;
+      for (var li = 0; li < items.length; li++) {
+        var it = items[li] || {};
+        var w = cents_(it.unitPrice) * (it.quantity || 1) * (1 - clampPct_(num_(it.discountPct)) / 100);
+        allW += w;
+        if (isServiceLine_(it, prodById)) svcW += w;
+      }
+      var svcC = allW > 0 ? Math.round(netC * svcW / allW) : 0;
+      post(e, '2000', -taxC);
+      post(e, '4010', -svcC);
+      post(e, '4000', -(netC - svcC));
+      var costC = itemsCostC_(t, prodById);
+      post(e, '5000', costC);
+      post(e, '1200', -costC);
+    } else if (kind === 'refund') {
+      var split = refundSplit_(t, saleByClient);
+      var orig = saleByClient[String(t.original_client_tx || '')];
+      e = entry(t.created_at, 'refund', ref, 'Refund' + (orig && orig.receipt_no ? ' of ' + String(orig.receipt_no) : ''));
+      post(e, '4100', split.netC);
+      post(e, '2000', split.taxC);
+      tenders(e, t, -1, grossC);
+      var rCost = itemsCostC_(t, prodById);
+      post(e, '1200', rCost);
+      post(e, '5000', -rCost);
+    } else if (isCashOutKind_(kind)) {
+      e = entry(t.created_at, kind, ref, CASH_OUT_KINDS[kind] + (t.counterparty ? ': ' + String(t.counterparty) : ''));
+      post(e, CASH_OUT_ACCOUNTS[kind], grossC);
+      post(e, '1000', -grossC);
+    } else if (kind === 'payment') {
+      e = entry(t.created_at, 'payment', ref, 'Payment on account');
+      tenders(e, t, 1, grossC);
+      post(e, '1100', -grossC);
+    } else if (kind === 'deposit') {
+      e = entry(t.created_at, 'deposit', ref, 'Deposit on ' + String(t.counterparty || ''));
+      tenders(e, t, 1, grossC);
+      post(e, '2100', -grossC);
+    } else if (kind === 'deposit_refund') {
+      e = entry(t.created_at, 'deposit_refund', ref, 'Deposit refunded on ' + String(t.counterparty || ''));
+      post(e, '2100', grossC);
+      tenders(e, t, -1, grossC);
+    } else if (kind === 'purchase') {
+      e = entry(t.created_at, 'purchase', ref, String(t.note || 'Stock received') + (t.counterparty ? ' · ' + String(t.counterparty) : ''));
+      post(e, '1200', grossC);
+      post(e, '2300', -grossC);
+    } else {
+      continue;
+    }
+  }
+
+  /* a stock take's counted difference, one entry per count */
+  var takes = readRows_('StockTakes', STOCKTAKE_HEADERS).filter(function (s) { return inPeriod(s.created_at); });
+  var bySession = Object.create(null), sessionOrder = [];
+  for (var si = 0; si < takes.length; si++) {
+    var sid = String(takes[si].session_id || takes[si].id);
+    if (!bySession[sid]) { bySession[sid] = { at: String(takes[si].created_at || ''), deltaC: 0 }; sessionOrder.push(sid); }
+    bySession[sid].deltaC += cents_(takes[si].value_delta);
+  }
+  for (var so = 0; so < sessionOrder.length; so++) {
+    var st = bySession[sessionOrder[so]];
+    if (!st.deltaC) continue;
+    var se = entry(st.at, 'stocktake', sessionOrder[so], st.deltaC < 0 ? 'Stock take: shortage' : 'Stock take: surplus');
+    post(se, '1200', st.deltaC);
+    post(se, '5100', -st.deltaC);
+  }
+  entries.sort(function (a, b) { return a.date.localeCompare(b.date); });
+
+  /* square every entry to the cent, then total the accounts */
+  var totals = Object.create(null);
+  var rounded = 0;
+  var journal = entries.map(function (en, idx) {
+    var sum = 0;
+    for (var k in en.post) sum += en.post[k];
+    if (sum) { post(en, '6900', -sum); rounded++; }
+    var lines = [];
+    for (var oi = 0; oi < en.order.length; oi++) {
+      var code = en.order[oi];
+      var v = en.post[code];
+      if (!v) continue;
+      var tt = totals[code] || (totals[code] = { d: 0, c: 0 });
+      if (v > 0) tt.d += v; else tt.c += -v;
+      lines.push({ code: code, name: accountName[code], debit: v > 0 ? v / 100 : 0, credit: v < 0 ? -v / 100 : 0 });
+    }
+    return { no: idx + 1, date: en.date, kind: en.kind, ref: en.ref, memo: en.memo, lines: lines };
+  }).filter(function (j) { return j.lines.length; });
+
+  var trial = [];
+  var tdC = 0, tcC = 0;
+  for (var ci = 0; ci < CHART_OF_ACCOUNTS.length; ci++) {
+    var acc = CHART_OF_ACCOUNTS[ci];
+    var tot = totals[acc.code];
+    if (!tot) continue;
+    tdC += tot.d; tcC += tot.c;
+    trial.push({ code: acc.code, name: acc.name, type: acc.type, debit: tot.d / 100, credit: tot.c / 100, balance: (tot.d - tot.c) / 100 });
+  }
+  function dr(code) { var x = totals[code]; return x ? x.d - x.c : 0; }
+
+  var productC = -dr('4000'), serviceC = -dr('4010'), returnsC = dr('4100');
+  var netSalesC = productC + serviceC - returnsC;
+  var cogsC = dr('5000');
+  var gpC = netSalesC - cogsC;
+  var shrinkC = dr('5100'), paidC = dr('6000'), staffC = dr('6100'), roundC = dr('6900');
+  var expC = shrinkC + paidC + staffC + roundC;
+
+  var movements = ['1000', '1010', '1020', '1030', '1100', '1150', '1200', '2000', '2100', '2200', '2300'].map(function (code) {
+    var liability = code.charAt(0) === '2';
+    return { code: code, name: accountName[code], change: (liability ? -dr(code) : dr(code)) / 100 };
+  });
+
+  return {
+    period: { from: fromIso, to: toIso },
+    accounts: CHART_OF_ACCOUNTS,
+    pnl: {
+      productSales: productC / 100,
+      serviceSales: serviceC / 100,
+      returns: returnsC / 100,
+      netSales: netSalesC / 100,
+      cogs: cogsC / 100,
+      grossProfit: gpC / 100,
+      shrinkage: shrinkC / 100,
+      paidOut: paidC / 100,
+      staffExpenses: staffC / 100,
+      rounding: roundC / 100,
+      expenses: expC / 100,
+      netIncome: (gpC - expC) / 100,
+    },
+    trialBalance: { accounts: trial, debit: tdC / 100, credit: tcC / 100, balanced: tdC === tcC },
+    movements: movements,
+    journal: journal,
+    checks: { entries: journal.length, rounded: rounded, balanced: tdC === tcC },
   };
 }
 

@@ -26,6 +26,7 @@ export const DESTINATIONS = [
   { id: 'purchases', label: N_('Purchases'), screen: 'purchases', roles: MANAGER },
   { id: 'reports', label: N_('Reports'), screen: 'reports', roles: MANAGER },
   { id: 'dashboard', label: N_('Dashboard'), screen: 'dashboard', roles: null },
+  { id: 'accounts', label: N_('Accounts'), screen: 'accounts', roles: ADMIN },
   { id: 'audit', label: N_('Audit Log'), screen: 'audit', roles: ADMIN },
   { id: 'settings', label: N_('Settings'), screen: 'settings', roles: null },
 ];
