@@ -18,12 +18,17 @@ function totalLabel(t) {
   return t.key === 'tax' && t.rate ? `${t.label} (${t.rate}%)` : t.label;
 }
 
+function titleOf(doc) {
+  return doc.title ? String(doc.title) : '';
+}
+
 export function rollHtml(doc, fmt) {
   const dir = doc.dir === 'rtl' ? 'rtl' : 'ltr';
   return `
     <div class="receipt" dir="${dir}">
       <h1>${esc(doc.brand)}</h1>
       ${doc.store ? `<p class="r-store">${esc(doc.store)}</p>` : ''}
+      ${titleOf(doc) ? `<p class="r-title">${esc(titleOf(doc))}</p>` : ''}
       ${doc.meta.map((m) => `<p class="r-mid">${esc(m)}</p>`).join('')}
       <div class="r-rule"></div>
       ${doc.lines.map((l) => {
@@ -45,6 +50,7 @@ export function rollHtml(doc, fmt) {
 export function docToLines(doc, fmt) {
   const lines = [doc.brand];
   if (doc.store) lines.push(doc.store);
+  if (titleOf(doc)) lines.push(titleOf(doc));
   lines.push(...doc.meta, '—');
   for (const l of doc.lines) lines.push(`${l.name}${l.qty > 1 ? ` x${l.qty}` : ''} — ${fmt(l.amount)}`);
   lines.push('—');
@@ -75,6 +81,7 @@ export function sheetHtml(doc, fmt) {
   return `
     <div dir="${dir}">
       <p><strong>${esc(doc.brand)}</strong>${doc.store ? ` · ${esc(doc.store)}` : ''}</p>
+      ${titleOf(doc) ? `<h2>${esc(titleOf(doc))}</h2>` : ''}
       ${doc.meta.map((m) => `<p class="muted">${esc(m)}</p>`).join('')}
       <table>
         <thead><tr><th></th><th class="num">${esc(cols.qty)}</th><th class="num">${esc(cols.price)}</th><th class="num">${esc(cols.amount)}</th></tr></thead>
@@ -136,6 +143,7 @@ export function docToImage(doc, width, fmt) {
 
   text(doc.brand, { size: Math.round(base * 1.35), weight: 800, align: 'center' });
   if (doc.store) text(doc.store, { align: 'center' });
+  if (titleOf(doc)) text(titleOf(doc), { size: Math.round(base * 1.1), weight: 800, align: 'center' });
   for (const m of doc.meta) text(m, { size: Math.round(base * 0.85), align: 'center' });
   rule();
   for (const l of doc.lines) {

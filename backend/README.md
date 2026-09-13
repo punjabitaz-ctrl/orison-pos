@@ -71,7 +71,7 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 
 - `/api/customers` (search) and `/api/admin/customers` (create) are open to any role since v1.38.0. Only a manager or admin can set a credit limit when creating a customer.
 - `/api/customers/balance?customerId=` (any role): `owes`, `storeCredit`, `balance`, `creditLimit`, `available`. Totals only.
-- `/api/admin/customers/patch` (admin, manager): `creditLimit` (0 = none), `name`, `phone`, `email`, `note`. Audited as `customer.update`.
+- `/api/admin/customers/patch` (admin, manager): `creditLimit` (0 = none), `trn`, `name`, `phone`, `email`, `note`. Audited as `customer.update`. A customer's `trn` (15 digits in the UAE) is printed on tax invoices and returned as `customerTrn` on transactions.
 - **Credit limits at push:** a Net-30 charge that takes `owes` past `credit_limit` is refused with `credit_over_limit` unless the sale carries a `credit` approval for at least the overage. Earlier sales in the same batch count. A sale can carry `approvals: { discount, credit }`.
 - `/api/customers/ledger`, `/api/customers/receivables` (30/60/90+ aging) and `/api/customers/statement` (chronological debit and credit lines, with a running balance that closes on the ledger balance). All three are admin and manager.
 
@@ -112,7 +112,8 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 - **Audit log** `/api/audit` (admin): append-only, 100 per page, filter by actor, action and date. There is no update or delete path.
   - Records money (refunds and cash-outs as they sync, drawer opens, exports), stock (adjustments with a reason, stock takes, product create and edit, bulk pricing, serials, suppliers, purchase orders), repairs, and people and access (sign-ins, lockouts, unlocks, staff create and edit, PIN resets, revocations, customers, conflict reviews), plus store settings, reports and backups.
   - The full action list is in SECURITY.md → Audit log.
-- **Store settings** `/api/admin/store` (admin): any subset of `taxRate`, `tzOffsetMin`, `locale`, `country`, `currency`, `denoms`. Only fields that are sent are written. Changing currency without a ladder adopts that currency's notes and coins. The store `locale` also picks the receipt and customer-display language (en, ar, ur).
+- **Tax jurisdiction** (v1.40.0), in the same route: `taxJurisdiction` (`US` | `AE` | `NONE`), `taxRegNo` (a UAE TRN is 15 digits, spaces stripped) and `pricesIncludeTax`. Switching to `AE` adopts 5 % and inclusive prices unless the call says otherwise. With inclusive prices, `saleTotals_` charges the shelf price and extracts the tax as `gross × rate ÷ (100 + rate)`. Sale rows record `tax_inclusive` and `tax_rate`. Gross profit everywhere uses `saleNetExTax_` (subtotal − order discount − included tax, in cents).
+- **Store settings** `/api/admin/store` (admin): any subset of `taxRate`, `tzOffsetMin`, `locale`, `country`, `currency`, `denoms`, the discount limits and the tax fields above. Only fields that are sent are written. Changing currency without a ladder adopts that currency's notes and coins. The store `locale` also picks the receipt and customer-display language (en, ar, ur).
 
 ## Tab layout in the Sheet
 
@@ -120,13 +121,13 @@ Tabs are created, and new columns added, on first use; nothing needs creating by
 
 | Tab | Columns |
 | --- | --- |
-| `Meta` | `key`, `value` — store settings (`store_*`, incl. locale, country, currency, denoms, tax rate, tz offset), counters (`receipt_seq`, `repair_seq`), prefixes, report schedule |
+| `Meta` | `key`, `value` — store settings (`store_*`, incl. locale, country, currency, denoms, tax rate, tz offset; `tax_jurisdiction`, `tax_reg_no`, `prices_include_tax`; `discount_limit_*`), counters (`receipt_seq`, `repair_seq`), prefixes, report schedule |
 | `Users` | id, store_id, first_name, last_name, email, pin_salt, pin_hash, role, active, created_at |
 | `Devices` | id, user_id, device_id, first_seen, last_seen, revoked |
 | `Products` | id, sku, upc, name, category, cost_price, retail_price, is_serialized, on_hand, item_type (`product`/`service`), locked, reorder_point, last_sold_at, active, updated_at, taxable |
 | `Serials` | id, product_id, serial_number, status (`IN_STOCK`/`SOLD`/`VOIDED`), tx_id, updated_at |
-| `Transactions` | id, store_id, user_id, device_id, client_tx_id, kind, original_client_tx, counterparty, grand_total, status, tenders_json, items_json, note, created_at, subtotal, tax_amount, discount_pct, customer_id, receipt_no, channel, external_ref, approved_by |
-| `Customers` | id, store_id, name, phone, email, note, created_at, credit_limit |
+| `Transactions` | id, store_id, user_id, device_id, client_tx_id, kind, original_client_tx, counterparty, grand_total, status, tenders_json, items_json, note, created_at, subtotal, tax_amount, discount_pct, customer_id, receipt_no, channel, external_ref, approved_by, tax_inclusive, tax_rate |
+| `Customers` | id, store_id, name, phone, email, note, created_at, credit_limit, trn |
 | `Shifts` | id, store_id, user_id, device_id, opened_at, closed_at, opening_float, cash_expected, cash_declared, over_short, tenders_json, note, status, closed_by |
 | `TimeClock` | id, store_id, user_id, device_id, clock_in, clock_out, minutes, note, status, corrected_by |
 | `Conflicts` | id, store_id, type, serial_number, device_id, loser_client_tx, winner_tx_id, summary, status, created_at, reviewed_at, reviewed_by, dedupe_key |
@@ -170,7 +171,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 850 checks
+npm run test:backend   # 869 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.

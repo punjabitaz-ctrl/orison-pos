@@ -142,6 +142,26 @@ export const screen = {
             <button class="btn btn-sm" id="saveTax">${$t('Save')}</button>
           </span>
         </div>
+        <div class="set-row set-tax">
+          <span>${$t('Tax jurisdiction')}</span>
+          <span class="set-inline">
+            <select id="taxJur" class="field">
+              ${[['US', $t('United States — sales tax added to prices')], ['AE', $t('United Arab Emirates — VAT included in prices')], ['NONE', $t('No tax')]]
+                .map(([v, l]) => `<option value="${v}" ${(m.store.taxJurisdiction || 'US') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+            </select>
+          </span>
+        </div>
+        <div class="set-row" id="trnRow" ${(m.store.taxJurisdiction || 'US') === 'AE' ? '' : 'hidden'}>
+          <span>${$t('Tax Registration Number (TRN)')}</span>
+          <span class="set-inline"><input id="taxTrn" type="text" inputmode="numeric" maxlength="20" value="${esc(m.store.taxRegNo || '')}" placeholder="100XXXXXXXXXXX3" style="width:12em"></span>
+        </div>
+        <div class="set-row">
+          <span>${$t('Shelf prices include tax')}</span>
+          <span class="set-inline"><input id="taxIncl" type="checkbox" ${m.store.pricesIncludeTax ? 'checked' : ''}>
+            <button class="btn btn-sm" id="saveTaxRules">${$t('Save')}</button></span>
+        </div>
+        ${(m.store.taxJurisdiction === 'AE' && m.store.currency !== 'AED') ? `<p class="tag-warn">${esc($t('UAE tax invoices must show VAT in AED, but this store trades in {currency}.', { currency: m.store.currency }))}</p>` : ''}
+        ${(m.store.taxJurisdiction === 'AE' && !m.store.taxRegNo) ? `<p class="tag-warn">${esc($t('Add the shop\'s TRN - a UAE tax invoice must carry it.'))}</p>` : ''}
         <div class="set-row">
           <span>${$t('Discount limits (%) — over these a manager or admin approves')}</span>
           <span class="set-inline">
@@ -337,6 +357,26 @@ export const screen = {
         toast($t('Connected'), 'ok'); beep('ok');
       } catch (_) {
         toast($t('Backend unreachable — will retry once online'), 'warn');
+      }
+      redraw();
+    });
+
+    root.querySelector('#taxJur')?.addEventListener('change', (ev) => {
+      root.querySelector('#trnRow').hidden = ev.target.value !== 'AE';
+      /* the UAE's rules as the starting point; the admin can still untick */
+      if (ev.target.value === 'AE') root.querySelector('#taxIncl').checked = true;
+      if (ev.target.value === 'US') root.querySelector('#taxIncl').checked = false;
+    });
+    root.querySelector('#saveTaxRules')?.addEventListener('click', async () => {
+      const jur = root.querySelector('#taxJur').value;
+      const trn = root.querySelector('#taxTrn').value.replace(/\s+/g, '');
+      if (jur === 'AE' && trn && !/^\d{15}$/.test(trn)) { toast($t('A UAE TRN is 15 digits'), 'warn'); return; }
+      try {
+        await api.post('/api/admin/store', { taxJurisdiction: jur, taxRegNo: jur === 'AE' ? trn : '', pricesIncludeTax: root.querySelector('#taxIncl').checked });
+        await pull();
+        toast($t('Tax settings saved'), 'ok'); beep('ok');
+      } catch (err) {
+        toast((err && err.message) || $t('Save failed'), 'warn');
       }
       redraw();
     });

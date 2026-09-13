@@ -16,6 +16,11 @@ const WORDS = {
   discount: N_('Discount'),
   tax: N_('Tax'),
   total: N_('Total'),
+  totalInclTax: N_('Total incl. tax'),
+  taxIncluded: N_('Tax included'),
+  taxInvoice: N_('Tax Invoice'),
+  trn: N_('TRN'),
+  customerTrn: N_('Customer TRN'),
   change: N_('Change'),
   thanks: N_('Thank you for shopping at Orison!'),
   pending: N_('Receipt number pending sync'),
@@ -31,10 +36,32 @@ const WORDS = {
   amount: N_('Amount'),
 };
 
+/* In the UAE the tax is VAT, so its words are VAT's. */
+const VAT_WORDS = {
+  tax: N_('VAT'),
+  totalInclTax: N_('Total incl. VAT'),
+  taxIncluded: N_('VAT included'),
+};
+
+export function taxRules(store) {
+  const s = store || {};
+  const jur = s.taxJurisdiction || 'US';
+  return {
+    jurisdiction: jur,
+    invoice: jur === 'AE',
+    vat: jur === 'AE',
+    regNo: jur === 'AE' ? String(s.taxRegNo || '') : '',
+    inclusive: !!s.pricesIncludeTax,
+    rate: Number(s.taxRate) || 0,
+  };
+}
+
 export function receiptContext(store) {
   const code = storeLanguage();
   const labels = {};
   for (const [key, english] of Object.entries(WORDS)) labels[key] = tIn(code, english);
   const s = store || {};
-  return { storeName: s.name || '', labels, dir: dirOf(code), locale: s.locale || undefined };
+  const tax = taxRules(s);
+  if (tax.vat) for (const [key, english] of Object.entries(VAT_WORDS)) labels[key] = tIn(code, english);
+  return { storeName: s.name || '', storeAddress: s.address || '', labels, dir: dirOf(code), locale: s.locale || undefined, tax };
 }

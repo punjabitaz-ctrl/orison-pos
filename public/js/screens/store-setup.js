@@ -195,12 +195,16 @@ export async function openStoreSetup({ store, firstRun = false, onSaved } = {}) 
     saveBtn.disabled = true;
     saveBtn.textContent = $t('Saving…');
     try {
-      const saved = await api.post('/api/admin/store', {
+      const payload = {
         locale: localeTag(state.lang, state.country),
         country: state.country,
         currency: state.currency,
         denoms: state.denoms,
-      });
+      };
+      /* A shop set up in the UAE trades under UAE VAT: 5 %, prices including
+         it, a Tax Invoice. The TRN is added in Settings → Store. (v1.40.0) */
+      if (state.country === 'AE' && (current.taxJurisdiction || 'US') !== 'AE') payload.taxJurisdiction = 'AE';
+      const saved = await api.post('/api/admin/store', payload);
       const m = (await idb.get('meta', 'config')) || {};
       m.store = saved;
       await idb.put('meta', m, 'config');

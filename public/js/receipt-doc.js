@@ -20,6 +20,11 @@ const DEFAULT_LABELS = {
   discount: 'Discount',
   tax: 'Tax',
   total: 'Total',
+  totalInclTax: 'Total incl. tax',
+  taxIncluded: 'Tax included',
+  taxInvoice: 'Tax Invoice',
+  trn: 'TRN',
+  customerTrn: 'Customer TRN',
   change: 'Change',
   thanks: 'Thank you for shopping at Orison!',
   pending: 'Receipt number pending sync',
@@ -58,9 +63,16 @@ export function receiptDoc(tx, ctx = {}) {
   const labels = { ...DEFAULT_LABELS, ...(ctx.labels || {}) };
   const t = tx || {};
 
+  /* Tax rules come from the store (v1.40.0): a UAE store prints a Tax Invoice
+     with its TRN, names the tax VAT, and shows it as included in the price. */
+  const tax = ctx.tax || {};
+  const inclusive = t.taxInclusive != null ? !!t.taxInclusive : !!tax.inclusive;
   const meta = [dateTime(t.createdAt, ctx.locale)];
+  if (tax.invoice && ctx.storeAddress) meta.push(ctx.storeAddress);
+  if (tax.regNo) meta.push(`${labels.trn}: ${tax.regNo}`);
   if (t.cashier) meta.push(`${labels.cashier}: ${t.cashier}`);
   if (t.customerName) meta.push(`${labels.customer}: ${t.customerName}`);
+  if (t.customerTrn && tax.invoice) meta.push(`${labels.customerTrn}: ${t.customerTrn}`);
 
   const lines = (t.items || []).map((i) => {
     const qty = Math.max(1, Number(i.quantity) || 1);
@@ -80,10 +92,15 @@ export function receiptDoc(tx, ctx = {}) {
   if (cents(t.discount) > 0) {
     totals.push({ key: 'discount', label: labels.discount, amount: -cents(t.discount) / 100 });
   }
-  if (cents(t.taxAmount) > 0) {
-    totals.push({ key: 'tax', label: labels.tax, amount: cents(t.taxAmount) / 100, rate: Number(t.taxRate) || 0 });
+  const rate = t.taxRate != null ? Number(t.taxRate) || 0 : Number(tax.rate) || 0;
+  if (inclusive) {
+    /* the tax is inside the total, so it is shown after it, as information */
+    totals.push({ key: 'total', label: labels.totalInclTax, amount: cents(t.total) / 100, strong: true });
+    if (cents(t.taxAmount) > 0) totals.push({ key: 'tax', label: labels.taxIncluded, amount: cents(t.taxAmount) / 100, rate, included: true });
+  } else {
+    if (cents(t.taxAmount) > 0) totals.push({ key: 'tax', label: labels.tax, amount: cents(t.taxAmount) / 100, rate });
+    totals.push({ key: 'total', label: labels.total, amount: cents(t.total) / 100, strong: true });
   }
-  totals.push({ key: 'total', label: labels.total, amount: cents(t.total) / 100, strong: true });
 
   const tenders = (t.tenders || [])
     .filter((td) => cents(td.amount) > 0)
@@ -94,6 +111,7 @@ export function receiptDoc(tx, ctx = {}) {
   const receiptNo = String(t.receiptNo || '');
   return {
     brand: labels.brand,
+    title: tax.invoice ? labels.taxInvoice : '',
     store: String(ctx.storeName || ''),
     meta: meta.filter(Boolean),
     lines,

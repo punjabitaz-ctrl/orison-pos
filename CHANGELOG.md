@@ -5,6 +5,54 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.40.0] — 2026-09-13
+
+Sprint 5 of the staff-gaps program: tax jurisdictions. The United Arab Emirates
+is added alongside the United States.
+
+### Added
+
+- **Tax jurisdiction** (Settings → Store, admin):
+  - **United States**: sales tax added on top of shelf prices, as before.
+  - **United Arab Emirates**: VAT included in shelf prices, and the receipt is
+    a **Tax Invoice**.
+  - **No tax**.
+
+  Store settings gain `taxJurisdiction`, `taxRegNo` and `pricesIncludeTax`.
+  Choosing the UAE adopts 5 % VAT and VAT-inclusive prices unless a rate or
+  flag is given in the same call. A shop set up for the UAE country at first
+  run starts under UAE VAT. The change is audited as `store.settings` with the
+  fields that changed.
+- **Tax-inclusive pricing** in the money engine, on both server and client:
+  - The customer pays the shelf price, and the VAT is the part of it that is
+    VAT: `gross × rate ÷ (100 + rate)` on taxable lines, after discounts.
+  - Transactions record `tax_inclusive` and `tax_rate`, so a reprint or a
+    report reads the sale as it was rung.
+  - Repair invoices follow the same rules.
+- **UAE tax invoice.** The receipt is titled *Tax Invoice* and carries:
+  - the shop's address and **TRN**
+  - the customer's TRN when one is on file
+  - *Total incl. VAT*, followed by *VAT included (5 %)*
+
+  The roll, full-page, Bluetooth-image and ESC/POS renderers all print the
+  title. The TRN must be 15 digits.
+- **Customer TRN.** Customers gain `trn`, set at creation or from *Credit limit
+  & TRN* on the ledger. It is validated as 15 digits in the UAE and audited
+  when changed.
+- **Warnings in Settings** when a UAE store has no TRN, or trades in a currency
+  other than AED (a UAE tax invoice shows VAT in AED).
+- **Reports** label the tax line *VAT collected* in the UAE.
+
+### Fixed
+
+- **Gross profit counted VAT as profit.** It would have done so on any
+  tax-inclusive sale. It now excludes the tax inside the price (sale, reports,
+  category and product revenue, Drive export).
+- **Gross profit rounded the order discount to whole currency units.** For
+  example, 10 % of 99.99 was taken as 10, not 10.00 (`saleNetExTax_`, in
+  cents). One reconciliation test had encoded the old rounding and was
+  corrected.
+
 ## [1.39.0] — 2026-09-13
 
 Sprint 4 of the staff-gaps program: what managers could not do.

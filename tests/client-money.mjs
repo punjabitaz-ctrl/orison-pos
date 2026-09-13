@@ -487,3 +487,31 @@ describe('creditOverage()', async () => {
     assert.equal(creditOverage({ owes: 0.1, creditLimit: 0.2 }, 0.2), 0.1);
   });
 });
+
+/* ── tax-inclusive totals (v1.40.0) ────────────────────────── */
+
+describe('saleTotals() with prices including tax', async () => {
+  const { saleTotals } = await import('../public/js/money.js');
+
+  it('charges the shelf price and extracts UAE VAT from it', () => {
+    const t = saleTotals([{ unitPrice: 105, quantity: 1, taxable: true }], 0, 5, true);
+    assert.equal(t.total, 105);
+    assert.equal(t.tax, 5);
+    assert.equal(t.inclusive, true);
+  });
+
+  it('matches the server on a discounted, partly untaxed sale (total 239, VAT 9)', () => {
+    const t = saleTotals([
+      { unitPrice: 105, quantity: 2, discountPct: 10, taxable: true },
+      { unitPrice: 50, quantity: 1, taxable: false },
+    ], 0, 5, true);
+    assert.equal(t.total, 239);
+    assert.equal(t.tax, 9);
+  });
+
+  it('still adds tax on top when prices exclude it', () => {
+    const t = saleTotals([{ unitPrice: 100, quantity: 1, taxable: true }], 0, 7.25, false);
+    assert.equal(t.total, 107.25);
+    assert.equal(t.tax, 7.25);
+  });
+});

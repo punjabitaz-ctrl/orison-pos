@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.39.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.40.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -11,7 +11,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Register**: search by name, SKU or barcode, scan with a handheld reader or the camera, or tap a tile. The running total is pinned above the tab bar, and a cart survives a crash or refresh and is offered back on the next start.
 - **Serialized (IMEI) stock**: one unit at a time, captured at sale and bound to it through history, refunds and receipts.
 - **Split tender**: Cash, **Card** (recorded; kept out of the expected drawer), Store Credit and On-account (Net-30), with change and a quick-round keypad.
-- **Discounts and tax**: line and order discounts, and store sales tax on the taxable portion only. Discounts have per-role limits (cashier 10 %, manager 50 % by default); going over one needs a manager's approval.
+- **Discounts and tax**: line and order discounts, and tax on the taxable portion only. The store picks its **tax jurisdiction**: **United States** (sales tax added to prices) or **United Arab Emirates** (5 % VAT included in prices, receipts printed as a **Tax Invoice** with the shop's TRN and the customer's TRN). Discounts have per-role limits (cashier 10 %, manager 50 % by default); going over one needs a manager's approval.
 - **Manager approval at the till**: a manager types their own email and PIN on the cashier's screen to approve a refund, an over-limit discount, a no-sale drawer open or a deposit refund. The cashier stays signed in.
 - **Receipts**: gap-free numbers (`Orison-S000001`) allocated at sync. Print through a receipt printer, an ordinary office printer, or straight to a **Bluetooth** receipt printer. You can also send a PDF or text by WhatsApp or email.
 - **Cash drawer**: opens on a cash sale through a Bluetooth printer. Managers get **Open Drawer** with a reason, and every no-sale open is audited.
@@ -154,8 +154,8 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 ## Development
 
 ```bash
-npm test              # backend logic vs an in-memory Apps Script mock (850 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (474 checks)
+npm test              # backend logic vs an in-memory Apps Script mock (869 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (481 checks)
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
 npm run test:pdf      # receipt PDF/share smoke test in a headless browser
 npm run test:all      # all four

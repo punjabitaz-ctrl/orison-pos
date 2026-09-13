@@ -80,7 +80,7 @@ node tests/pdf-send-smoke.mjs     # receipt PDF/share — unrunnable on the curr
 npm run test:client               # client unit tests, incl. the translation-catalogue check
 ```
 
-Baseline at v1.39.0: backend-sim **850 / 0**, client **474 / 0**.
+Baseline at v1.40.0: backend-sim **869 / 0**, client **481 / 0**.
 
 - `npm test` == backend sim only. `npm run test:client` runs the pure-Node
   client unit suites via `node:test` + `fake-indexeddb`. `npm run test:all`
@@ -154,6 +154,11 @@ Baseline at v1.39.0: backend-sim **850 / 0**, client **474 / 0**.
   through `approvalFor_(tx, action)` — a sale may carry several.
 - A customer's money is computed in one place, `customerMoney_`. Don't add a
   second copy of that arithmetic.
+- **Tax can be inclusive.** `saleTotals_` / `saleTotals` take an `inclusive`
+  flag (the store's `pricesIncludeTax`); never compute tax as `rate × subtotal`
+  inline. A sale's revenue before tax is `saleNetExTax_(row)`; use it for any
+  profit figure. Receipt tax wording comes from `taxRules(store)` in
+  `receipt-labels.js`.
 - `deposit` and `deposit_refund` are server-written only; a device can never
   push them or tender `deposit`.
 - Services are never refundable (`service_not_refundable`), checked first.

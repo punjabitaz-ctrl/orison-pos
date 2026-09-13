@@ -7,7 +7,33 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.39.0 — managers can fix the day's loose ends
+## Latest: v1.40.0 — United Arab Emirates VAT
+
+**2026-09-13.** Sprint 5 of 5: the staff-gaps program is complete.
+
+- **Choose the tax jurisdiction** in Settings → Store: United States, United
+  Arab Emirates, or no tax.
+- **In the UAE**, prices on the shelf include 5 % VAT, and the customer pays
+  exactly that price. The receipt is a **Tax Invoice** with the shop's TRN, the
+  VAT included, and the customer's TRN for business customers.
+- **Reports no longer count VAT as profit.**
+
+**Before trading in the UAE:** enter the shop's 15-digit TRN, set the currency
+to AED, and add TRNs to business customers who need a full tax invoice. Have
+the invoice wording checked against the shop's own tax advice.
+
+**Validation:** backend-sim **PASS 869 / FAIL 0** · client units **PASS 481 /
+FAIL 0**. A UAE sale was checked in the browser: VAT extracted from the price,
+and the tax invoice showing both TRNs.
+
+### Deploying
+
+**Backend redeploy required.** Existing stores stay on United States rules
+until an admin changes them.
+
+---
+
+## v1.39.0 — managers can fix the day's loose ends
 
 **2026-09-13.** Sprint 4 of 5. Everything is on the Staff screen (Menu → Time
 Clock).

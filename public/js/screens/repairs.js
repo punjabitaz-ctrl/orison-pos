@@ -482,6 +482,7 @@ export const screen = {
           .concat(t.labour.map((l) => ({ name: l.description, quantity: 1, unitPrice: l.amount }))),
         subtotal: t.invoiceSubtotal,
         taxAmount: t.invoiceTax,
+        taxInclusive: !!(state.store && state.store.pricesIncludeTax),
         total: res.total,
         tenders: res.tenders || [],
         receiptNo: res.receiptNo,

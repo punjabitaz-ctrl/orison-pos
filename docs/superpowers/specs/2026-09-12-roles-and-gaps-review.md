@@ -10,6 +10,9 @@
 > limits) and #4 (whole-shop lookup).
 > ✅ v1.39.0 closed Managers #0 (Unlock button), #1 (cashier PIN resets), #2
 > (punch and shift corrections) and Cashiers #5.
+> ✅ v1.40.0 answered D4 (tax jurisdiction): United States and United Arab
+> Emirates. **Every §2 item is now closed** except Admin #5 (per-role
+> permission flags, deferred: the approval prompt covers the need).
 
 **Date:** 2026-09-12 · **Baseline:** v1.35.0 · **Method:** every route in
 `backend/Code.gs` `dispatch_` was read for its `requireRole_` gate and any role
@@ -218,7 +221,7 @@ reasons* table and the owner decisions:
 | **Store credit as an object / gift cards** | Open | Today, store credit is a tender plus a ledger line. A transferable balance with an expiry is a different model. |
 | **Accounting integration** | Open | Pick the package (QuickBooks, Xero, Zoho). Month-end runs on CSV today. |
 | **Marketplace API sync** | Open | v1.27.0 records these sales by hand. Automatic sync is a separate integration. |
-| **D4 Tax jurisdiction and invoice compliance** | Open, assumed US/NJ | Confirm the jurisdiction. Gap-free numbering (v1.22.0) is already in place. |
+| **D4 Tax jurisdiction and invoice compliance** | ✅ v1.40.0: US and UAE (VAT-inclusive, Tax Invoice with TRN) | Have the invoice wording checked by the shop's tax adviser. |
 
 ## 4. Other missing features noticed during this review
 

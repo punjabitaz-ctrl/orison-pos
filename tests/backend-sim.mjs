@@ -1797,7 +1797,8 @@ check('statement carries the changer/cashier',
     if (k === 'sale') {
       e.gross += t.grandTotal; e.tax += t.taxAmount || 0; e.count += 1;
       e.units += (t.items || []).reduce((s, it) => s + (it.quantity || 1), 0);
-      e.gp += (t.subtotal || 0) - Math.round((t.subtotal || 0) * (t.discountPct || 0) / 100) - costTotal;
+      /* v1.40.0: the order discount is taken in cents; it used to be rounded to whole currency units */
+      e.gp += (t.subtotal || 0) - Math.round((t.subtotal || 0) * 100 * (t.discountPct || 0) / 100) / 100 - costTotal;
       if (String(t.user_id) === diegoId) { eDiego.sales += t.grandTotal; eDiego.count += 1; }
     } else if (k === 'refund') {
       e.refunds += t.grandTotal; e.gp -= costTotal;
@@ -4321,6 +4322,83 @@ check('statement carries the changer/cashier',
   const fa = req('/api/audit', {}, { session: mAdm, params: { action: 'shift.force_close' } }).data.entries;
   check('both closes are audited, naming whose shift it was', fa.filter((e) => /Diego Ramirez/.test(e.summary)).length >= 2, JSON.stringify(fa.slice(0, 2)));
   check('the unlock path works for managers from the team list', req('/api/admin/unlock', { email: 'diego@example.com' }, { session: mMgr }).ok === true);
+}
+{
+  section('tax jurisdiction: United States and UAE (v1.40.0)');
+
+  const xAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const xMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const xUsers = req('/api/admin/users/list', {}, { session: xAdm }).data.users;
+  const xAdmId = xUsers.find((u) => u.email === 'tariq@example.com').id;
+  const st0 = req('/api/config', {}, { session: xMgr }).data.store;
+  check('a store defaults to the US: tax added on top, no registration number',
+    st0.taxJurisdiction === 'US' && st0.pricesIncludeTax === false && st0.taxRegNo === '', JSON.stringify(st0));
+
+  /* --- US: 7.25 % added on top --- */
+  req('/api/admin/store', { taxRate: 7.25 }, { session: xAdm });
+  const prod = req('/api/admin/products', { name: 'Tax Phone Case', sku: 'TAX-1', category: 'TAX', costPrice: 40, retailPrice: 100, onHand: 100 }, { session: xAdm }).data.id;
+  const svc = req('/api/admin/products', { name: 'Untaxed Setup', sku: 'TAX-SVC', category: 'TAX', costPrice: 0, retailPrice: 50, onHand: 0, itemType: 'service', taxable: false }, { session: xAdm }).data.id;
+  const sell = (id, items, discountPct) => req('/api/sync/push', { deviceId: 'till-tax', batch: [{
+    clientTxId: id, userId: xAdmId, discountPct: discountPct || 0, grandTotal: 1, createdAt: new Date().toISOString(),
+    tenders: [{ type: 'cash', amount: 500 }], items }] }, { session: xAdm }).data.results[0];
+  sell('tx-tax-us', [{ productId: prod, quantity: 1, unitPrice: 100 }]);
+  const us = req('/api/transactions', {}, { session: xAdm, params: { q: 'tx-tax-us' } }).data.transactions[0];
+  check('US: $100 + 7.25 % = $107.25, tax $7.25', us.grandTotal === 107.25 && us.taxAmount === 7.25 && us.taxInclusive === false, JSON.stringify(us));
+  check('US: profit is the price less cost, tax not counted', us.grossProfit === 60, String(us.grossProfit));
+
+  /* --- switching to the UAE --- */
+  check('a manager cannot change the jurisdiction', req('/api/admin/store', { taxJurisdiction: 'AE' }, { session: xMgr }).status === 403);
+  check('an unknown jurisdiction is refused', req('/api/admin/store', { taxJurisdiction: 'XX' }, { session: xAdm }).status === 400);
+  check('a UAE TRN that is not 15 digits is refused',
+    req('/api/admin/store', { taxJurisdiction: 'AE', taxRegNo: '12345' }, { session: xAdm }).status === 400);
+  const toAe = req('/api/admin/store', { taxJurisdiction: 'AE', taxRegNo: '100 2345 6789 0003' }, { session: xAdm });
+  check('switching to the UAE adopts 5 % VAT, prices including it, and stores the TRN without spaces',
+    toAe.ok && toAe.data.taxJurisdiction === 'AE' && toAe.data.taxRate === 5 && toAe.data.pricesIncludeTax === true && toAe.data.taxRegNo === '100234567890003',
+    JSON.stringify(toAe.data));
+  check('and the change is audited', req('/api/audit', {}, { session: xAdm, params: { action: 'store.settings' } }).data.entries.some((e) => /taxJurisdiction AE/.test(e.summary)));
+
+  /* --- UAE: 5 % VAT inside the shelf price --- */
+  sell('tx-tax-ae', [{ productId: prod, quantity: 1, unitPrice: 105 }]);
+  const ae = req('/api/transactions', {}, { session: xAdm, params: { q: 'tx-tax-ae' } }).data.transactions[0];
+  check('UAE: the customer pays the shelf price, AED 105', ae.grandTotal === 105, JSON.stringify(ae));
+  check('UAE: VAT is the part of it that is VAT, 105 × 5 / 105 = 5.00', ae.taxAmount === 5 && ae.taxInclusive === true && ae.taxRate === 5, JSON.stringify(ae));
+  check('UAE: profit excludes the VAT inside the price (105 − 5 − 40 = 60)', ae.grossProfit === 60, String(ae.grossProfit));
+
+  sell('tx-tax-ae-mix', [{ productId: prod, quantity: 2, unitPrice: 105, discountPct: 10 }, { productId: svc, quantity: 1, unitPrice: 50 }], 0);
+  const mix = req('/api/transactions', {}, { session: xAdm, params: { q: 'tx-tax-ae-mix' } }).data.transactions[0];
+  /* taxable gross 210 less 10 % = 189.00; VAT = round(18900 × 5 / 105) = 900 cents; untaxed service 50 */
+  check('UAE: a line discount and an untaxed line are handled (total 239, VAT 9.00)',
+    mix.grandTotal === 239 && mix.taxAmount === 9, JSON.stringify({ total: mix.grandTotal, tax: mix.taxAmount }));
+
+  const day = new Date().toISOString().slice(0, 10);
+  const rep = req('/api/reports', {}, { session: xAdm, params: { from: day, to: day } }).data;
+  const cat = (rep.byCategory || []).find((c) => c.category === 'TAX');
+  /* TAX category: US 100 (tax on top, revenue 100) + AE 105 → 100 + AE mix 189 → 180 + service 50 */
+  check('reports count VAT-inclusive category revenue without the VAT', cat && Math.abs(cat.sales - (100 + 100 + 180 + 50)) < 0.02, JSON.stringify(cat));
+
+  /* --- customer TRN --- */
+  check('a customer TRN must be 15 digits in the UAE',
+    req('/api/admin/customers', { name: 'Bad TRN LLC', trn: '999' }, { session: xMgr }).status === 400);
+  const b2b = req('/api/admin/customers', { name: 'Gulf Distribution LLC', trn: '100987654321003' }, { session: xMgr }).data.customer;
+  check('a business customer keeps their TRN', b2b.trn === '100987654321003');
+  req('/api/sync/push', { deviceId: 'till-tax', batch: [{ clientTxId: 'tx-tax-b2b', userId: xAdmId, customerId: b2b.id, discountPct: 0, grandTotal: 105,
+    createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 105 }], items: [{ productId: prod, quantity: 1, unitPrice: 105 }] }] }, { session: xAdm });
+  check('the sale carries the customer TRN for the invoice',
+    req('/api/transactions', {}, { session: xAdm, params: { q: 'tx-tax-b2b' } }).data.transactions[0].customerTrn === '100987654321003');
+  check('a manager can correct a customer TRN, audited',
+    req('/api/admin/customers/patch', { id: b2b.id, trn: '100987654321004' }, { session: xMgr }).data.changed === true &&
+    req('/api/audit', {}, { session: xAdm, params: { action: 'customer.update' } }).data.entries.some((e) => /TRN 100987654321003 → 100987654321004/.test(e.summary)));
+
+  /* --- repairs follow the store's tax rules --- */
+  const t = req('/api/repairs', { customerName: 'VAT Repair', customerPhone: '0509998888', deviceMake: 'Apple', deviceModel: 'iPhone 12', reportedFault: 'Screen' }, { session: xMgr }).data;
+  req('/api/repairs/labour', { id: t.id, add: { description: 'Screen fit', amount: 210 } }, { session: xMgr });
+  const det = req('/api/repairs/detail', {}, { session: xMgr, params: { id: t.id } }).data;
+  check('a repair invoice in the UAE includes VAT in the price (210, VAT 10)',
+    det.invoiceTotal === 210 && det.invoiceTax === 10, JSON.stringify({ total: det.invoiceTotal, tax: det.invoiceTax, sub: det.invoiceSubtotal }));
+
+  /* --- back to the US for anything after this section --- */
+  const back = req('/api/admin/store', { taxJurisdiction: 'US', taxRegNo: '', pricesIncludeTax: false, taxRate: 0 }, { session: xAdm });
+  check('switching back to the US turns inclusive pricing off', back.ok && back.data.pricesIncludeTax === false && back.data.taxJurisdiction === 'US', JSON.stringify(back.data));
 }
 {
   section('setup() deploy entry point (v1.35.1)');

@@ -175,6 +175,7 @@ web-accessible status page without app load.
 | See what's sat in stock too long | Products → *Aging* (admin/manager). |
 | Refund a sale | History → the sale → *Refund items*. A cashier's refund asks a manager to approve on the spot; **services are never refundable**. |
 | Approve at the till | When a cashier's screen asks for approval, the manager types **their own** email and PIN. It needs a connection. |
+| Trade in the UAE | Settings → Store → *Tax jurisdiction* → United Arab Emirates (admin): 5 % VAT included in prices. Enter the shop's 15-digit TRN, set the currency to AED, and add TRNs to business customers (Customers → *Credit limit & TRN*). Receipts print as a Tax Invoice. |
 | Change discount limits | Settings → Store → *Discount limits* (admin). Defaults: cashier 10 %, manager 50 %. |
 | Book in a repair | Menu → *Repairs* → *Book in a repair* (any role) — device, fault, condition, optional deposit. Parts, labour, status and collection from the ticket. Giving a deposit back is admin/manager; voiding a ticket is admin. |
 | Record an online / marketplace sale | Menu → *Sold Elsewhere* (admin/manager) — channel + order reference; stock moves like any sale. |

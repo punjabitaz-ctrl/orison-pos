@@ -25,7 +25,10 @@ export function clampPct(x) {
   return n;
 }
 
-export function saleTotals(lines, orderPct, taxRate) {
+/* `inclusive` mirrors saleTotals_ in Code.gs: with prices including tax (UAE
+   VAT) the customer pays the shelf price and the tax is the part of it that is
+   tax, gross x rate / (100 + rate). */
+export function saleTotals(lines, orderPct, taxRate, inclusive) {
   var pct = clampPct(orderPct);
   var subC = 0, taxableSubC = 0, discC = 0;
   for (var i = 0; i < lines.length; i++) {
@@ -39,9 +42,11 @@ export function saleTotals(lines, orderPct, taxRate) {
   }
   var oC = Math.round(subC * pct / 100);
   var tb = Math.round(taxableSubC * (100 - pct) / 100);
-  var t = Math.round(tb * (Number(taxRate) || 0) / 100);
-  var grandC = subC - oC + t;
+  var rate = Number(taxRate) || 0;
+  var t = inclusive ? Math.round(tb * rate / (100 + rate)) : Math.round(tb * rate / 100);
+  var grandC = inclusive ? subC - oC : subC - oC + t;
   return {
+    inclusive: !!inclusive,
     subtotal: subC / 100,
     discount: (discC + oC) / 100,
     tax: t / 100,

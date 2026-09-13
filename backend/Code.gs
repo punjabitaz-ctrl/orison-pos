@@ -347,8 +347,8 @@ var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pi
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
-var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by'];
-var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at', 'credit_limit'];
+var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by', 'tax_inclusive', 'tax_rate'];
+var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at', 'credit_limit', 'trn'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status', 'closed_by'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 var SUPPLIER_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'address', 'payment_terms', 'active', 'created_at'];
@@ -623,7 +623,24 @@ function getStore_() {
        without a manager's approval. Admins are never limited. */
     discountLimitCashier: storePct_(k.discount_limit_cashier, DEFAULT_DISCOUNT_LIMIT_CASHIER),
     discountLimitManager: storePct_(k.discount_limit_manager, DEFAULT_DISCOUNT_LIMIT_MANAGER),
+    /* Tax jurisdiction (v1.40.0). US: sales tax added on top of shelf prices.
+       AE: 5 % VAT included in the shelf price, a receipt titled Tax Invoice
+       carrying the shop's TRN. NONE: no tax wording at all. */
+    taxJurisdiction: TAX_JURISDICTIONS[k.tax_jurisdiction] ? String(k.tax_jurisdiction) : 'US',
+    taxRegNo: String(k.tax_reg_no || ''),
+    pricesIncludeTax: String(k.prices_include_tax) === '1',
   };
+}
+
+var TAX_JURISDICTIONS = {
+  US: { label: 'sales_tax', invoice: false, defaultRate: null, inclusive: false },
+  AE: { label: 'vat', invoice: true, defaultRate: 5, inclusive: true },
+  NONE: { label: 'none', invoice: false, defaultRate: 0, inclusive: false },
+};
+
+/* A UAE Tax Registration Number is 15 digits. */
+function isTrn_(v) {
+  return /^[0-9]{15}$/.test(String(v || ''));
 }
 
 var DEFAULT_DISCOUNT_LIMIT_CASHIER = 10;
@@ -2203,7 +2220,7 @@ function syncPush_(session, payload) {
       var taxRate = num_(store.taxRate);
       var totals = null;
       if (newFormat && !hasErrors && resolved.length) {
-        totals = saleTotals_(resolved.map(saleLine_), orderPct, taxRate);
+        totals = saleTotals_(resolved.map(saleLine_), orderPct, taxRate, store.pricesIncludeTax);
       }
       var grandTotal = totals
         ? totals.total
@@ -2239,6 +2256,8 @@ function syncPush_(session, payload) {
         channel: normaliseChannel_(tx.channel),
         external_ref: String(tx.externalRef || '').slice(0, 120),
         approved_by: saleApprovedBy,
+        tax_inclusive: totals && totals.inclusive ? 1 : '',
+        tax_rate: totals ? taxRate : '',
       };
       if (reuseId && hasErrors) {
         /* still blocked: report the fresh failure against the SAME transaction
@@ -2941,7 +2960,7 @@ function transactions_(session, params) {
     else if (isCashOutKind_(kindName)) grossProfit = 0;
     else if (hasMoney) {
       /* net revenue = line subtotal − order discount; margin = that − cost. */
-      grossProfit = num_(t.subtotal) - Math.round(num_(t.subtotal) * num_(t.discount_pct) / 100) - costTotal;
+      grossProfit = round2_(saleNetExTax_(t) - costTotal);
     }
     out.push({
       id: String(t.id),
@@ -2957,6 +2976,8 @@ function transactions_(session, params) {
       counterparty: String(t.counterparty || ''),
       cashier: nameById[String(t.user_id)] || '',
       approvedBy: t.approved_by ? (nameById[String(t.approved_by)] || '') : '',
+      taxInclusive: String(t.tax_inclusive) === '1',
+      taxRate: t.tax_rate === '' || t.tax_rate == null ? null : num_(t.tax_rate),
       grandTotal: num_(t.grand_total),
       subtotal: num_(t.subtotal),
       taxAmount: num_(t.tax_amount),
@@ -2983,6 +3004,7 @@ function transactions_(session, params) {
     if (cust) {
       out[out.length - 1].customerId = String(t.customer_id);
       out[out.length - 1].customer = String(cust.name || '');
+      out[out.length - 1].customerTrn = String(cust.trn || '');
     }
     /* Gross profit is a manager/admin figure and stays off cashier responses. */
     if (isStore) out[out.length - 1].grossProfit = grossProfit;
@@ -3062,6 +3084,7 @@ function customerDto_(c) {
   return {
     id: String(c.id), name: String(c.name || ''), phone: String(c.phone || ''), email: String(c.email || ''),
     creditLimit: num_(c.credit_limit) > 0 ? num_(c.credit_limit) : 0,
+    trn: String(c.trn || ''),
   };
 }
 
@@ -3112,6 +3135,11 @@ function adminCustomerPatch_(session, payload) {
         changes.push(f + ' changed');
       }
     });
+    if (payload.trn != null) {
+      var trn = String(payload.trn).replace(/\s+/g, '');
+      if (trn && getStore_().taxJurisdiction === 'AE' && !isTrn_(trn)) throw statusError_(400, 'A UAE TRN is 15 digits');
+      if (trn !== String(cust.trn || '')) { patch.trn = trn; changes.push('TRN ' + (cust.trn || '—') + ' → ' + (trn || '—')); }
+    }
     if (payload.creditLimit != null && payload.creditLimit !== '') {
       var lim = num_(payload.creditLimit);
       if (!(lim >= 0)) throw statusError_(400, 'A credit limit cannot be negative');
@@ -3143,6 +3171,11 @@ function adminCustomers_(session, payload) {
     note: String((payload && payload.note) || '').trim(),
     created_at: new Date().toISOString(),
   };
+  if (payload && payload.trn) {
+    var newTrn = String(payload.trn).replace(/\s+/g, '');
+    if (getStore_().taxJurisdiction === 'AE' && !isTrn_(newTrn)) throw statusError_(400, 'A UAE TRN is 15 digits');
+    row.trn = newTrn;
+  }
   if (isStoreRole_(session.role) && payload && payload.creditLimit != null && payload.creditLimit !== '') {
     row.credit_limit = Math.max(0, round2_(num_(payload.creditLimit)));
   }
@@ -3502,8 +3535,8 @@ function reports_(session, params) {
     return cost;
   }
   function gpOf_(t, costTotal) {
-    if (String(t.subtotal || '') === '') return 0;
-    return num_(t.subtotal) - Math.round(num_(t.subtotal) * num_(t.discount_pct) / 100) - costTotal;
+    var net = saleNetExTax_(t);
+    return net == null ? 0 : round2_(net - costTotal);
   }
   function tendersOf_(t) {
     var out = [];
@@ -3559,7 +3592,11 @@ function reports_(session, params) {
         var orderPct = num_(t.discount_pct);
         var lineNetCents = round2_(num_(it.unitPrice) * 100 * qty * (1 - linePct / 100));
         var revCents = round2_(lineNetCents * (100 - orderPct) / 100);
-        var lineRev = revCents / 100;
+        /* a VAT-inclusive line earned its price less the VAT inside it */
+        if (String(t.tax_inclusive) === '1' && it.taxable !== false && num_(t.tax_rate) > 0) {
+          revCents = revCents * 100 / (100 + num_(t.tax_rate));
+        }
+        var lineRev = Math.round(revCents) / 100;
         /* what the discounts took off this line, before tax */
         saleDiscC += Math.max(0, Math.round(num_(it.unitPrice) * 100 * qty) - Math.round(revCents));
         var costPer = (typeof it.unitCost === 'number' && it.unitCost > 0) ? it.unitCost
@@ -5137,7 +5174,7 @@ function repairInvoice_(row, prodById, store) {
   var items = repairInvoiceItems_(row, prodById);
   var totals = saleTotals_(items.map(function (it) {
     return { unitPrice: it.unitPrice, quantity: it.quantity, discountPct: 0, taxable: it.taxable !== false };
-  }), 0, num_(store.taxRate));
+  }), 0, num_(store.taxRate), store.pricesIncludeTax);
   var heldC = cents_(row.deposit_total);
   return {
     items: items,
@@ -5194,6 +5231,7 @@ function repairCollect_(session, payload) {
       tenders_json: JSON.stringify(tenders), items_json: JSON.stringify(items),
       note: 'Repair ' + String(row.ticket_no || '') + ' collected', created_at: now,
       subtotal: totals.subtotal, tax_amount: totals.tax, discount_pct: 0,
+      tax_inclusive: totals.inclusive ? 1 : '', tax_rate: num_(store.taxRate),
       customer_id: String(row.customer_id || ''), receipt_no: receiptNo,
       channel: 'in_store', external_ref: String(row.ticket_no || ''),
     }]);
@@ -6334,6 +6372,26 @@ function adminStore_(session, payload) {
     denomsUpd = currencyDenoms_(currencyUpd);
   }
 
+  var jurisdictionUpd, regNoUpd, inclusiveUpd;
+  if (payload.taxJurisdiction != null && payload.taxJurisdiction !== '') {
+    jurisdictionUpd = String(payload.taxJurisdiction).toUpperCase();
+    if (!TAX_JURISDICTIONS[jurisdictionUpd]) throw statusError_(400, 'taxJurisdiction must be US, AE or NONE');
+  }
+  if (payload.taxRegNo != null) {
+    regNoUpd = String(payload.taxRegNo).replace(/\s+/g, '');
+    var effJur = jurisdictionUpd || getStore_().taxJurisdiction;
+    if (regNoUpd && effJur === 'AE' && !isTrn_(regNoUpd)) throw statusError_(400, 'A UAE TRN is 15 digits');
+    if (regNoUpd.length > 40) throw statusError_(400, 'That registration number is too long');
+  }
+  if (payload.pricesIncludeTax != null) inclusiveUpd = payload.pricesIncludeTax === true || payload.pricesIncludeTax === 1 || payload.pricesIncludeTax === '1';
+  /* Choosing the UAE without saying otherwise adopts its rules: 5 % VAT, prices
+     including VAT. An explicit rate or flag in the same call wins. */
+  if (jurisdictionUpd && jurisdictionUpd !== getStore_().taxJurisdiction) {
+    var jd = TAX_JURISDICTIONS[jurisdictionUpd];
+    if (taxUpd === undefined && jd.defaultRate != null) taxUpd = jd.defaultRate;
+    if (inclusiveUpd === undefined) inclusiveUpd = jd.inclusive;
+  }
+
   var limitCashierUpd, limitManagerUpd;
   if (payload.discountLimitCashier != null && payload.discountLimitCashier !== '') {
     limitCashierUpd = num_(payload.discountLimitCashier);
@@ -6347,6 +6405,9 @@ function adminStore_(session, payload) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
+    if (jurisdictionUpd !== undefined) setKv_('tax_jurisdiction', jurisdictionUpd);
+    if (regNoUpd !== undefined) setKv_('tax_reg_no', regNoUpd);
+    if (inclusiveUpd !== undefined) setKv_('prices_include_tax', inclusiveUpd ? 1 : 0);
     if (limitCashierUpd !== undefined) setKv_('discount_limit_cashier', limitCashierUpd);
     if (limitManagerUpd !== undefined) setKv_('discount_limit_manager', limitManagerUpd);
     if (taxUpd !== undefined) setKv_('store_tax_rate', taxUpd);
@@ -6499,7 +6560,7 @@ function driveExport_(session, payload, params) {
       var gp = null;
       if (k === 'refund') gp = -costTotal;
       else if (isCashOutKind_(k) || SERVER_ONLY_KINDS[k]) gp = 0;
-      else if (String(t.subtotal || '') !== '') gp = num_(t.subtotal) - Math.round(num_(t.subtotal) * num_(t.discount_pct) / 100) - costTotal;
+      else if (saleNetExTax_(t) != null) gp = round2_(saleNetExTax_(t) - costTotal);
       if (gp != null) gpDay += gp;
       row.push(String(costTotal));
       row.push(gp == null ? '' : String(gp));
@@ -6590,6 +6651,18 @@ function cents_(n) {
   return Math.round((Number(n) || 0) * 100 + 0.000000001);
 }
 
+/* What a sale earned before tax: its line subtotal, less the order discount,
+   less the tax when prices included it. In cents throughout - the old inline
+   form rounded the order discount to whole currency units. Null for legacy
+   rows with no stored subtotal. */
+function saleNetExTax_(t) {
+  if (String(t.subtotal == null ? '' : t.subtotal) === '') return null;
+  var subC = cents_(t.subtotal);
+  var netC = subC - Math.round(subC * clampPct_(num_(t.discount_pct)) / 100);
+  if (String(t.tax_inclusive) === '1') netC -= cents_(t.tax_amount);
+  return netC / 100;
+}
+
 function saleLine_(r) {
   return {
     unitPrice: r.unitPrice,
@@ -6602,7 +6675,10 @@ function saleLine_(r) {
 /* One money engine. Line price is taxed only on 100% of the order's post-
    discount basis for the taxable lines — order percent prorates across all
    lines, including exempt ones, so mixed baskets never over-withhold. */
-function saleTotals_(lines, orderPct, taxRate) {
+/* `inclusive`: shelf prices already contain the tax (UAE VAT). The customer
+   pays the shelf price; the tax is the part of it that is tax,
+   gross x rate / (100 + rate). Otherwise tax is added on top (US sales tax). */
+function saleTotals_(lines, orderPct, taxRate, inclusive) {
   var pct = clampPct_(orderPct);
   var rate = num_(taxRate);
   var subC = 0, taxableSubC = 0, discC = 0;
@@ -6617,9 +6693,12 @@ function saleTotals_(lines, orderPct, taxRate) {
   }
   var orderC = Math.round(subC * pct / 100);
   var taxBasisC = Math.round(taxableSubC * (100 - pct) / 100);
-  var taxC = Math.round(taxBasisC * rate / 100);
-  var grandC = subC - orderC + taxC;
+  var taxC = inclusive
+    ? Math.round(taxBasisC * rate / (100 + rate))
+    : Math.round(taxBasisC * rate / 100);
+  var grandC = inclusive ? subC - orderC : subC - orderC + taxC;
   return {
+    inclusive: !!inclusive,
     subC: subC,
     discC: discC,
     taxableSubC: taxableSubC,

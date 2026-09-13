@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.39.0** — Sprint 4 of the staff-gaps program: manager team tools, punch corrections, closing forgotten shifts (`2026-09-13`) |
-| Validation bar | `backend-sim` **PASS 850 / FAIL 0** · client units **PASS 474 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.40.0** — Sprint 5 of the staff-gaps program: tax jurisdictions, United States and United Arab Emirates (`2026-09-13`) |
+| Validation bar | `backend-sim` **PASS 869 / FAIL 0** · client units **PASS 481 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,23 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.40.0** Staff-gaps Sprint 5: tax jurisdiction. The store gains
+  `taxJurisdiction` (US | AE | NONE), `taxRegNo` (a 15-digit TRN) and
+  `pricesIncludeTax`; switching to AE adopts 5 % inclusive.
+  - `saleTotals_` and `saleTotals` take `inclusive`; sale rows get
+    `tax_inclusive` and `tax_rate`.
+  - `saleNetExTax_` replaces three inline GP formulas that counted included
+    VAT as profit and rounded the order discount to whole units.
+  - Category and product revenue is ex-VAT for inclusive rows.
+  - Customers gain `trn`; transactions carry `customerTrn`, `taxInclusive` and
+    `taxRate`.
+  - Client: `taxRules(store)` and VAT wording in `receipt-labels.js`;
+    `receipt-doc.js` builds a title (*Tax Invoice*), the store address and TRN,
+    the customer TRN, and puts *Total incl. VAT* before *VAT included*. Every
+    renderer prints the title.
+  - Settings → Store tax controls with AED and TRN warnings; store setup puts
+    a UAE country on AE; customer TRN editing.
+  - 19 sim checks; 7 client tests.
 - **v1.39.0** Staff-gaps Sprint 4. `/api/admin/users/list` is open to managers,
   and `/api/admin/pin` lets a manager reset cashiers only.
   `/api/timeclock/correct` (reason required, bounds checks, own punch admin
@@ -474,7 +491,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **850 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **869 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -605,8 +622,9 @@ is below, in the order it should be picked up.
      Unlock button~~ — **done v1.39.0**.
 3. **Business review items still open** (review §3): trade-in / buyback
    (*owner: cost basis*), layaway / deposits on sales, store credit as an
-   object / gift cards, accounting integration, marketplace API sync, tax
-   jurisdiction D4 (assumed US/NJ).
+   object / gift cards, accounting integration, marketplace API sync. (Tax
+   jurisdiction: done v1.40.0 — US and UAE; *have a tax adviser check the UAE
+   invoice wording*.)
 4. **Warranty per serial, unscheduled.** Cheap now that fitted serials point at
    their invoice. Needs the owner's warranty terms. (Repair refunds are settled:
    services are not refunded, v1.33.0.)

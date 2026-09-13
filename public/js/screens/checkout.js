@@ -71,6 +71,7 @@ export const screen = {
         sale.items.map((i) => ({ unitPrice: i.unitPrice, quantity: i.quantity, discountPct: i.discountPct, taxable: i.taxable })),
         sale.orderPct,
         store.taxRate || 0,
+        !!store.pricesIncludeTax,
       );
     }
     sale.totals = computeTotals();
@@ -210,8 +211,8 @@ export const screen = {
             <div class="co-breakdown">
               <div class="co-bd-row"><span>${$t('Subtotal')}</span><b>${fmt(t.subtotal)}</b></div>
               <div class="co-bd-row">${t.discount > 0 ? `<span>${$t('Discount')}</span><b class="neg">${fmt(t.discount, '−')}</b>` : `<span>${$t('Discount')}</span><b>${fmt(0)}</b>`}</div>
-              <div class="co-bd-row"><span>${$t('Tax')}${store.taxRate != null ? ` (${store.taxRate}%)` : ''}</span><b>${fmt(t.tax)}</b></div>
-              <div class="co-bd-row co-bd-total"><span>${$t('Total due')}</span><strong>${fmt(sale.total)}</strong></div>
+              <div class="co-bd-row"><span>${store.taxJurisdiction === 'AE' ? (t.inclusive ? $t('VAT included') : $t('VAT')) : (t.inclusive ? $t('Tax included') : $t('Tax'))}${store.taxRate != null ? ` (${store.taxRate}%)` : ''}</span><b>${fmt(t.tax)}</b></div>
+              <div class="co-bd-row co-bd-total"><span>${t.inclusive ? (store.taxJurisdiction === 'AE' ? $t('Total incl. VAT') : $t('Total incl. tax')) : $t('Total due')}</span><strong>${fmt(sale.total)}</strong></div>
             </div>
           </section>
 
@@ -326,7 +327,7 @@ export const screen = {
             let matches = [];
             try { matches = (await api.get('/api/customers?q=' + encodeURIComponent(q))).customers || []; } catch (_) {}
             const rows = matches.map((c) => `
-              <button class="cust-row" data-id="${esc(c.id)}" data-name="${esc(c.name)}">
+              <button class="cust-row" data-id="${esc(c.id)}" data-name="${esc(c.name)}" data-trn="${esc(c.trn || '')}">
                 ${esc(c.name)}<em class="muted">${esc(c.phone || c.email || '')}</em>
               </button>`).join('');
             const create = `<button class="cust-row cust-new" data-create="1" data-name="${esc(q)}">＋ ${esc($t('New customer: {name}', { name: q }))}</button>`;
@@ -346,7 +347,7 @@ export const screen = {
             } catch (_) { toast($t('Could not add customer'), 'warn'); }
             return;
           }
-          customer = { id: btn.dataset.id, name: btn.dataset.name };
+          customer = { id: btn.dataset.id, name: btn.dataset.name, trn: btn.dataset.trn || '' };
           render();
           loadBalance(customer);
         });
@@ -512,6 +513,8 @@ export const screen = {
         discount: sale.totals.discount,
         taxAmount: sale.totals.tax,
         taxRate: store.taxRate || 0,
+        taxInclusive: !!sale.totals.inclusive,
+        customerTrn: customer && customer.trn ? customer.trn : '',
         total: sale.total,
         tenders: tenders.filter((t) => t.amount > 0).map((t) => ({ type: t.type, amount: t.amount })),
         receiptNo,

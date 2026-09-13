@@ -121,7 +121,7 @@ export const screen = {
           <div class="dash-kpi"><span>${$t('Revenue')}</span><strong>${money(sum.netRevenue)}</strong></div>
           <div class="dash-kpi"><span>${$t('Sales')}</span><strong>${sum.salesCount}</strong></div>
           <div class="dash-kpi"><span>${$t('Avg ticket')}</span><strong>${money(sum.avgTicket)}</strong></div>
-          <div class="dash-kpi"><span>${$t('Tax collected')}</span><strong>${money(sum.tax)}</strong></div>
+          <div class="dash-kpi"><span>${(ctx.state && ctx.state.store && ctx.state.store.taxJurisdiction === 'AE') ? $t('VAT collected') : $t('Tax collected')}</span><strong>${money(sum.tax)}</strong></div>
           <div class="dash-kpi dash-gp"><span>${$t('Gross profit')}</span><strong>${money(sum.grossProfit)}</strong></div>
           <div class="dash-kpi"><span>${$t('Discounts given')}</span><strong>${money(sum.discounts || 0)}</strong>${sum.approvedDiscounts ? `<em class="muted">${esc($tn('{n} approved', '{n} approved', sum.approvedDiscounts))}</em>` : ''}</div>
         </div>

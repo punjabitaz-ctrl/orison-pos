@@ -12,6 +12,9 @@ missing items.
 **Baseline:** v1.35.1 · backend-sim 719 · client 459 · pdf-smoke unrunnable
 here.
 
+**Outcome:** all five sprints shipped on 2026-09-13 as v1.36.0 → v1.40.0 ·
+backend-sim 869 · client 481.
+
 Every sprint follows the `AGENTS.md` protocol: one tagged revision, docs in
 lockstep, all gates green, and every new string translated into Arabic and Urdu.
 
@@ -106,7 +109,7 @@ These are defaults, and each one is a setting the admin can change.
 
 **Scope:** review §2 *Managers* #0–#2.
 
-- **Team list for managers** in Settings, showing name, role and status.
+- **Team list for managers** on the Staff screen (as built; planned for Settings), showing name, role and status.
   - *Unlock* works for anyone.
   - *Reset PIN* works for cashiers only.
 - **Time punch correction.** `/api/timeclock/correct` sets clock-in or clock-out

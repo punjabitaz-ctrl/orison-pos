@@ -114,3 +114,38 @@ describe('receiptDoc()', () => {
     assert.deepEqual(d.footer, ['شكراً']);
   });
 });
+
+describe('UAE tax invoice (v1.40.0)', () => {
+  const uae = { storeName: 'Main Street', storeAddress: 'Al Karama, Dubai', tax: { invoice: true, vat: true, regNo: '100234567890003', inclusive: true, rate: 5 },
+    labels: { taxInvoice: 'Tax Invoice', trn: 'TRN', customerTrn: 'Customer TRN', totalInclTax: 'Total incl. VAT', taxIncluded: 'VAT included' } };
+  const vatSale = {
+    createdAt: at, cashier: 'Amara Njoku', customerName: 'Gulf Distribution LLC', customerTrn: '100987654321003',
+    items: [{ name: 'Phone case', quantity: 1, unitPrice: 105 }],
+    subtotal: 105, discount: 0, taxAmount: 5, taxRate: 5, total: 105, tenders: [{ type: 'cash', amount: 105 }],
+  };
+
+  it('is titled Tax Invoice and carries the shop\'s address and TRN', () => {
+    const doc = receiptDoc(vatSale, uae);
+    assert.equal(doc.title, 'Tax Invoice');
+    assert.ok(doc.meta.includes('Al Karama, Dubai'));
+    assert.ok(doc.meta.includes('TRN: 100234567890003'));
+  });
+
+  it('prints the customer\'s TRN when there is one', () => {
+    assert.ok(receiptDoc(vatSale, uae).meta.includes('Customer TRN: 100987654321003'));
+    assert.ok(!receiptDoc({ ...vatSale, customerTrn: '' }, uae).meta.some((m) => m.startsWith('Customer TRN')));
+  });
+
+  it('shows the total including VAT, then the VAT inside it', () => {
+    const keys = receiptDoc(vatSale, uae).totals.map((t) => `${t.key}:${t.label}:${t.amount}`);
+    assert.deepEqual(keys, ['subtotal:Subtotal:105', 'total:Total incl. VAT:105', 'tax:VAT included:5']);
+    assert.equal(receiptDoc(vatSale, uae).totals.find((t) => t.key === 'tax').rate, 5);
+  });
+
+  it('a US receipt has no title and adds the tax before the total', () => {
+    const us = receiptDoc({ ...vatSale, customerTrn: '', taxInclusive: false, total: 110.25, taxAmount: 5.25 }, { tax: { invoice: false, inclusive: false } });
+    assert.equal(us.title, '');
+    assert.deepEqual(us.totals.map((t) => t.key), ['subtotal', 'tax', 'total']);
+    assert.ok(!us.meta.some((m) => /TRN/.test(m)));
+  });
+});

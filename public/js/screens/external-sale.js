@@ -181,7 +181,7 @@ export function openExternalSaleDialog(ctx, onDone) {
 
     const totals = saleTotals(
       lines.map((l) => ({ unitPrice: l.price, quantity: l.qty, discountPct: 0, taxable: false })),
-      0, 0,
+      0, 0, false,
     );
     const when = dateStr ? new Date(dateStr + 'T12:00:00').toISOString() : new Date().toISOString();
 
