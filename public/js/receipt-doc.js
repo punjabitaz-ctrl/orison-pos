@@ -25,6 +25,9 @@ const DEFAULT_LABELS = {
   taxInvoice: 'Tax Invoice',
   trn: 'TRN',
   customerTrn: 'Customer TRN',
+  warrantyYear: '1-year warranty',
+  warranty30: '30-day warranty',
+  warrantyUntil: 'until',
   change: 'Change',
   thanks: 'Thank you for shopping at Orison!',
   pending: 'Receipt number pending sync',
@@ -79,12 +82,21 @@ export function receiptDoc(tx, ctx = {}) {
     const pct = Math.min(100, Math.max(0, Number(i.discountPct) || 0));
     const gross = cents(i.unitPrice) * qty;
     const net = gross - Math.round(gross * pct / 100);
+    const days = Number(i.warrantyDays) || 0;
+    let warranty = '';
+    if (days > 0) {
+      const sold = t.createdAt ? new Date(t.createdAt) : new Date();
+      const until = new Date(sold.getTime() + days * 86400000);
+      const date = isNaN(until) ? '' : until.toLocaleDateString(ctx.locale || 'en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+      warranty = `${days >= 365 ? labels.warrantyYear : labels.warranty30}${date ? ` ${labels.warrantyUntil} ${date}` : ''}`;
+    }
     return {
       name: i.serialNumber ? `${i.name} [${i.serialNumber}]` : String(i.name || ''),
       qty,
       unitPrice: cents(i.unitPrice) / 100,
       discountPct: pct,
       amount: net / 100,
+      warranty,
     };
   });
 

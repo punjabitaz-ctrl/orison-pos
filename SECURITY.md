@@ -170,7 +170,7 @@ privileged action. The role is carried in the signed session token; because a
 role **change** revokes that user's sessions immediately, a promotion or
 demotion takes effect at the first request after the change (no 12-hour lag).
 
-Verified route by route against `Code.gs` at v1.40.0. The task-level view —
+Verified route by route against `Code.gs` at v1.41.0. The task-level view —
 what each role can actually do on screen, and what they cannot — is in
 [`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
 
@@ -186,6 +186,7 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/products`, `/api/sync/pull` | any; cost prices only to admin, manager |
 | `/api/config` | any; the staff roster only to admin, manager |
 | `/api/customers` (search), `/api/customers/balance` (totals only), `/api/admin/customers` (create; no credit limit) | any signed-in role |
+| `/api/warranty` (IMEI, serial or receipt; ≥4 characters) | any signed-in role |
 | `/api/admin/customers/patch` (credit limit, details) | admin, manager |
 | `/api/transactions?lookup=1` | a cashier, store-wide, sales and refunds only, ≥4-character search, 20 rows, no cost or margin |
 | `/api/sync/push` — Net-30 charge past a customer's credit limit | needs a `credit` approval covering the overage (`credit_over_limit`) |

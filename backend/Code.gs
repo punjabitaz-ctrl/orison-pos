@@ -114,6 +114,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/repairs/deposit-refund': return repairDepositRefund_(session, payload);
     case '/api/drawer/open':     return drawerOpen_(session, payload);
     case '/api/approve':         return approve_(session, payload);
+    case '/api/warranty':        return warrantyLookup_(session, params);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
@@ -345,7 +346,7 @@ function markAllDevicesRevoked_(uid) {
 var META_HEADERS    = ['key', 'value'];
 var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at'];
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
-var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable'];
+var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable', 'warranty_days'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
 var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by', 'tax_inclusive', 'tax_rate'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at', 'credit_limit', 'trn'];
@@ -361,7 +362,8 @@ var REPAIR_HEADERS = ['id', 'store_id', 'ticket_no', 'customer_id', 'customer_na
   'customer_phone', 'device_make', 'device_model', 'device_serial', 'reported_fault',
   'condition_note', 'accessories', 'status', 'parts_json', 'labour_json',
   'estimate_total', 'deposit_total', 'final_total', 'assigned_to', 'note',
-  'created_by', 'created_at', 'updated_at', 'promised_at', 'closed_at', 'invoice_tx_id'];
+  'created_by', 'created_at', 'updated_at', 'promised_at', 'closed_at', 'invoice_tx_id',
+  'warranty_status', 'warranty_until', 'warranty_receipt'];
 
 /* The flow a job actually walks. Order matters: the UI renders it in this
  * order, and "can this move forward" is an index comparison. */
@@ -1944,9 +1946,28 @@ function productsSnapshot_(role) {
       /* pre-1.2.6 rows have no taxable cell; default them to taxable so a
          store that sets tax later doesn't silently exempt older items. */
       taxable: String(p.taxable) === '0' ? false : true,
+      warrantyDays: productWarrantyDays_(p),
     });
   }
   return out;
+}
+
+/* Warranty (v1.41.0): 1 year for brand-new hardware, 30 days otherwise, none
+   for a service. A product with no setting yet reads as the default for its
+   type, so nothing sold before this release silently loses cover. */
+var WARRANTY_CHOICES = { 0: 1, 30: 1, 365: 1 };
+
+function productWarrantyDays_(p) {
+  var v = p ? p.warranty_days : '';
+  if (v !== '' && v != null && WARRANTY_CHOICES[num_(v)]) return num_(v);
+  return String(p && p.item_type) === 'service' ? 0 : 30;
+}
+
+function parseWarrantyDays_(v) {
+  if (v == null || v === '') return null;
+  var n = num_(v);
+  if (!WARRANTY_CHOICES[n]) throw statusError_(400, 'Warranty must be none, 30 days or 1 year');
+  return n;
 }
 
 /* ------------------------------------------------------------------ *
@@ -2399,6 +2420,11 @@ function resolvedItems_(resolved) {
       ? r.unitCost
       : Math.round(num_(r.product.cost_price) * 100) / 100;
     if (uc > 0) it.unitCost = uc;
+    /* the warranty the customer was sold, fixed at the moment of sale */
+    if (!r.isRefundLine) {
+      var wdays = productWarrantyDays_(r.product);
+      if (wdays > 0) it.warrantyDays = wdays;
+    }
     return it;
   });
 }
@@ -2769,6 +2795,7 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
 
   var userIds = {};
   for (var u2 = 0; u2 < userRows.length; u2++) userIds[String(userRows[u2].id)] = true;
+  for (var rl = 0; rl < resolved.length; rl++) resolved[rl].isRefundLine = true;
   var txId = Utilities.getUuid();
   newTxRows.push({
     id: txId,
@@ -2996,6 +3023,7 @@ function transactions_(session, params) {
         };
         /* Cost is manager/admin-only: a cashier's copy never carries it. */
         if (isStore) mapped.unitCost = num_(it.unitCost);
+        if (num_(it.warrantyDays) > 0) mapped.warrantyDays = num_(it.warrantyDays);
         return mapped;
       }),
       note: String(t.note || ''),
@@ -4593,6 +4621,115 @@ function purchaseOrderCancel_(session, payload) {
  *  terminal cannot know the next number without risking a collision.
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ *  Warranty (v1.41.0)
+ *
+ *  A warranty belongs to a sale line: the days were captured when it was sold,
+ *  and it runs from the sale. Look one up by the IMEI on the device or the
+ *  receipt number on the paper. A unit refunded since has no cover.
+ * ------------------------------------------------------------------ */
+
+var DAY_MS = 86400000;
+
+function warrantyMatches_(txRows, q) {
+  var query = String(q || '').trim();
+  if (!query) return [];
+  var lower = query.toLowerCase();
+  var sales = [];
+  var refundsByOriginal = Object.create(null);
+  for (var i = 0; i < txRows.length; i++) {
+    var t = txRows[i];
+    if (String(t.status) !== 'COMPLETED') continue;
+    var kind = String(t.kind || 'sale');
+    if (kind === 'refund') {
+      var key = String(t.original_client_tx || '');
+      (refundsByOriginal[key] = refundsByOriginal[key] || []).push(t);
+    } else if (kind === 'sale') {
+      sales.push(t);
+    }
+  }
+  var out = [];
+  var now = Date.now();
+  for (var s = 0; s < sales.length; s++) {
+    var sale = sales[s];
+    var items = itobjs_(sale.items_json);
+    var byReceipt = String(sale.receipt_no || '').toLowerCase() === lower;
+    var bySerial = items.some(function (it) { return it.serialNumber && String(it.serialNumber).toLowerCase() === lower; });
+    if (!byReceipt && !bySerial) continue;
+
+    /* what has been refunded against this sale: serials, and quantities */
+    var refundedSerials = Object.create(null);
+    var refundedQty = Object.create(null);
+    var rf = refundsByOriginal[String(sale.client_tx_id || '')] || [];
+    for (var r = 0; r < rf.length; r++) {
+      var ritems = itobjs_(rf[r].items_json);
+      for (var ri = 0; ri < ritems.length; ri++) {
+        if (ritems[ri].serialNumber) refundedSerials[String(ritems[ri].serialNumber)] = true;
+        else refundedQty[String(ritems[ri].productId)] = (refundedQty[String(ritems[ri].productId)] || 0) + (ritems[ri].quantity || 1);
+      }
+    }
+    var soldMs = Date.parse(String(sale.created_at));
+    var lines = [];
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k];
+      var days = num_(it.warrantyDays);
+      if (!(days > 0)) continue;
+      if (bySerial && !byReceipt && String(it.serialNumber || '').toLowerCase() !== lower) continue;
+      var expiresMs = soldMs + days * DAY_MS;
+      var qty = it.quantity || 1;
+      var refunded = it.serialNumber
+        ? !!refundedSerials[String(it.serialNumber)]
+        : (refundedQty[String(it.productId)] || 0) >= qty;
+      lines.push({
+        productId: String(it.productId || ''),
+        name: String(it.name || ''),
+        serialNumber: it.serialNumber ? String(it.serialNumber) : null,
+        quantity: qty,
+        warrantyDays: days,
+        soldAt: String(sale.created_at),
+        expiresAt: isNaN(expiresMs) ? '' : new Date(expiresMs).toISOString(),
+        daysLeft: isNaN(expiresMs) ? 0 : Math.max(0, Math.ceil((expiresMs - now) / DAY_MS)),
+        status: refunded ? 'refunded' : (now > expiresMs ? 'expired' : 'active'),
+      });
+    }
+    out.push({
+      receiptNo: String(sale.receipt_no || ''),
+      clientTxId: String(sale.client_tx_id || ''),
+      soldAt: String(sale.created_at),
+      customerId: String(sale.customer_id || ''),
+      lines: lines,
+    });
+  }
+  out.sort(function (a, b) { return String(b.soldAt).localeCompare(String(a.soldAt)); });
+  return out;
+}
+
+/* The cover that applies to one serial today: its most recent sale. */
+function newestCover_(matches, serial) {
+  var lower = String(serial || '').toLowerCase();
+  for (var i = 0; i < matches.length; i++) {
+    for (var j = 0; j < matches[i].lines.length; j++) {
+      var l = matches[i].lines[j];
+      if (l.serialNumber && l.serialNumber.toLowerCase() === lower) {
+        return { status: l.status, expiresAt: l.expiresAt, receiptNo: matches[i].receiptNo, name: l.name, soldAt: l.soldAt };
+      }
+    }
+  }
+  return null;
+}
+
+function warrantyLookup_(session, params) {
+  if (!session || !session.uid) throw statusError_(401, 'Sign in first');
+  var q = String((params && params.q) || '').trim();
+  if (q.length < 4) throw statusError_(400, 'Type at least four characters to look up a sale');
+  var matches = warrantyMatches_(readRows_('Transactions', TX_HEADERS), q).slice(0, 10);
+  var custs = readRows_('Customers', CUSTOMERS_HEADERS);
+  var custName = Object.create(null);
+  for (var i = 0; i < custs.length; i++) custName[String(custs[i].id)] = String(custs[i].name || '');
+  matches.forEach(function (m) { m.customer = m.customerId ? (custName[m.customerId] || '') : ''; delete m.customerId; });
+  return { query: q, matches: matches };
+}
+
 var REPAIR_ROLES_ANY = ['admin', 'manager', 'cashier'];
 
 function repairs_(session, payload, params) {
@@ -4612,6 +4749,10 @@ function repairCreate_(session, payload) {
   var name = String(payload.customerName || '').trim().slice(0, 120);
   var phone = String(payload.customerPhone || '').trim().slice(0, 40);
   if (!name && !phone) throw statusError_(400, 'A name or a phone number is needed to give the device back.');
+
+  /* a device we sold: record whether it is still under our warranty */
+  var serialIn = String(payload.deviceSerial || '').trim().slice(0, 60);
+  var cover = serialIn ? newestCover_(warrantyMatches_(readRows_('Transactions', TX_HEADERS), serialIn), serialIn) : null;
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
@@ -4646,10 +4787,13 @@ function repairCreate_(session, payload) {
       promised_at: String(payload.promisedAt || '').slice(0, 10),
       closed_at: '',
       invoice_tx_id: '',
+      warranty_status: cover ? cover.status : '',
+      warranty_until: cover ? cover.expiresAt : '',
+      warranty_receipt: cover ? cover.receiptNo : '',
     }]);
     logAudit_(session, 'repair.created', 'repair', id,
       ticketNo + ' - ' + (make + ' ' + model).trim() + ' - ' + fault.slice(0, 80), '');
-    return { id: id, ticketNo: ticketNo, status: 'intake' };
+    return { id: id, ticketNo: ticketNo, status: 'intake', warranty: cover };
   } finally {
     lock.releaseLock();
   }
@@ -4688,6 +4832,9 @@ function repairRow_(row) {
     createdAt: String(row.created_at || ''),
     updatedAt: String(row.updated_at || ''),
     promisedAt: String(row.promised_at || ''),
+    warrantyStatus: String(row.warranty_status || ''),
+    warrantyUntil: String(row.warranty_until || ''),
+    warrantyReceipt: String(row.warranty_receipt || ''),
   };
 }
 
@@ -6170,6 +6317,8 @@ function adminProducts_(session, payload) {
   var reorderPoint = itemType === 'product' && !isSerialized && payload.reorderPoint != null
     ? num_(payload.reorderPoint)
     : '';
+  var warrantyDays = parseWarrantyDays_(payload.warrantyDays);
+  if (warrantyDays == null) warrantyDays = itemType === 'service' ? 0 : 30;
 
   /* SKU/UPC uniqueness is a first-committed-wins claim, so the catalog read
      happens under the lock — two terminals creating the same SKU in parallel
@@ -6202,6 +6351,7 @@ function adminProducts_(session, payload) {
       active: 1,
       updated_at: now,
       taxable: taxable,
+      warranty_days: warrantyDays,
     }]);
     recordPriceChange_({ id: id, name: name }, 'cost_price', '', cost, 'create', null, String(session.uid || ''));
     recordPriceChange_({ id: id, name: name }, 'retail_price', '', retail, 'create', null, String(session.uid || ''));
@@ -6448,6 +6598,8 @@ function adminProductsPatch_(session, payload) {
     if (payload.locked != null) patch.locked = payload.locked ? 1 : 0;
     if (payload.taxable === true) patch.taxable = 1;
     else if (payload.taxable === false) patch.taxable = 0;
+    var wd = parseWarrantyDays_(payload.warrantyDays);
+    if (wd != null) patch.warranty_days = wd;
     var itemType = String(product.item_type || 'product');
     if (payload.reorderPoint !== undefined && payload.reorderPoint !== null) {
       if (itemType === 'service' || String(product.is_serialized) === '1') {
@@ -6466,7 +6618,7 @@ function adminProductsPatch_(session, payload) {
       recordPriceChange_(product, 'cost_price', num_(product.cost_price), num_(patch.cost_price), 'patch', null, String(session.uid || ''));
     }
     var changes = [];
-    var labels = { retail_price: 'retail', cost_price: 'cost', locked: 'locked', taxable: 'taxable', reorder_point: 'reorder at' };
+    var labels = { retail_price: 'retail', cost_price: 'cost', locked: 'locked', taxable: 'taxable', reorder_point: 'reorder at', warranty_days: 'warranty days' };
     for (var key in labels) {
       if (patch[key] !== undefined && String(patch[key]) !== String(product[key])) {
         changes.push(labels[key] + ' ' + String(product[key]) + ' → ' + String(patch[key]));

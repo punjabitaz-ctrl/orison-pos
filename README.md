@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.40.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.41.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -18,12 +18,14 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Customer display**: a second screen mirrors the cart, totals and change due, and never shows cost, margin or customer records.
 - **Sold Elsewhere**: record an online, marketplace or phone sale so stock and reports stay true.
 - **Services are not refundable**, on screen or on the server.
+- **Warranty**: each product carries 1 year (brand-new hardware), 30 days or none. The warranty is fixed at the moment of sale, printed on the receipt with its end date, and checkable by IMEI or receipt number.
 
 ### Repairs
 
 - **Tickets** (`Orison-R000001`): device, reported fault, condition and accessories, with statuses from intake to collected, plus unrepairable, cancelled and voided.
 - **Parts and labour**: parts come off the shelf when fitted and go back if returned or the job is closed.
 - **Deposits** at intake are held as a liability, not revenue, and applied automatically when the customer collects. A manager can give one back.
+- **Warranty at intake**: a device we sold is flagged on the ticket as under warranty or expired, with its original receipt.
 
 ### Money and accountability
 
@@ -154,8 +156,8 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 ## Development
 
 ```bash
-npm test              # backend logic vs an in-memory Apps Script mock (869 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (481 checks)
+npm test              # backend logic vs an in-memory Apps Script mock (886 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (482 checks)
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
 npm run test:pdf      # receipt PDF/share smoke test in a headless browser
 npm run test:all      # all four

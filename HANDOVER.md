@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.40.0** — Sprint 5 of the staff-gaps program: tax jurisdictions, United States and United Arab Emirates (`2026-09-13`) |
-| Validation bar | `backend-sim` **PASS 869 / FAIL 0** · client units **PASS 481 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.41.0** — warranty per sale (30 days / 1 year brand-new hardware) (`2026-09-13`) |
+| Validation bar | `backend-sim` **PASS 886 / FAIL 0** · client units **PASS 482 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,16 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.41.0** Warranty (program `2026-09-13-warranty-marketplace-accounting-program.md`, Sprint 1).
+  - `Products.warranty_days` (0 / 30 / 365); `productWarrantyDays_` defaults
+    services to 0 and everything else to 30.
+  - `resolvedItems_` captures `warrantyDays` except on refund lines
+    (`isRefundLine`).
+  - `warrantyMatches_` / `newestCover_` / `/api/warranty` take an IMEI or a
+    receipt and return active, expired or refunded.
+  - Repair create stamps `warranty_*` on the ticket.
+  - Client: `warranty.js` (options, chip, lookup dialog); the receipt line
+    `warranty` text on every renderer; product forms. 17 sim checks.
 - **v1.40.0** Staff-gaps Sprint 5: tax jurisdiction. The store gains
   `taxJurisdiction` (US | AE | NONE), `taxRegNo` (a 15-digit TRN) and
   `pricesIncludeTax`; switching to AE adopts 5 % inclusive.
@@ -491,7 +501,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **869 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **886 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -620,12 +630,12 @@ is below, in the order it should be picked up.
      lookup~~ — **done v1.38.0**.
    - ~~**Managers:** cashier PIN resets, punch corrections, forgotten shifts,
      Unlock button~~ — **done v1.39.0**.
-3. **Business review items still open** (review §3): trade-in / buyback
-   (*owner: cost basis*), layaway / deposits on sales, store credit as an
-   object / gift cards, accounting integration, marketplace API sync. (Tax
-   jurisdiction: done v1.40.0 — US and UAE; *have a tax adviser check the UAE
-   invoice wording*.)
-4. **Warranty per serial, unscheduled.** Cheap now that fitted serials point at
+3. **Program in flight** — `docs/superpowers/plans/2026-09-13-warranty-marketplace-accounting-program.md`:
+   warranty ✅ v1.41.0; **marketplace sync from a Google Sheet (v1.42.0)** and
+   **in-app GAAP accounting (v1.43.0)** next. Owner closed gift cards and
+   permission switches (not wanted). Still open: trade-in / buyback (cost
+   basis), layaway. *Have a tax adviser check the UAE invoice wording.*
+4. ~~**Warranty per serial**~~ — **done v1.41.0**. Cheap now that fitted serials point at
    their invoice. Needs the owner's warranty terms. (Repair refunds are settled:
    services are not refunded, v1.33.0.)
 5. **First print on real hardware.** v1.34.0 is tested against exact bytes and

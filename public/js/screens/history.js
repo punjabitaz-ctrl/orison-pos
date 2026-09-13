@@ -86,7 +86,7 @@ export const screen = {
           customerTrn: t.customerTrn || '',
           taxInclusive: t.taxInclusive,
           taxRate: t.taxRate,
-          items: t.items.map((i) => ({ productId: i.productId, name: i.name, quantity: i.quantity, unitPrice: i.unitPrice, discountPct: i.discountPct, serialNumber: i.serialNumber, unitCost: i.unitCost })),
+          items: t.items.map((i) => ({ productId: i.productId, name: i.name, quantity: i.quantity, unitPrice: i.unitPrice, discountPct: i.discountPct, serialNumber: i.serialNumber, unitCost: i.unitCost, warrantyDays: i.warrantyDays })),
           clientTxId: t.clientTxId,
           receiptNo: t.receiptNo || '',
           approvedBy: t.approvedBy || '',

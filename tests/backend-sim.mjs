@@ -4401,6 +4401,82 @@ check('statement carries the changer/cashier',
   check('switching back to the US turns inclusive pricing off', back.ok && back.data.pricesIncludeTax === false && back.data.taxJurisdiction === 'US', JSON.stringify(back.data));
 }
 {
+  section('warranty per sale (v1.41.0)');
+
+  const wAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const wMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const wCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const wUsers = req('/api/admin/users/list', {}, { session: wAdm }).data.users;
+  const amaraId = wUsers.find((u) => u.email === 'amara@example.com').id;
+  req('/api/admin/store', { taxRate: 0 }, { session: wAdm });
+
+  const newPhone = req('/api/admin/products', { name: 'Brand New Phone', sku: 'WR-NEW', category: 'WR', costPrice: 500, retailPrice: 800, isSerialized: true, warrantyDays: 365 }, { session: wMgr }).data.id;
+  const usedPhone = req('/api/admin/products', { name: 'Used Phone', sku: 'WR-USED', category: 'WR', costPrice: 100, retailPrice: 200, isSerialized: true }, { session: wMgr }).data.id;
+  const svc = req('/api/admin/products', { name: 'Setup Service', sku: 'WR-SVC', category: 'WR', retailPrice: 20, itemType: 'service' }, { session: wMgr }).data.id;
+  const cable = req('/api/admin/products', { name: 'Cable', sku: 'WR-CBL', category: 'WR', costPrice: 2, retailPrice: 10, onHand: 20, warrantyDays: 0 }, { session: wMgr }).data.id;
+  check('a warranty outside none / 30 days / 1 year is refused',
+    req('/api/admin/products', { name: 'Odd', sku: 'WR-ODD', retailPrice: 1, warrantyDays: 90 }, { session: wMgr }).status === 400);
+  const snap = req('/api/products', {}, { session: wCash }).data;
+  const wd = (sku) => snap.find((p) => p.sku === sku).warrantyDays;
+  check('brand-new hardware set to 1 year, other products default to 30 days, services to none',
+    wd('WR-NEW') === 365 && wd('WR-USED') === 30 && wd('WR-SVC') === 0 && wd('WR-CBL') === 0,
+    JSON.stringify({ n: wd('WR-NEW'), u: wd('WR-USED'), s: wd('WR-SVC'), c: wd('WR-CBL') }));
+  req('/api/admin/serials', { productId: newPhone, serialNumbers: ['WR-IMEI-NEW', 'WR-IMEI-NEW2'] }, { session: wMgr });
+  req('/api/admin/serials', { productId: usedPhone, serialNumbers: ['WR-IMEI-USED'] }, { session: wMgr });
+
+  const sold = req('/api/sync/push', { deviceId: 'till-wr', batch: [{ clientTxId: 'tx-wr-1', userId: amaraId, discountPct: 0, grandTotal: 1030,
+    createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 1030 }], items: [
+      { productId: newPhone, quantity: 1, unitPrice: 800, serialNumber: 'WR-IMEI-NEW' },
+      { productId: usedPhone, quantity: 1, unitPrice: 200, serialNumber: 'WR-IMEI-USED' },
+      { productId: svc, quantity: 1, unitPrice: 20 },
+      { productId: cable, quantity: 1, unitPrice: 10 },
+    ] }] }, { session: wCash }).data.results[0];
+  check('the sale goes through', sold.accepted === true, JSON.stringify(sold));
+
+  req('/api/admin/products/patch', { productId: usedPhone, warrantyDays: 365 }, { session: wMgr });
+  check('changing a product warranty later is audited', req('/api/audit', {}, { session: wAdm, params: { action: 'product.update' } }).data.entries
+    .some((e) => e.targetId === usedPhone && /warranty days 30 → 365/.test(e.summary)));
+
+  check('a lookup needs four characters', req('/api/warranty', {}, { session: wCash, params: { q: 'WR' } }).status === 400);
+  const byImei = req('/api/warranty', {}, { session: wCash, params: { q: 'WR-IMEI-NEW' } }).data;
+  const nl = byImei.matches[0] && byImei.matches[0].lines;
+  check('a cashier looks up the new phone by IMEI: 1 year, active', nl && nl.length === 1 && nl[0].warrantyDays === 365 && nl[0].status === 'active', JSON.stringify(byImei));
+  const expected = Date.parse(nl[0].soldAt) + 365 * 86400000;
+  check('and it runs a year from the sale', Math.abs(Date.parse(nl[0].expiresAt) - expected) < 1000);
+  const usedLine = req('/api/warranty', {}, { session: wCash, params: { q: 'WR-IMEI-USED' } }).data.matches[0].lines[0];
+  check('the used phone keeps the 30 days it was sold with, despite the later edit', usedLine.warrantyDays === 30, JSON.stringify(usedLine));
+
+  const receipt = req('/api/transactions', {}, { session: wAdm, params: { q: 'tx-wr-1' } }).data.transactions[0].receiptNo;
+  const byReceipt = req('/api/warranty', {}, { session: wCash, params: { q: receipt } }).data.matches[0];
+  check('by receipt number: both phones are covered, the service and the no-warranty cable are not',
+    byReceipt.lines.length === 2 && byReceipt.lines.every((l) => /Phone/.test(l.name)), JSON.stringify(byReceipt.lines.map((l) => l.name)));
+
+  req('/api/sync/push', { deviceId: 'till-wr', batch: [{ clientTxId: 'rf-wr-1', kind: 'refund', originalClientTx: 'tx-wr-1', userId: amaraId, grandTotal: 200,
+    createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 200 }], items: [{ productId: usedPhone, quantity: 1, unitPrice: 200, serialNumber: 'WR-IMEI-USED' }] }] }, { session: wMgr });
+  check('a refunded unit shows its warranty as refunded',
+    req('/api/warranty', {}, { session: wCash, params: { q: 'WR-IMEI-USED' } }).data.matches[0].lines[0].status === 'refunded');
+  const rfRow = req('/api/transactions', {}, { session: wAdm, params: { q: 'rf-wr-1' } }).data.transactions[0];
+  check('a refund line carries no warranty of its own', rfRow && rfRow.items.every((i) => i.warrantyDays === undefined), JSON.stringify(rfRow && rfRow.items));
+  const saleRow = req('/api/transactions', {}, { session: wCash, params: { q: receipt, lookup: '1' } }).data.transactions[0];
+  check('sale lines carry their warranty for reprints',
+    saleRow.items.find((i) => i.serialNumber === 'WR-IMEI-NEW').warrantyDays === 365 && saleRow.items.find((i) => i.name === 'Setup Service').warrantyDays === undefined, JSON.stringify(saleRow.items));
+
+  req('/api/sync/push', { deviceId: 'till-wr', batch: [{ clientTxId: 'tx-wr-old', userId: amaraId, discountPct: 0, grandTotal: 800,
+    createdAt: new Date(Date.now() - 400 * 86400000).toISOString(), tenders: [{ type: 'cash', amount: 800 }],
+    items: [{ productId: newPhone, quantity: 1, unitPrice: 800, serialNumber: 'WR-IMEI-NEW2' }] }] }, { session: wAdm });
+  check('a phone sold 400 days ago is out of its year',
+    req('/api/warranty', {}, { session: wCash, params: { q: 'WR-IMEI-NEW2' } }).data.matches[0].lines[0].status === 'expired');
+
+  const inCover = req('/api/repairs', { customerName: 'W Cust', customerPhone: '0501', deviceMake: 'Brand', deviceModel: 'New', deviceSerial: 'WR-IMEI-NEW', reportedFault: 'No sound' }, { session: wCash }).data;
+  check('booking in a device still in warranty says so', inCover.warranty && inCover.warranty.status === 'active' && inCover.warranty.receiptNo === receipt, JSON.stringify(inCover.warranty));
+  const inList = req('/api/repairs/detail', {}, { session: wCash, params: { id: inCover.id } }).data;
+  check('and the ticket keeps it', inList.warrantyStatus === 'active' && inList.warrantyReceipt === receipt, JSON.stringify({ s: inList.warrantyStatus, r: inList.warrantyReceipt }));
+  const outCover = req('/api/repairs', { customerName: 'W Cust', customerPhone: '0501', deviceMake: 'Brand', deviceModel: 'New', deviceSerial: 'WR-IMEI-NEW2', reportedFault: 'Cracked' }, { session: wCash }).data;
+  check('an expired one says expired', outCover.warranty && outCover.warranty.status === 'expired');
+  const foreign = req('/api/repairs', { customerName: 'W Cust', customerPhone: '0501', deviceMake: 'Other', deviceModel: 'Shop', deviceSerial: 'NOT-OURS-123', reportedFault: 'Dead' }, { session: wCash }).data;
+  check('a device we never sold has no warranty record', foreign.warranty === null);
+}
+{
   section('setup() deploy entry point (v1.35.1)');
 
   const usersBefore = sandbox.readRows_('Users', sandbox.USER_HEADERS).length;

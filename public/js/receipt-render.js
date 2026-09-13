@@ -33,7 +33,7 @@ export function rollHtml(doc, fmt) {
       <div class="r-rule"></div>
       ${doc.lines.map((l) => {
     const d = detailOf(l, fmt);
-    return `<div class="r-line"><span>${esc(l.name)}${d ? ` <em>${esc(d)}</em>` : ''}</span><b>${esc(fmt(l.amount))}</b></div>`;
+    return `<div class="r-line"><span>${esc(l.name)}${d ? ` <em>${esc(d)}</em>` : ''}</span><b>${esc(fmt(l.amount))}</b></div>${l.warranty ? `<p class="r-warranty">${esc(l.warranty)}</p>` : ''}`;
   }).join('')}
       <div class="r-rule"></div>
       ${doc.totals.map((t) => `<div class="r-line${t.strong ? ' total' : ''}"><span>${esc(totalLabel(t))}</span><b>${esc(fmt(t.amount))}</b></div>`).join('')}
@@ -52,7 +52,10 @@ export function docToLines(doc, fmt) {
   if (doc.store) lines.push(doc.store);
   if (titleOf(doc)) lines.push(titleOf(doc));
   lines.push(...doc.meta, '—');
-  for (const l of doc.lines) lines.push(`${l.name}${l.qty > 1 ? ` x${l.qty}` : ''} — ${fmt(l.amount)}`);
+  for (const l of doc.lines) {
+    lines.push(`${l.name}${l.qty > 1 ? ` x${l.qty}` : ''} — ${fmt(l.amount)}`);
+    if (l.warranty) lines.push(`  ${l.warranty}`);
+  }
   lines.push('—');
   for (const t of doc.totals) lines.push(`${totalLabel(t)} — ${fmt(t.amount)}`);
   for (const t of doc.tenders) lines.push(`${t.label} — ${fmt(t.amount)}`);
@@ -69,7 +72,7 @@ export function sheetHtml(doc, fmt) {
   const cols = doc.columns || { qty: 'Qty', price: 'Price', amount: 'Amount' };
   const rows = doc.lines.map((l) => `
     <tr>
-      <td>${esc(l.name)}${l.discountPct ? `<div class="muted">${esc(l.discountPct)}%</div>` : ''}</td>
+      <td>${esc(l.name)}${l.discountPct ? `<div class="muted">${esc(l.discountPct)}%</div>` : ''}${l.warranty ? `<div class="muted">${esc(l.warranty)}</div>` : ''}</td>
       <td class="num">${esc(l.qty)}</td>
       <td class="num">${esc(fmt(l.unitPrice))}</td>
       <td class="num">${esc(fmt(l.amount))}</td>
@@ -150,6 +153,7 @@ export function docToImage(doc, width, fmt) {
     pair(l.name, fmt(l.amount));
     const d = detailOf(l, fmt);
     if (d) text(d, { size: Math.round(base * 0.8) });
+    if (l.warranty) text(l.warranty, { size: Math.round(base * 0.8) });
   }
   rule();
   for (const t of doc.totals) pair(totalLabel(t), fmt(t.amount), t.strong ? { size: Math.round(base * 1.15), weight: 800 } : {});

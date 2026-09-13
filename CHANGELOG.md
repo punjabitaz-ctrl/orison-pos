@@ -5,6 +5,33 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.41.0] — 2026-09-13
+
+Sprint 1 of the warranty, marketplace and accounting program. Plan:
+`docs/superpowers/plans/2026-09-13-warranty-marketplace-accounting-program.md`.
+Owner decision: warranty is **30 days, or 1 year for brand-new hardware**.
+
+### Added
+
+- **A warranty on every product.** The choices are *1 year — brand-new
+  hardware*, *30 days* or *No warranty*, set on the product's create and
+  settings forms (`Products.warranty_days`).
+  - New products default to 30 days and services to none. Products with no
+    setting yet read the same way, so nothing sold earlier loses cover.
+  - Changing a product's warranty is audited and applies to future sales only.
+- **The warranty is captured on the sale line** (`warrantyDays`) and runs from
+  the sale date. A refund line carries none.
+- **Receipts print the cover** under each line that has it, for example
+  "1-year warranty until Sep 13, 2027". This applies on the screen, full-page,
+  Bluetooth and ESC/POS receipts, and in shared text.
+- **Check warranty** (Repairs screen, any role) looks up an IMEI, serial or
+  receipt number through `/api/warranty` and shows each covered line. Its
+  status is *Under warranty until …*, *Warranty expired* or *Refunded — no
+  warranty*.
+- **Repairs know about warranty.** Booking in a device we sold records its
+  warranty status, end date and receipt on the ticket. The ticket shows it,
+  and the booking toast says when the device is still covered.
+
 ## [1.40.0] — 2026-09-13
 
 Sprint 5 of the staff-gaps program: tax jurisdictions. The United Arab Emirates

@@ -216,11 +216,11 @@ reasons* table and the owner decisions:
 | UI translation and RTL | ✅ Done, v1.35.0 | A native-speaker read |
 | D1 Printer and drawer | ✅ Built, v1.34.0 | A test on the real printer |
 | **Trade-in / buyback** | Open | Owner decision on cost basis and used-stock IMEI intake. The largest remaining gap for a phone shop. |
-| **Warranty per serial** | Open | The owner's warranty terms. Fitted serials already point at their invoice, so this is now cheap. |
+| **Warranty per serial** | ✅ v1.41.0 — 30 days, or 1 year for brand-new hardware | — |
 | **Layaway / deposits on sales and special orders** | Open | Repairs hold deposits; a sale cannot. Needs a liability treatment like `deposit`. |
-| **Store credit as an object / gift cards** | Open | Today, store credit is a tender plus a ledger line. A transferable balance with an expiry is a different model. |
-| **Accounting integration** | Open | Pick the package (QuickBooks, Xero, Zoho). Month-end runs on CSV today. |
-| **Marketplace API sync** | Open | v1.27.0 records these sales by hand. Automatic sync is a separate integration. |
+| **Store credit as an object / gift cards** | Closed — owner: no gift cards | — |
+| **Accounting integration** | Owner: GAAP, no platform — in-app books planned for v1.43.0 | — |
+| **Marketplace API sync** | Owner: sync from a Google Sheets file — planned for v1.42.0 | — |
 | **D4 Tax jurisdiction and invoice compliance** | ✅ v1.40.0: US and UAE (VAT-inclusive, Tax Invoice with TRN) | Have the invoice wording checked by the shop's tax adviser. |
 
 ## 4. Other missing features noticed during this review

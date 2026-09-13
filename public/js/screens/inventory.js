@@ -8,6 +8,7 @@ import { $t, $tn, arrow, dateLocale } from '../lang.js';
 import { idb } from '../db.js';
 import { api } from '../api.js';
 import { fmt, esc, toast, beep, debounce, openModal, closeModal, openSheet, closeSheet, currencySymbol } from '../ui.js';
+import { warrantyOptionsHtml } from '../warranty.js';
 import { bulkPriceModal, stockTakeModal, labelsModal, reorderModal } from './inventory-tools.js';
 import { pull, mergeProductLocal, SYNC_EVENT, getSyncState } from '../sync.js';
 import { reorderThreshold } from '../alerts.js';
@@ -167,6 +168,7 @@ export const screen = {
             <div class="field"><span>${$t('Starting qty')}</span><input id="fQty" type="number" inputmode="numeric" min="0" step="1" value="0"></div>
             <div class="field"><span>${$t('Reorder at (low-stock alert threshold)')}</span><input id="fReorder" type="number" inputmode="numeric" min="0" step="1" value="5"></div>
           </div>
+          <div class="field"><span>${$t('Warranty')}</span><select id="fWarranty">${warrantyOptionsHtml(30)}</select></div>
           <label class="check"><input id="fLocked" type="checkbox"> ${$t('Locked (cannot be sold until unlocked)')}</label>
           <label class="check"><input id="fTaxable" type="checkbox" checked> ${$t('Taxable (subject to store sales tax)')}</label>
           <p id="pErr" class="login-err"></p>
@@ -174,7 +176,10 @@ export const screen = {
         </div>`);
       const fType = modal.querySelector('#fType');
       const stockEl = modal.querySelector('#stockFields');
-      const toggleFields = () => { stockEl.style.display = fType.value === 'service' ? 'none' : ''; };
+      const toggleFields = () => {
+        stockEl.style.display = fType.value === 'service' ? 'none' : '';
+        if (fType.value === 'service') modal.querySelector('#fWarranty').value = '0';
+      };
       fType.addEventListener('change', toggleFields);
       modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
       modal.querySelector('#pSave').addEventListener('click', async () => {
@@ -192,6 +197,7 @@ export const screen = {
           reorderPoint: isService ? null : (parseInt(modal.querySelector('#fReorder').value, 10) || 5),
           locked: modal.querySelector('#fLocked').checked,
           taxable: modal.querySelector('#fTaxable').checked,
+          warrantyDays: Number(modal.querySelector('#fWarranty').value),
         };
         if (!body.name) { modal.querySelector('#pErr').textContent = $t('Name is required.'); return; }
         try {
@@ -383,6 +389,8 @@ export const screen = {
             : ''}
           ${!isService ? `<label class="check"><input id="oLocked" type="checkbox" ${locked ? 'checked' : ''}> ${$t('Locked (cannot be sold)')}</label>` : ''}
           ${!isService ? `<label class="check"><input id="oTaxable" type="checkbox" ${p.taxable !== false ? 'checked' : ''}> ${$t('Taxable')}</label>` : ''}
+          <div class="field"><span>${$t('Warranty')}</span><select id="oWarranty">${warrantyOptionsHtml(p.warrantyDays != null ? p.warrantyDays : (isService ? 0 : 30))}</select></div>
+          <p class="muted">${$t('A change applies to future sales. What was already sold keeps its warranty.')}</p>
           <p id="oErr" class="login-err"></p>
           <div class="row"><button class="btn btn-ghost" data-cancel>${$t('Cancel')}</button><button class="btn" id="oSave">${$t('Save')}</button></div>
         </div>`);
@@ -394,6 +402,7 @@ export const screen = {
         if (!isService) body.locked = modal.querySelector('#oLocked').checked;
         const taxableEl = modal.querySelector('#oTaxable');
         if (taxableEl) body.taxable = taxableEl.checked;
+        body.warrantyDays = Number(modal.querySelector('#oWarranty').value);
         const reorderEl = modal.querySelector('#oReorder');
         if (reorderEl) body.reorderPoint = parseInt(reorderEl.value, 10) || 0;
         try {

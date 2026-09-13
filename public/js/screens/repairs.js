@@ -23,6 +23,7 @@ import { fmt, esc, toast, beep, skeleton, emptyState, openModal, closeModal } fr
 import { screenHead, sectionHead, dataTable } from '../components.js';
 import { receiptDoc } from '../receipt-doc.js';
 import { receiptContext } from '../receipt-labels.js';
+import { openWarrantyLookup, statusChip } from '../warranty.js';
 
 export const REPAIR_FLOW = [
   { id: 'intake', label: N_('Booked in'), tone: 'new' },
@@ -97,7 +98,7 @@ export const screen = {
       ${screenHead({
     title: $t('Repairs'),
     sub: $t('Devices in for repair'),
-    actions: `<button class="btn" id="rpNew" type="button">${$t('Book in a repair')}</button>`,
+    actions: `<span class="btn-row"><button class="btn btn-ghost" id="rpWarranty" type="button">${$t('Check warranty')}</button><button class="btn" id="rpNew" type="button">${$t('Book in a repair')}</button></span>`,
   })}
       <div class="seg seg-sm rp-filters" id="rpFilters"></div>
       <div class="field"><input id="rpSearch" type="search" placeholder="${$t('Ticket number, customer, phone or IMEI…')}" autocomplete="off" spellcheck="false"></div>
@@ -211,7 +212,8 @@ export const screen = {
           ${sectionHead({ title: t.ticketNo, asideHtml: pill(t.status) })}
           <div class="rp-grid">
             <div><span class="muted">${$t('Device')}</span><strong>${esc(t.device || '—')}</strong></div>
-            <div><span class="muted">${$t('IMEI / serial')}</span><strong>${esc(t.deviceSerial || '—')}</strong></div>
+            <div><span class="muted">${$t('IMEI / serial')}</span><strong>${esc(t.deviceSerial || '—')}</strong>
+              ${t.warrantyStatus ? `<br>${statusChip(t.warrantyStatus, t.warrantyUntil)}${t.warrantyReceipt ? ` <span class="muted">${esc(t.warrantyReceipt)}</span>` : ''}` : ''}</div>
             <div><span class="muted">${$t('Customer')}</span><strong>${esc(t.customerName || '—')}</strong></div>
             <div><span class="muted">${$t('Phone')}</span><strong>${esc(t.customerPhone || '—')}</strong></div>
           </div>
@@ -618,7 +620,9 @@ export const screen = {
             conditionNote: v('#rpInCond'), accessories: v('#rpInAcc'),
           });
           closeModal();
-          toast($t('Booked in as {ticket}', { ticket: res.ticketNo }), 'ok');
+          toast(res.warranty && res.warranty.status === 'active'
+            ? $t('Booked in as {ticket} — under warranty from {receipt}', { ticket: res.ticketNo, receipt: res.warranty.receiptNo })
+            : $t('Booked in as {ticket}', { ticket: res.ticketNo }), 'ok', 3600);
           beep('ok');
           await load();
           await openTicket(res.id);
@@ -631,6 +635,7 @@ export const screen = {
     }
 
     root.querySelector('#rpNew').addEventListener('click', intakeDialog);
+    root.querySelector('#rpWarranty').addEventListener('click', () => openWarrantyLookup(''));
     let timer = null;
     search.addEventListener('input', () => {
       clearTimeout(timer);

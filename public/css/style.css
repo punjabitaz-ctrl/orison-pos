@@ -1518,3 +1518,10 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; in
 .co-bal-over { color: var(--danger); font-weight: 700; }
 
 .receipt .r-title { text-align: center; font-weight: 800; font-size: 15px; margin: 4px 0; letter-spacing: .04em; }
+
+.receipt .r-warranty { font-size: 11px; color: #555; margin: -2px 0 4px; }
+.wr-sale { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; }
+.wr-line { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 6px 0; }
+.tag.tag-ok { color: #fff; background: var(--ok); }
+.tag.tag-bad { color: #fff; background: var(--danger); }
+.tag.tag-warn { color: #fff; background: var(--warn); }

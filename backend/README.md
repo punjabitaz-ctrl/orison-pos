@@ -67,6 +67,13 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 - `/api/repairs/deposit-refund` (admin, manager; a cashier with a single-use `deposit_refund` approval whose ref is `ticketId|nonce`). `/api/repairs/void` (admin only, for a ticket that should never have existed).
 - Every repair action is audited.
 
+### Warranty (v1.41.0)
+
+- `Products.warranty_days` is 365 (brand-new hardware), 30 or 0, set via `warrantyDays` on create or patch. A missing value reads as 0 for a service and 30 otherwise.
+- Sale lines capture `warrantyDays`; refund lines do not.
+- `/api/warranty?q=` (any role) takes an IMEI, a serial or a receipt number. It returns the matching sales, newest first, each with its covered lines, `expiresAt`, `daysLeft` and `status` (`active` | `expired` | `refunded`).
+- `/api/repairs` create looks up the device serial and stores `warranty_status`, `warranty_until` and `warranty_receipt` on the ticket.
+
 ### Customers and receivables
 
 - `/api/customers` (search) and `/api/admin/customers` (create) are open to any role since v1.38.0. Only a manager or admin can set a credit limit when creating a customer.
@@ -124,7 +131,7 @@ Tabs are created, and new columns added, on first use; nothing needs creating by
 | `Meta` | `key`, `value` — store settings (`store_*`, incl. locale, country, currency, denoms, tax rate, tz offset; `tax_jurisdiction`, `tax_reg_no`, `prices_include_tax`; `discount_limit_*`), counters (`receipt_seq`, `repair_seq`), prefixes, report schedule |
 | `Users` | id, store_id, first_name, last_name, email, pin_salt, pin_hash, role, active, created_at |
 | `Devices` | id, user_id, device_id, first_seen, last_seen, revoked |
-| `Products` | id, sku, upc, name, category, cost_price, retail_price, is_serialized, on_hand, item_type (`product`/`service`), locked, reorder_point, last_sold_at, active, updated_at, taxable |
+| `Products` | id, sku, upc, name, category, cost_price, retail_price, is_serialized, on_hand, item_type (`product`/`service`), locked, reorder_point, last_sold_at, active, updated_at, taxable, warranty_days |
 | `Serials` | id, product_id, serial_number, status (`IN_STOCK`/`SOLD`/`VOIDED`), tx_id, updated_at |
 | `Transactions` | id, store_id, user_id, device_id, client_tx_id, kind, original_client_tx, counterparty, grand_total, status, tenders_json, items_json, note, created_at, subtotal, tax_amount, discount_pct, customer_id, receipt_no, channel, external_ref, approved_by, tax_inclusive, tax_rate |
 | `Customers` | id, store_id, name, phone, email, note, created_at, credit_limit, trn |
@@ -135,7 +142,7 @@ Tabs are created, and new columns added, on first use; nothing needs creating by
 | `PurchaseOrders` | id, store_id, supplier_id, po_number, order_date, expected_date, status, items_json, received_json, subtotal, discount_pct, tax_amount, total, note, created_by, created_at, updated_at |
 | `PriceHistory` | id, store_id, product_id, product_name, field, old_value, new_value, source, po_id, changed_by, created_at |
 | `StockTakes` | id, store_id, session_id, product_id, product_name, sku, expected, counted, variance, unit_cost, value_delta, counted_by, note, created_at |
-| `Repairs` | id, store_id, ticket_no, customer_id, customer_name, customer_phone, device_make, device_model, device_serial, reported_fault, condition_note, accessories, status, parts_json, labour_json, estimate_total, deposit_total, final_total, assigned_to, note, created_by, created_at, updated_at, promised_at, closed_at, invoice_tx_id |
+| `Repairs` | id, store_id, ticket_no, customer_id, customer_name, customer_phone, device_make, device_model, device_serial, reported_fault, condition_note, accessories, status, parts_json, labour_json, estimate_total, deposit_total, final_total, assigned_to, note, created_by, created_at, updated_at, promised_at, closed_at, invoice_tx_id, warranty_status, warranty_until, warranty_receipt |
 | `AuditLog` | id, store_id, at, user_id, user_name, role, action, target_type, target_id, summary, device_id |
 
 Only `APP_TOKEN` holders can reach the data through the API. Anyone with edit access to the Sheet can change it directly, and that leaves no audit entry, so keep Sheet sharing tight.
@@ -171,7 +178,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 869 checks
+npm run test:backend   # 886 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.

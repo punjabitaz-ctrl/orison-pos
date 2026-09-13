@@ -63,6 +63,7 @@ export const screen = {
         unitPrice: line.price,
         discountPct: line.discountPct || 0,
         taxable: line.taxable !== false,
+        warrantyDays: line.product.warrantyDays != null ? line.product.warrantyDays : (line.product.itemType === 'service' ? 0 : 30),
       })),
     };
     sale.orderPct = 0;
@@ -507,7 +508,7 @@ export const screen = {
         customerName: customer ? customer.name : '',
         items: sale.items.map((i) => ({
           name: i.name, quantity: i.quantity, unitPrice: i.unitPrice,
-          discountPct: i.discountPct, serialNumber: i.serialNumber,
+          discountPct: i.discountPct, serialNumber: i.serialNumber, warrantyDays: i.warrantyDays,
         })),
         subtotal: sale.totals.subtotal,
         discount: sale.totals.discount,

@@ -95,7 +95,7 @@ export function columns(left, right, cols) {
 /* Every string the receipt would print, formatted amounts included. */
 function printedStrings(doc, fmt) {
   const out = [doc.brand, doc.store, doc.title, doc.reference, doc.changeLabel, doc.pendingLabel, ...doc.meta, ...doc.footer];
-  for (const l of doc.lines) out.push(l.name, fmt(l.amount), fmt(l.unitPrice));
+  for (const l of doc.lines) out.push(l.name, fmt(l.amount), fmt(l.unitPrice), l.warranty);
   for (const t of doc.totals) out.push(t.label, fmt(t.amount));
   for (const t of doc.tenders) out.push(t.label, fmt(t.amount));
   out.push(fmt(doc.change));
@@ -124,6 +124,7 @@ export function escposFromDoc(doc, cols, fmt, opts = {}) {
     if (l.qty > 1) detail.push(`${l.qty} x ${fmt(l.unitPrice)}`);
     if (l.discountPct) detail.push(`${l.discountPct}% off`);
     if (detail.length) parts.push(line('  ' + detail.join(', ')));
+    if (l.warranty) parts.push(line('  ' + l.warranty));
   }
   parts.push(rule);
 

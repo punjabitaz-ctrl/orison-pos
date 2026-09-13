@@ -26,6 +26,7 @@ public/js/nav.js         Navigation model (primaryTabs, menuTiles, isRestricted)
 public/js/components.js  Destinations as markup (tile, tileGrid, navButton, appHeaderHtml)
 public/js/money-dialogs.js  drawer-dialog.js   Dialogs the launcher opens directly
 public/js/approval-dialog.js  Manager approval prompt (own layer above any dialog; requestApproval())
+public/js/warranty.js    Warranty options, status chip and the Check warranty lookup
 public/js/stats.js       Shared aggregation (day totals, trends, hourly buckets, top sellers, hours)
 public/js/labels.js      Code 128-B encoder + shelf-label markup
 public/js/print-sheet.js Full-page printing (labels, worksheets, receipts on a standard printer)
@@ -80,7 +81,7 @@ node tests/pdf-send-smoke.mjs     # receipt PDF/share — unrunnable on the curr
 npm run test:client               # client unit tests, incl. the translation-catalogue check
 ```
 
-Baseline at v1.40.0: backend-sim **869 / 0**, client **481 / 0**.
+Baseline at v1.41.0: backend-sim **886 / 0**, client **482 / 0**.
 
 - `npm test` == backend sim only. `npm run test:client` runs the pure-Node
   client unit suites via `node:test` + `fake-indexeddb`. `npm run test:all`

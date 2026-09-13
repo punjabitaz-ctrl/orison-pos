@@ -149,3 +149,18 @@ describe('UAE tax invoice (v1.40.0)', () => {
     assert.ok(!us.meta.some((m) => /TRN/.test(m)));
   });
 });
+
+describe('warranty on the receipt (v1.41.0)', () => {
+  const sold = { createdAt: '2026-09-13T10:00:00.000Z', items: [
+    { name: 'New phone', quantity: 1, unitPrice: 800, serialNumber: 'IMEI-9', warrantyDays: 365 },
+    { name: 'Used phone', quantity: 1, unitPrice: 200, warrantyDays: 30 },
+    { name: 'Setup', quantity: 1, unitPrice: 20 },
+  ], subtotal: 1020, total: 1020, tenders: [] };
+
+  it('prints each covered line with its period and end date', () => {
+    const lines = receiptDoc(sold, { locale: 'en-US' }).lines;
+    assert.equal(lines[0].warranty, '1-year warranty until Sep 13, 2027');
+    assert.equal(lines[1].warranty, '30-day warranty until Oct 13, 2026');
+    assert.equal(lines[2].warranty, '');
+  });
+});

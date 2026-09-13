@@ -7,7 +7,30 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.40.0 — United Arab Emirates VAT
+## Latest: v1.41.0 — warranties
+
+**2026-09-13.** Sprint 1 of 3 in the warranty, marketplace and accounting
+program.
+
+- **Set each product's warranty**: 1 year for brand-new hardware, 30 days, or
+  none. New products start at 30 days.
+- **Receipts show the warranty** and when it ends.
+- **Check warranty** from the Repairs screen by IMEI or receipt number.
+- **Repair tickets say whether the device is still under warranty.**
+
+**Before this goes out:** mark your brand-new hardware as *1 year* in Products
+→ ⚙ Settings. Everything else keeps 30 days.
+
+**Validation:** backend-sim **PASS 886 / FAIL 0** · client units **PASS 482 /
+FAIL 0**. The warranty lookup was checked in the browser.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.40.0 — United Arab Emirates VAT
 
 **2026-09-13.** Sprint 5 of 5: the staff-gaps program is complete.
 
