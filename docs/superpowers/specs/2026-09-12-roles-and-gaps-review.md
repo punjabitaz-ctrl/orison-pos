@@ -4,6 +4,8 @@
 > [`../plans/2026-09-13-staff-gaps-and-uae-program.md`](../plans/2026-09-13-staff-gaps-and-uae-program.md).
 > ✅ v1.36.0 closed Admin #1 (audit gaps), #3 (token exposure), #4 (staff
 > edits) and #6 (channel gate).
+> ✅ v1.37.0 closed Cashiers #1 (manager approval) and Admin #2 (discount
+> limits and reporting).
 
 **Date:** 2026-09-12 · **Baseline:** v1.35.0 · **Method:** every route in
 `backend/Code.gs` `dispatch_` was read for its `requireRole_` gate and any role

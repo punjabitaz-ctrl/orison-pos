@@ -141,6 +141,14 @@ export const screen = {
             <input id="taxRate" type="number" inputmode="decimal" min="0" max="100" step="0.01" value="${m.store.taxRate != null ? m.store.taxRate : 0}" style="width:6em">
             <button class="btn btn-sm" id="saveTax">${$t('Save')}</button>
           </span>
+        </div>
+        <div class="set-row">
+          <span>${$t('Discount limits (%) — over these a manager or admin approves')}</span>
+          <span class="set-inline">
+            <label class="muted">${$t('Cashier')} <input id="limCashier" type="number" inputmode="decimal" min="0" max="100" step="0.5" value="${m.store.discountLimitCashier != null ? m.store.discountLimitCashier : 10}" style="width:5em"></label>
+            <label class="muted">${$t('Manager')} <input id="limManager" type="number" inputmode="decimal" min="0" max="100" step="0.5" value="${m.store.discountLimitManager != null ? m.store.discountLimitManager : 50}" style="width:5em"></label>
+            <button class="btn btn-sm" id="saveLimits">${$t('Save')}</button>
+          </span>
         </div>` : ''}
       </section>` : ''}
 
@@ -329,6 +337,20 @@ export const screen = {
         toast($t('Connected'), 'ok'); beep('ok');
       } catch (_) {
         toast($t('Backend unreachable — will retry once online'), 'warn');
+      }
+      redraw();
+    });
+
+    root.querySelector('#saveLimits')?.addEventListener('click', async () => {
+      const c = parseFloat(root.querySelector('#limCashier').value);
+      const mg = parseFloat(root.querySelector('#limManager').value);
+      if ([c, mg].some((v) => isNaN(v) || v < 0 || v > 100)) { toast($t('Discount limits must be between 0 and 100'), 'warn'); return; }
+      try {
+        await api.post('/api/admin/store', { discountLimitCashier: c, discountLimitManager: mg });
+        await pull();
+        toast($t('Discount limits saved'), 'ok'); beep('ok');
+      } catch (err) {
+        toast((err && err.message) || $t('Save failed'), 'warn');
       }
       redraw();
     });

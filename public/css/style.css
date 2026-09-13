@@ -1508,3 +1508,9 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; in
 [dir="rtl"] time, [dir="rtl"] .ab-clock { unicode-bidi: plaintext; }
 /* Figures, phone numbers, serials and money read left to right in every script. */
 [dir="rtl"] input[type="tel"], [dir="rtl"] input[type="email"], [dir="rtl"] input[inputmode="decimal"], [dir="rtl"] input[inputmode="numeric"] { direction: ltr; text-align: end; }
+
+/* ---- Manager approval: its own layer, above any dialog it was asked from ---- */
+#approval .approval-backdrop { z-index: 80; }
+.approval h3 { display: flex; gap: 8px; align-items: center; }
+.approval .apv-detail { font-weight: 700; margin: 4px 0 8px; }
+.approval .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }

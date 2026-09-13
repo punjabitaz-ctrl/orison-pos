@@ -171,10 +171,12 @@ web-accessible status page without app load.
 | See why a price changed | Products → 📈 on any item (admin/manager). |
 | Send a customer their statement | Customers → ledger → *Statement* (admin/manager). |
 | See what's sat in stock too long | Products → *Aging* (admin/manager). |
-| Refund a sale | History (admin/manager) → the sale → *Refund items*. Cashiers cannot refund; **services are never refundable**. |
+| Refund a sale | History → the sale → *Refund items*. A cashier's refund asks a manager to approve on the spot; **services are never refundable**. |
+| Approve at the till | When a cashier's screen asks for approval, the manager types **their own** email and PIN. It needs a connection. |
+| Change discount limits | Settings → Store → *Discount limits* (admin). Defaults: cashier 10 %, manager 50 %. |
 | Book in a repair | Menu → *Repairs* → *Book in a repair* (any role) — device, fault, condition, optional deposit. Parts, labour, status and collection from the ticket. Giving a deposit back is admin/manager; voiding a ticket is admin. |
 | Record an online / marketplace sale | Menu → *Sold Elsewhere* (admin/manager) — channel + order reference; stock moves like any sale. |
-| Open the drawer without a sale | Menu → *Open Drawer* (admin/manager) — reason required, written to the audit log. Needs a Bluetooth receipt printer with the drawer attached. |
+| Open the drawer without a sale | Menu → *Open Drawer* — reason required, written to the audit log; a cashier needs a manager's approval. Needs a Bluetooth receipt printer with the drawer attached. |
 | Set up a printer | Settings → *Printer & cash drawer* on each terminal — receipt printer (print dialog), standard printer, or Bluetooth (Chrome/Edge, not iPhone/iPad). Print a test receipt and test the drawer. |
 | Change the language | Sign-in screen, or Settings → *Language* per terminal (English / العربية / اردو). Receipts follow the store's language (Settings → Store, admin). |
 | Add, edit or switch off staff / reset a PIN | Settings → *Staff* (admin) — *Edit* changes name, email and role; *PIN* sets a new one; *Off* signs them out everywhere. |

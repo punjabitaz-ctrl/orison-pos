@@ -9,7 +9,7 @@
 
 import { api } from './api.js';
 import { esc, toast, beep, openModal, closeModal } from './ui.js';
-import { getDeviceId } from './sync.js';
+import { getDeviceId, newClientTxId } from './sync.js';
 import { $t, N_ } from './lang.js';
 
 const REASONS = [N_('Change for a customer'), N_('Correcting a mistake'), N_('Counting the float')];
@@ -44,11 +44,34 @@ export function openDrawerDialog(ctx) {
     if (!reason) { err.textContent = $t('Give a reason - it goes in the audit log.'); beep('err'); return; }
     go.disabled = true;
 
+    const role = (ctx && ctx.state && ctx.state.user && ctx.state.user.role) || 'cashier';
+    const manager = role === 'admin' || role === 'manager';
+
+    /* A manager's open is best-effort recorded: a shop that has lost its
+       connection still has to make change. A cashier's needs a manager's
+       approval first, and nothing opens without it (v1.37.0). */
     let recorded = true;
-    try {
-      await api.post('/api/drawer/open', { reason, deviceId: await getDeviceId() });
-    } catch (_) {
-      recorded = false;
+    let approvedBy = '';
+    if (manager) {
+      try {
+        await api.post('/api/drawer/open', { reason, deviceId: await getDeviceId() });
+      } catch (_) {
+        recorded = false;
+      }
+    } else {
+      const ref = 'drawer-' + newClientTxId();
+      const { requestApproval } = await import('./approval-dialog.js');
+      const granted = await requestApproval({ action: 'drawer', ref, detail: reason });
+      if (!granted) { go.disabled = false; return; }
+      try {
+        const res = await api.post('/api/drawer/open', { reason, ref, approval: granted.approval, deviceId: await getDeviceId() });
+        approvedBy = res.approvedBy || granted.approver.name;
+      } catch (e) {
+        err.textContent = (e && e.message) || $t('Could not record the approval - the drawer stays shut.');
+        go.disabled = false;
+        beep('err');
+        return;
+      }
     }
 
     const pr = await import('./printing.js');
@@ -56,7 +79,8 @@ export function openDrawerDialog(ctx) {
     closeModal();
     if (r.ok) {
       beep('ok');
-      toast(recorded ? $t('Drawer opened') : $t('Drawer opened - offline, so not recorded'), recorded ? 'ok' : 'warn', 3200);
+      toast(approvedBy ? $t('Drawer opened - approved by {name}', { name: approvedBy })
+        : recorded ? $t('Drawer opened') : $t('Drawer opened - offline, so not recorded'), recorded ? 'ok' : 'warn', 3200);
     } else {
       toast(r.message + (recorded ? ' ' + $t('(The open was recorded.)') : ''), 'warn', 4200);
     }

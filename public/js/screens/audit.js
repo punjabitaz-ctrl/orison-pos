@@ -47,6 +47,7 @@ export const ACTION_GROUPS = [
     { id: 'repair.voided', label: N_('Tickets voided') },
   ] },
   { label: N_('People and access'), actions: [
+    { id: 'approval.granted', label: N_('Manager approvals') },
     { id: 'auth.login', label: N_('Sign-ins') },
     { id: 'auth.locked', label: N_('Lockouts') },
     { id: 'user.unlock', label: N_('Lockouts released') },

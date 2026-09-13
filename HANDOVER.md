@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.36.0** — Sprint 1 of the staff-gaps program: audit coverage, token hidden, staff edits, channel gate (`2026-09-13`) |
-| Validation bar | `backend-sim` **PASS 757 / FAIL 0** · client units **PASS 463 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.37.0** — Sprint 2 of the staff-gaps program: manager approval at the till, discount limits (`2026-09-13`) |
+| Validation bar | `backend-sim` **PASS 795 / FAIL 0** · client units **PASS 471 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,19 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.37.0** Staff-gaps Sprint 2. `/api/approve` → HMAC over
+  `'approval:'+body` (never a session), bound to action + ref, 24 h,
+  re-verified on use (`verifyApproval_`), single-use via CacheService for
+  drawer/deposit refund (`consumeApproval_`), wrong PIN = **403** (a 401 signs
+  the terminal out — caught in the browser). Cashier refund, drawer and deposit
+  refund accept an approval (`approvalOrRole_`). Discount limits in store
+  settings; the sale path refuses `discount_over_limit` on the deepest
+  effective line. `approved_by` column; `approvedBy` in `/api/transactions`;
+  discounts per cashier in reports. Client: `approval-dialog.js` (own
+  `#approval` layer), checkout and history ask before queuing, and
+  `enqueueTransaction` accepts a preset `clientTxId` and an `approval`.
+  **Fixed:** refunds of discounted sales used the shelf price (`paidUnitPrice`).
+  38 sim checks.
 - **v1.36.0** Staff-gaps Sprint 1 (owner/admin controls). Audit coverage for
   stock adjust (+reason), product create/edit, serials, PIN reset, user
   create, unlock, revoke-all, conflict review, supplier, PO create/receive/
@@ -441,7 +454,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **757 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **795 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -564,11 +577,8 @@ is below, in the order it should be picked up.
    - ~~**Controls (small):** audit gaps, token exposure, staff edits, channel
      gate~~ — **done v1.36.0.** The *Unlock* button moves to Sprint 4 with the
      manager team list.
-   - **Manager approval by PIN** for refunds, over-limit discounts, no-sale
-     drawer and deposit refunds — so a cashier is not signed out (sign-out
-     revokes all their sessions) every time a manager steps in.
-   - **Discount limits per role** (*owner decision on the limits*) and a
-     discounts-by-cashier report.
+   - ~~Manager approval by PIN; discount limits and report~~ — **done v1.37.0**
+     (defaults cashier 10 %, manager 50 %; *owner may change them in Settings*).
    - **Cashiers:** create customers, see balance at checkout (+ optional
      credit limit), read-only lookup of another cashier's sale by receipt/IMEI.
    - **Managers:** reset cashier PINs; correct time punches and force-close a

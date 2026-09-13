@@ -25,6 +25,7 @@ public/js/money.js       Money math, refund groups (services locked)
 public/js/nav.js         Navigation model (primaryTabs, menuTiles, isRestricted)
 public/js/components.js  Destinations as markup (tile, tileGrid, navButton, appHeaderHtml)
 public/js/money-dialogs.js  drawer-dialog.js   Dialogs the launcher opens directly
+public/js/approval-dialog.js  Manager approval prompt (own layer above any dialog; requestApproval())
 public/js/stats.js       Shared aggregation (day totals, trends, hourly buckets, top sellers, hours)
 public/js/labels.js      Code 128-B encoder + shelf-label markup
 public/js/print-sheet.js Full-page printing (labels, worksheets, receipts on a standard printer)
@@ -79,7 +80,7 @@ node tests/pdf-send-smoke.mjs     # receipt PDF/share — unrunnable on the curr
 npm run test:client               # client unit tests, incl. the translation-catalogue check
 ```
 
-Baseline at v1.36.0: backend-sim **757 / 0**, client **463 / 0**.
+Baseline at v1.37.0: backend-sim **795 / 0**, client **471 / 0**.
 
 - `npm test` == backend sim only. `npm run test:client` runs the pure-Node
   client unit suites via `node:test` + `fake-indexeddb`. `npm run test:all`
@@ -142,7 +143,13 @@ Baseline at v1.36.0: backend-sim **757 / 0**, client **463 / 0**.
 
 - Every privileged endpoint calls `requireRole_` before doing work.
 - Money routes (refund / payout / pickup / expense / payment, deposit refund,
-  no-sale drawer open) are admin/manager-only.
+  no-sale drawer open) are admin/manager-only — except that refund, drawer and
+  deposit refund accept a cashier carrying a valid manager approval
+  (`verifyApproval_`). Never let an approval verify as a session, never answer a
+  failed approval with 401, and bind every approval to a reference chosen
+  before it was requested.
+- Sales over the seller's discount limit need a `discount` approval; the
+  limit is checked server-side on the deepest effective line discount.
 - `deposit` and `deposit_refund` are server-written only; a device can never
   push them or tender `deposit`.
 - Services are never refundable (`service_not_refundable`), checked first.

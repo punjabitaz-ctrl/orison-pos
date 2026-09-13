@@ -97,10 +97,37 @@ export async function applyLocalRefund(items) {
   }
 }
 
-export async function createRefund({ original, items, method, note, user }) {
-  const grandTotal = round2(items.reduce((s, it) => s + (it.unitPrice || 0) * (it.quantity || 1), 0));
+/* Discount limits (v1.37.0). The deepest discount on any line - its own
+   discount and the order discount combined, as the customer sees it - is what
+   a limit is measured against. This mirrors effectiveDiscountPct_ in Code.gs. */
+export function effectiveDiscountPct(linePct, orderPct) {
+  const l = clampPct(linePct) / 100;
+  const o = clampPct(orderPct) / 100;
+  return Math.round((1 - (1 - l) * (1 - o)) * 10000) / 100;
+}
+
+export function deepestDiscountPct(items, orderPct) {
+  return (items || []).reduce((m, it) => Math.max(m, effectiveDiscountPct(it.discountPct, orderPct)), 0);
+}
+
+export function discountLimit(role, store) {
+  if (role === 'admin') return 100;
+  const s = store || {};
+  const pick = (v, d) => (v == null || v === '' || isNaN(Number(v)) ? d : clampPct(v));
+  return role === 'manager' ? pick(s.discountLimitManager, 50) : pick(s.discountLimitCashier, 10);
+}
+
+export function needsDiscountApproval(items, orderPct, role, store) {
+  return deepestDiscountPct(items, orderPct) > discountLimit(role, store) + 0.001;
+}
+
+export async function createRefund({ original, items, method, note, user, clientTxId: presetId, approval, cap }) {
+  let grandTotal = round2(items.reduce((s, it) => s + (it.unitPrice || 0) * (it.quantity || 1), 0));
+  if (cap != null && Number(cap) >= 0) grandTotal = Math.min(grandTotal, round2(cap));
   await applyLocalRefund(items);
   const clientTxId = await enqueueTransaction({
+    clientTxId: presetId,
+    approval,
     kind: 'refund',
     originalClientTx: original.clientTxId || original.id,
     grandTotal,
@@ -180,17 +207,33 @@ export function isServiceLine(item, product) {
    product with their serials; plain lines sum their quantities. Service lines
    are kept, so the customer can see them, but marked not refundable and never
    pre-selected. */
-export function refundGroups(items, productsById) {
+/* What the customer actually paid for one unit of a line: its price less the
+   line and order discounts, with the sale's tax spread in proportion. Refunding
+   the shelf price of a discounted sale used to ask for more than the sale took,
+   which the server refused. `sale` is optional; without it the line price is
+   used as before. */
+export function paidUnitPrice(item, sale, allItems) {
+  const unit = Number(item.unitPrice) || 0;
+  if (!sale) return unit;
+  const order = clampPct(sale.discountPct);
+  const net = (it) => (Number(it.unitPrice) || 0) * (1 - clampPct(it.discountPct) / 100) * (1 - order / 100);
+  const netAll = (allItems || []).reduce((s, it) => s + net(it) * (Number(it.quantity) || 1), 0);
+  const total = Number(sale.total);
+  const factor = netAll > 0 && total > 0 ? total / netAll : 1;
+  return round2(net(item) * factor);
+}
+
+export function refundGroups(items, productsById, sale) {
   const byKey = new Map();
   for (const i of items || []) {
-    const key = String(i.productId || i.name || 'line');
+    const key = String(i.productId || i.name || 'line') + '|' + clampPct(i.discountPct);
     const product = productsById ? productsById[String(i.productId || '')] : undefined;
     let g = byKey.get(key);
     if (!g) {
       g = {
         productId: i.productId || '',
         name: i.name || $t('Item'),
-        unitPrice: Number(i.unitPrice) || 0,
+        unitPrice: paidUnitPrice(i, sale, items),
         serialized: false,
         qty: 0,
         serials: [],
@@ -209,7 +252,7 @@ export function refundGroups(items, productsById) {
   return groups;
 }
 
-export function refundTotal(groups, pickedSerials) {
+export function refundTotal(groups, pickedSerials, cap) {
   let cents = 0;
   for (const g of groups || []) {
     if (!g.refundable) continue;
@@ -221,5 +264,7 @@ export function refundTotal(groups, pickedSerials) {
       cents += Math.round(g.unitPrice * 100) * (Number(g.qtySel) || 0);
     }
   }
+  /* per-unit rounding can add a cent over what the sale took; never ask for more */
+  if (cap != null && Number(cap) >= 0) cents = Math.min(cents, Math.round(Number(cap) * 100));
   return cents / 100;
 }

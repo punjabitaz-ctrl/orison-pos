@@ -12,11 +12,11 @@ const MANAGER = ['admin', 'manager'];
 const ADMIN = ['admin'];
 
 export const DESTINATIONS = [
-  { id: 'refund', label: N_('Refund'), screen: 'history', roles: MANAGER },
+  { id: 'refund', label: N_('Refund'), screen: 'history', roles: null },
   { id: 'payout', label: N_('Paid Out'), screen: 'dashboard', roles: MANAGER, dialog: 'payout' },
   { id: 'pickup', label: N_('Cash Pick Up'), screen: 'dashboard', roles: MANAGER, dialog: 'pickup' },
   { id: 'expense', label: N_('Staff Expense'), screen: 'dashboard', roles: MANAGER, dialog: 'expense' },
-  { id: 'drawer', label: N_('Open Drawer'), screen: 'dashboard', roles: MANAGER, dialog: 'drawer' },
+  { id: 'drawer', label: N_('Open Drawer'), screen: 'dashboard', roles: null, dialog: 'drawer' },
   { id: 'external', label: N_('Sold Elsewhere'), screen: 'register', roles: MANAGER, dialog: 'external' },
   { id: 'staff', label: N_('Time Clock'), screen: 'staff', roles: null },
   { id: 'customers', label: N_('Customers'), screen: 'customers', roles: MANAGER },

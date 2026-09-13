@@ -7,7 +7,34 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.36.0 — the owner sees everything that matters
+## Latest: v1.37.0 — a manager approves at the till
+
+**2026-09-13.** Sprint 2 of 5.
+
+- **Cashiers can refund, open the drawer, give a deposit back, or go past their
+  discount limit.** Each one needs a manager to type their own email and PIN on
+  the cashier's screen. Nobody is signed out.
+- **Discount limits.** Cashiers can give up to 10 % and managers up to 50 %
+  without asking. Admins can change both in Settings → Store.
+- **Reports show the discounts each cashier gave**, and how many a manager
+  approved.
+- **Fixed:** refunding a discounted sale no longer asks for the full price.
+
+**Before this goes out:** tell cashiers that discounts over 10 % will need a
+manager, and tell managers their PIN approves at the till. Approvals need a
+connection.
+
+**Validation:** backend-sim **PASS 795 / FAIL 0** · client units **PASS 471 /
+FAIL 0**. Discount approval (including a wrong PIN) and refund approval checked
+in the browser.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.36.0 — the owner sees everything that matters
 
 **2026-09-13.** Sprint 1 of 5 in the staff-gaps program.
 

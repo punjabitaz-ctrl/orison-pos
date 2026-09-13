@@ -109,6 +109,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/repairs/collect': return repairCollect_(session, payload);
     case '/api/repairs/deposit-refund': return repairDepositRefund_(session, payload);
     case '/api/drawer/open':     return drawerOpen_(session, payload);
+    case '/api/approve':         return approve_(session, payload);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
@@ -342,7 +343,7 @@ var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pi
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
-var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref'];
+var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
@@ -614,7 +615,19 @@ function getStore_() {
     currency: isCurrencyCode_(k.store_currency) ? String(k.store_currency) : DEFAULT_CURRENCY,
     denoms: storeDenoms_(k),
     configured: isLocaleTag_(k.store_locale) && isCurrencyCode_(k.store_currency),
+    /* the largest line discount (line and order combined) each role gives
+       without a manager's approval. Admins are never limited. */
+    discountLimitCashier: storePct_(k.discount_limit_cashier, DEFAULT_DISCOUNT_LIMIT_CASHIER),
+    discountLimitManager: storePct_(k.discount_limit_manager, DEFAULT_DISCOUNT_LIMIT_MANAGER),
   };
+}
+
+var DEFAULT_DISCOUNT_LIMIT_CASHIER = 10;
+var DEFAULT_DISCOUNT_LIMIT_MANAGER = 50;
+
+function storePct_(v, fallback) {
+  if (v == null || v === '' || isNaN(Number(v))) return fallback;
+  return clampPct_(Number(v));
 }
 
 /* The saved ladder if there is a valid one, otherwise the default for the
@@ -1662,6 +1675,142 @@ function login_(payload) {
   };
 }
 
+/* ------------------------------------------------------------------ *
+ *  Manager approval
+ *
+ *  A cashier asks, a manager or admin enters their own email and PIN on the
+ *  cashier's screen, and the server hands back a signed approval for exactly
+ *  one thing: this refund, this discount, this drawer open. The cashier stays
+ *  signed in, the approver is recorded against the transaction, and the grant
+ *  is in the audit log.
+ *
+ *  An approval is signed over a different message than a session token
+ *  ('approval:' + body), so it can never be replayed as a session. It is bound
+ *  to an action and a reference the terminal chose before asking (the refund's
+ *  clientTxId, the sale's clientTxId, a drawer-open nonce), lives 24 hours so a
+ *  refund queued by a dropped connection still lands, and is re-checked when
+ *  used: an approver switched off or demoted since no longer counts.
+ *
+ *  PINs are only ever checked by the server, so approvals need a connection.
+ * ------------------------------------------------------------------ */
+
+var APPROVAL_ACTIONS = { refund: 1, discount: 1, drawer: 1, deposit_refund: 1, credit: 1 };
+var APPROVAL_TTL_MS = 24 * 3600 * 1000;
+
+function signApproval_(payload) {
+  var body = Utilities.base64EncodeWebSafe(JSON.stringify(payload));
+  return body + '.' + hmacHex_(sessionSecret_(), 'approval:' + body);
+}
+
+/* The approval, or null. `userRows` lets a batch push check the approver
+   without re-reading Users per row. */
+function verifyApproval_(token, action, ref, userRows) {
+  try {
+    var parts = String(token || '').split('.');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+    if (!constantEquals_(parts[1], hmacHex_(sessionSecret_(), 'approval:' + parts[0]))) return null;
+    var p = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[0])).getDataAsString());
+    if (!p || p.typ !== 'approval' || p.a !== action || String(p.r) !== String(ref)) return null;
+    if (!p.exp || Date.now() > p.exp) return null;
+    var users = userRows || readRows_('Users', USER_HEADERS);
+    for (var i = 0; i < users.length; i++) {
+      var u = users[i];
+      if (String(u.id) !== String(p.u)) continue;
+      if (String(u.active) !== '1') return null;
+      if (String(u.role) !== 'admin' && String(u.role) !== 'manager') return null;
+      p.approverRole = String(u.role);
+      p.approverName = (String(u.first_name || '') + ' ' + String(u.last_name || '')).trim();
+      return p;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* The largest discount a role may give on a line without asking, as a percent
+   of the line (line and order discounts combined). Admins are never limited. */
+function discountLimitFor_(role, store) {
+  if (role === 'admin') return 100;
+  if (role === 'manager') return store.discountLimitManager;
+  return store.discountLimitCashier;
+}
+
+/* One line's discount as the customer sees it: 10 % off the line and then
+   10 % off the order is 19 % off, not 20 %. */
+function effectiveDiscountPct_(linePct, orderPct) {
+  var l = clampPct_(linePct) / 100;
+  var o = clampPct_(orderPct) / 100;
+  return Math.round((1 - (1 - l) * (1 - o)) * 10000) / 100;
+}
+
+/* Single-use for approvals that do not create a transaction (a drawer open, a
+   deposit refund): the reference is remembered for the approval's lifetime. */
+function consumeApproval_(p) {
+  var cache = CacheService.getScriptCache();
+  var key = 'apv:' + String(p.a) + ':' + String(p.r);
+  if (cache.get(key)) return false;
+  cache.put(key, '1', 21600);
+  return true;
+}
+
+function approve_(session, payload) {
+  if (!session || !session.uid) throw statusError_(401, 'Sign in first');
+  payload = payload || {};
+  var email = String(payload.email || '').trim().toLowerCase();
+  var pin = String(payload.pin || '');
+  var action = String(payload.action || '');
+  var ref = String(payload.ref || '').trim().slice(0, 160);
+  if (!APPROVAL_ACTIONS[action]) throw statusError_(400, 'Unknown approval');
+  if (!ref) throw statusError_(400, 'An approval needs a reference');
+  if (!email || !pin) throw statusError_(400, 'Enter the approver\'s email and PIN');
+
+  /* The same throttle as sign-in: an approval prompt must not become a way to
+     guess a manager's PIN five attempts at a time, forever. */
+  var lockedMs = loginLockoutRemainingMs_(email);
+  if (lockedMs > 0) {
+    throw statusError_(429, 'Too many failed attempts. Try again in ' + Math.ceil(lockedMs / 60000) + ' minute(s).');
+  }
+  var users = readRows_('Users', USER_HEADERS);
+  var found = null;
+  for (var i = 0; i < users.length; i++) {
+    if (String(users[i].email).toLowerCase() === email && String(users[i].active) === '1') { found = users[i]; break; }
+  }
+  if (!found || !constantEquals_(sha256Hex_(String(found.pin_salt) + ':' + pin), found.pin_hash)) {
+    recordLoginFailure_(email);
+    if (loginLockoutRemainingMs_(email) > 0) {
+      logAudit_(session, 'auth.locked', 'user', found ? String(found.id) : '', 'Locked after repeated wrong approval PINs for ' + email, payload.deviceId);
+    }
+    /* 403, not 401: the cashier's own session is fine, and the terminal signs
+       anyone out on a 401. A manager fumbling their PIN must not end the sale. */
+    throw statusError_(403, 'Approval refused - wrong email or PIN');
+  }
+  clearLoginFailures_(email);
+  var role = String(found.role);
+  if (role !== 'admin' && role !== 'manager') throw statusError_(403, 'Only a manager or admin can approve');
+  if (String(found.id) === String(session.uid)) throw statusError_(403, 'Someone else has to approve this');
+
+  var store = getStore_();
+  var pct = null;
+  if (action === 'discount') {
+    pct = Math.round(clampPct_(num_(payload.pct)) * 100) / 100;
+    if (!(pct > 0)) throw statusError_(400, 'Say how much discount is being approved');
+    if (pct > discountLimitFor_(role, store)) throw statusError_(403, 'That discount is over your own limit - an admin has to approve it');
+  }
+  var amount = payload.amount == null || payload.amount === '' ? null : Math.round(num_(payload.amount) * 100) / 100;
+
+  var now = Date.now();
+  var p = { typ: 'approval', a: action, r: ref, u: String(found.id), by: String(session.uid), iat: now, exp: now + APPROVAL_TTL_MS };
+  if (pct != null) p.p = pct;
+  if (amount != null) p.m = amount;
+  var name = (String(found.first_name || '') + ' ' + String(found.last_name || '')).trim();
+  logAudit_({ uid: found.id, role: role }, 'approval.granted', 'approval', ref,
+    action + (pct != null ? ' ' + pct + '%' : '') + (amount != null ? ' ' + amount : '') +
+    ' for ' + auditName_(String(session.uid)) + (payload.note ? ' — ' + String(payload.note).slice(0, 160) : ''),
+    payload.deviceId);
+  return { approval: signApproval_(p), approver: { name: name, role: role }, expiresAt: new Date(p.exp).toISOString() };
+}
+
 /* 256-bit opaque offline credential, issued fresh on every sign-in. Two v4
  * UUIDs (122 bits of entropy each) without dashes give 64 hex chars; it is
  * never stored server-side and carries zero information about the PIN. */
@@ -1994,6 +2143,28 @@ function syncPush_(session, payload) {
          retroactively tax a sale a cashier already rang up offline. */
       var newFormat = tx.discountPct !== undefined && tx.discountPct !== null;
       var orderPct = clampPct_(num_(tx.discountPct));
+
+      /* Discount limits (v1.37.0). The deepest discount on any line - line and
+         order combined - must be within the seller's limit, or carry a manager's
+         approval for at least that much, bound to this sale. Checked on the
+         server because the register is only advisory. */
+      var saleApprovedBy = '';
+      if (!hasErrors && resolved.length) {
+        var deepest = 0;
+        for (var dl = 0; dl < resolved.length; dl++) {
+          deepest = Math.max(deepest, effectiveDiscountPct_(resolved[dl].discountPct, orderPct));
+        }
+        var sellerRole = String((session && session.role) || 'cashier');
+        if (deepest > discountLimitFor_(sellerRole, store) + 0.001) {
+          var dAppr = tx.approval ? verifyApproval_(tx.approval, 'discount', String(tx.clientTxId || ''), userRows) : null;
+          if (!dAppr || num_(dAppr.p) + 0.001 < deepest || discountLimitFor_(dAppr.approverRole, store) + 0.001 < deepest) {
+            errors.push({ reason: 'discount_over_limit', pct: deepest });
+            hasErrors = true;
+          } else {
+            saleApprovedBy = String(dAppr.u);
+          }
+        }
+      }
       var taxRate = num_(store.taxRate);
       var totals = null;
       if (newFormat && !hasErrors && resolved.length) {
@@ -2032,6 +2203,7 @@ function syncPush_(session, payload) {
         customer_id: custId,
         channel: normaliseChannel_(tx.channel),
         external_ref: String(tx.externalRef || '').slice(0, 120),
+        approved_by: saleApprovedBy,
       };
       if (reuseId && hasErrors) {
         /* still blocked: report the fresh failure against the SAME transaction
@@ -2384,8 +2556,12 @@ function processPayment_(session, store, newTxRows, tx, deviceId, userRows, cust
 function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConflictRows,
                         serialPatches, productPatches, session, deviceId, tx, userRows) {
   var role = session ? String(session.role || '') : '';
+  var approval = null;
   if (role !== 'admin' && role !== 'manager') {
-    return { errors: [{ reason: 'unauthorized_role' }] };
+    /* A cashier's refund goes through with a manager's approval bound to this
+       refund's own clientTxId (v1.37.0). Without one it is refused as before. */
+    approval = tx.approval ? verifyApproval_(tx.approval, 'refund', String(tx.clientTxId || ''), userRows) : null;
+    if (!approval) return { errors: [{ reason: tx.approval ? 'approval_invalid' : 'unauthorized_role' }] };
   }
   /* Services provided are not refunded - the work was done. Checked first, so
      the refusal says why rather than surfacing as some later arithmetic error,
@@ -2519,6 +2695,9 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
     }
   }
   if (errors.length) return { errors: errors, original: original };
+  if (approval && approval.m != null && cents_(refundAmount) > cents_(approval.m)) {
+    return { errors: [{ reason: 'approval_amount_exceeded' }], original: original };
+  }
 
   var stamp = new Date().toISOString();
   for (var m = 0; m < resolved.length; m++) {
@@ -2552,6 +2731,7 @@ function processRefund_(txRows, prodRows, serialRows, store, newTxRows, newConfl
     note: String(tx.note || ''),
     created_at: String(tx.createdAt || new Date().toISOString()),
     customer_id: String(original.customer_id || ''),
+    approved_by: approval ? String(approval.u) : '',
   });
   return { transactionId: txId, errors: [], original: original };
 }
@@ -2729,6 +2909,7 @@ function transactions_(session, params) {
       originalClientTx: String(t.original_client_tx || ''),
       counterparty: String(t.counterparty || ''),
       cashier: nameById[String(t.user_id)] || '',
+      approvedBy: t.approved_by ? (nameById[String(t.approved_by)] || '') : '',
       grandTotal: num_(t.grand_total),
       subtotal: num_(t.subtotal),
       taxAmount: num_(t.tax_amount),
@@ -3141,7 +3322,7 @@ function reports_(session, params) {
   var byProduct = Object.create(null);
   var byCustomerTx = Object.create(null);
   var byChannel = Object.create(null);
-  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0 };
+  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0, discounts: 0, approvedDiscounts: 0 };
 
   function costOf_(t) {
     var items = itobjs_(t.items_json);
@@ -3176,7 +3357,7 @@ function reports_(session, params) {
     var costTotal = costOf_(t);
     var day = dayKeyOf_(t.created_at);
     var d = byDay[day] || (byDay[day] = { sales: 0, count: 0, gp: 0 });
-    var c = byCash[String(t.user_id || '')] || (byCash[String(t.user_id || '')] = { sales: 0, count: 0, units: 0, gp: 0 });
+    var c = byCash[String(t.user_id || '')] || (byCash[String(t.user_id || '')] = { sales: 0, count: 0, units: 0, gp: 0, discounts: 0, discountedSales: 0, approved: 0 });
 
     if (kind === 'sale') {
       var g1 = num_(t.grand_total);
@@ -3194,6 +3375,7 @@ function reports_(session, params) {
       d.sales += g1; d.count += 1; d.gp += gp;
       c.sales += g1; c.count += 1; c.gp += gp;
       c.units += items.reduce(function (s, it) { return s + (it.quantity || 1); }, 0);
+      var saleDiscC = 0;
 
       for (var ti = 0; ti < tenders.length; ti++) {
         var tc = tenders[ti];
@@ -3215,6 +3397,8 @@ function reports_(session, params) {
         var lineNetCents = round2_(num_(it.unitPrice) * 100 * qty * (1 - linePct / 100));
         var revCents = round2_(lineNetCents * (100 - orderPct) / 100);
         var lineRev = revCents / 100;
+        /* what the discounts took off this line, before tax */
+        saleDiscC += Math.max(0, Math.round(num_(it.unitPrice) * 100 * qty) - Math.round(revCents));
         var costPer = (typeof it.unitCost === 'number' && it.unitCost > 0) ? it.unitCost
           : (prod ? num_(prod.cost_price) : 0);
         var lineGp = lineRev - qty * costPer;
@@ -3227,6 +3411,12 @@ function reports_(session, params) {
         pe.units += qty;
         pe.sales += lineRev;
         pe.gp += lineGp;
+      }
+      if (saleDiscC > 0) {
+        summary.discounts += saleDiscC / 100;
+        c.discounts += saleDiscC / 100;
+        c.discountedSales += 1;
+        if (String(t.approved_by || '')) { summary.approvedDiscounts += 1; c.approved += 1; }
       }
       var custId = String(t.customer_id || '');
       if (custId) {
@@ -3292,7 +3482,8 @@ function reports_(session, params) {
     return { category: k, units: byCat[k].units, sales: num_(byCat[k].sales), gp: num_(byCat[k].gp) };
   }).sort(function (a, b) { return b.sales - a.sales; });
   var byCashOut = Object.keys(byCash).map(function (k) {
-    return { userName: userName[k] || '—', sales: num_(byCash[k].sales), count: byCash[k].count, units: byCash[k].units, gp: num_(byCash[k].gp) };
+    return { userName: userName[k] || '—', sales: num_(byCash[k].sales), count: byCash[k].count, units: byCash[k].units, gp: num_(byCash[k].gp),
+      discounts: round2_(byCash[k].discounts), discountedSales: byCash[k].discountedSales, approvedDiscounts: byCash[k].approved };
   }).sort(function (a, b) { return b.sales - a.sales; });
   var byTenderOut = Object.keys(byTender).map(function (k) {
     return { type: k, label: REPORT_DENOM_LABELS[k] || k, amount: num_(byTender[k].amount), count: byTender[k].count };
@@ -3324,6 +3515,8 @@ function reports_(session, params) {
       units: summary.units,
       tax: summary.tax,
       grossProfit: summary.grossProfit,
+      discounts: round2_(summary.discounts),
+      approvedDiscounts: summary.approvedDiscounts,
       avgTicket: summary.salesCount ? summary.grossSales / summary.salesCount : 0,
     },
     byDay: byDayOut,
@@ -4892,18 +5085,37 @@ function repairCollect_(session, payload) {
  * terminal records every manual open here: who, which till, and why. The pulse
  * itself goes from the terminal to its printer; this is the paper trail. */
 function drawerOpen_(session, payload) {
-  requireRole_(session, ['admin', 'manager']);
-  var reason = String((payload || {}).reason || '').trim().slice(0, 200);
+  payload = payload || {};
+  var approval = approvalOrRole_(session, payload, 'drawer', String(payload.ref || ''));
+  var reason = String(payload.reason || '').trim().slice(0, 200);
   if (!reason) throw statusError_(400, 'Opening the drawer without a sale needs a reason');
-  logAudit_(session, 'drawer.open', 'drawer', '', 'No-sale drawer open: ' + reason,
-    String((payload || {}).deviceId || '').slice(0, 80));
-  return { recorded: true };
+  if (approval && !consumeApproval_(approval)) throw statusError_(409, 'That approval has already been used');
+  logAudit_(session, 'drawer.open', 'drawer', '', 'No-sale drawer open: ' + reason +
+    (approval ? ' (approved by ' + approval.approverName + ')' : ''),
+    String(payload.deviceId || '').slice(0, 80));
+  return { recorded: true, approvedBy: approval ? approval.approverName : '' };
+}
+
+/* Managers and admins act on their own authority; anyone else needs an approval
+   for this action and reference. Returns the approval, or null for a manager. */
+function approvalOrRole_(session, payload, action, ref) {
+  if (!session || !session.uid) throw statusError_(401, 'Sign in first');
+  var role = String(session.role || '');
+  if (role === 'admin' || role === 'manager') return null;
+  if (!payload.approval) throw statusError_(403, 'Not authorized for this action');
+  var p = verifyApproval_(payload.approval, action, ref, null);
+  if (!p) throw statusError_(403, 'The approval is not valid for this - ask again');
+  return p;
 }
 
 function repairDepositRefund_(session, payload) {
-  requireRole_(session, ['admin', 'manager']);
-  var id = String((payload || {}).id || '');
-  var reason = String((payload || {}).reason || '').trim().slice(0, 200);
+  payload = payload || {};
+  var id = String(payload.id || '');
+  /* the approval's reference names the ticket, so one for another job cannot
+     be spent here */
+  var approval = approvalOrRole_(session, payload, 'deposit_refund', String(payload.ref || ''));
+  if (approval && String(approval.r).split('|')[0] !== id) throw statusError_(403, 'The approval is not valid for this - ask again');
+  var reason = String(payload.reason || '').trim().slice(0, 200);
   if (!reason) throw statusError_(400, 'Giving a deposit back needs a reason');
 
   var lock = LockService.getScriptLock();
@@ -4920,6 +5132,8 @@ function repairDepositRefund_(session, payload) {
     if (wantC <= 0) throw statusError_(400, 'A refund has to be more than nothing');
     if (wantC > heldC) throw statusError_(400, 'That is more than the deposit held');
     var amount = wantC / 100;
+    if (approval && approval.m != null && wantC > cents_(approval.m)) throw statusError_(403, 'That is more than was approved');
+    if (approval && !consumeApproval_(approval)) throw statusError_(409, 'That approval has already been used');
 
     var store = getStore_();
     var now = new Date().toISOString();
@@ -4932,11 +5146,13 @@ function repairDepositRefund_(session, payload) {
       note: 'Deposit refund on ' + String(row.ticket_no || '') + ': ' + reason, created_at: now,
       subtotal: '', tax_amount: '', discount_pct: '', customer_id: String(row.customer_id || ''),
       receipt_no: '', channel: 'in_store', external_ref: String(row.ticket_no || ''),
+      approved_by: approval ? String(approval.u) : '',
     }]);
     var left = (heldC - wantC) / 100;
     applyPatches_('Repairs', REPAIR_HEADERS, 'id', { [id]: { deposit_total: left, updated_at: now } });
     logAudit_(session, 'repair.deposit_refund', 'repair', id,
-      'Refunded ' + amount.toFixed(2) + ' deposit on ' + String(row.ticket_no || '') + ': ' + reason, '');
+      'Refunded ' + amount.toFixed(2) + ' deposit on ' + String(row.ticket_no || '') + ': ' + reason +
+      (approval ? ' (approved by ' + approval.approverName + ')' : ''), '');
     return { id: id, transactionId: txId, amount: amount, depositTotal: left };
   } finally {
     lock.releaseLock();
@@ -5846,16 +6062,28 @@ function adminStore_(session, payload) {
     denomsUpd = currencyDenoms_(currencyUpd);
   }
 
+  var limitCashierUpd, limitManagerUpd;
+  if (payload.discountLimitCashier != null && payload.discountLimitCashier !== '') {
+    limitCashierUpd = num_(payload.discountLimitCashier);
+    if (!(limitCashierUpd >= 0) || limitCashierUpd > 100) throw statusError_(400, 'Discount limits must be between 0 and 100');
+  }
+  if (payload.discountLimitManager != null && payload.discountLimitManager !== '') {
+    limitManagerUpd = num_(payload.discountLimitManager);
+    if (!(limitManagerUpd >= 0) || limitManagerUpd > 100) throw statusError_(400, 'Discount limits must be between 0 and 100');
+  }
+
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
+    if (limitCashierUpd !== undefined) setKv_('discount_limit_cashier', limitCashierUpd);
+    if (limitManagerUpd !== undefined) setKv_('discount_limit_manager', limitManagerUpd);
     if (taxUpd !== undefined) setKv_('store_tax_rate', taxUpd);
     if (tzMinUpd !== undefined) setKv_('store_tz_offset', tzMinUpd);
     if (localeUpd !== undefined) setKv_('store_locale', localeUpd);
     if (countryUpd !== undefined) setKv_('store_country', countryUpd);
     if (currencyUpd !== undefined) setKv_('store_currency', currencyUpd);
     if (denomsUpd !== undefined) setKv_('store_denoms', JSON.stringify(denomsUpd));
-    logAudit_(session, 'store.settings', 'store', getStore_().id, 'Store settings updated', '');
+    logAudit_(session, 'store.settings', 'store', getStore_().id, 'Store settings updated: ' + Object.keys(payload).filter(function (k) { return k !== 'deviceId'; }).map(function (k) { return k + ' ' + (typeof payload[k] === 'object' ? JSON.stringify(payload[k]) : String(payload[k])); }).join(', ').slice(0, 400), payload.deviceId);
     return getStore_();
   } finally {
     lock.releaseLock();

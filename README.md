@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.36.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.37.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -11,7 +11,8 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Register**: search by name, SKU or barcode, scan with a handheld reader or the camera, or tap a tile. The running total is pinned above the tab bar, and a cart survives a crash or refresh and is offered back on the next start.
 - **Serialized (IMEI) stock**: one unit at a time, captured at sale and bound to it through history, refunds and receipts.
 - **Split tender**: Cash, **Card** (recorded; kept out of the expected drawer), Store Credit and On-account (Net-30), with change and a quick-round keypad.
-- **Discounts and tax**: line and order discounts, and store sales tax on the taxable portion only.
+- **Discounts and tax**: line and order discounts, and store sales tax on the taxable portion only. Discounts have per-role limits (cashier 10 %, manager 50 % by default); going over one needs a manager's approval.
+- **Manager approval at the till**: a manager types their own email and PIN on the cashier's screen to approve a refund, an over-limit discount, a no-sale drawer open or a deposit refund. The cashier stays signed in.
 - **Receipts**: gap-free numbers (`Orison-S000001`) allocated at sync. Print through a receipt printer, an ordinary office printer, or straight to a **Bluetooth** receipt printer. You can also send a PDF or text by WhatsApp or email.
 - **Cash drawer**: opens on a cash sale through a Bluetooth printer. Managers get **Open Drawer** with a reason, and every no-sale open is audited.
 - **Customer display**: a second screen mirrors the cart, totals and change due, and never shows cost, margin or customer records.
@@ -28,7 +29,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 
 - **Till shifts**: open with a float, close with a count in the store's own notes and coins, and see *declared / expected / over-or-short*.
 - **Cash out by reason**: Paid Out, Cash Pick Up and Staff Expense are separate kinds, and each is split in reports and the export.
-- **Refunds**: validated against the original sale and any earlier refunds, with stock returned.
+- **Refunds**: validated against the original sale and any earlier refunds, with stock returned, for what the customer actually paid. A cashier refunds with a manager's approval.
 - **Customers**: Net-30 accounts, a per-customer ledger, collections, receivables with 30/60/90+ day aging, and printable or CSV statements.
 - **Audit log** (admin only): append-only, filterable, exportable. It covers refunds and cash-outs, stock adjustments with a reason, product and price edits, purchase orders, staff and PIN changes, sign-ins and lockouts, repairs and drawer opens.
 
@@ -153,8 +154,8 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 ## Development
 
 ```bash
-npm test              # backend logic vs an in-memory Apps Script mock (757 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (463 checks)
+npm test              # backend logic vs an in-memory Apps Script mock (795 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (471 checks)
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
 npm run test:pdf      # receipt PDF/share smoke test in a headless browser
 npm run test:all      # all four
@@ -200,7 +201,7 @@ One feature = one validated revision = one git tag. Every release bumps `public/
 - Auth and session data live in each browser's IndexedDB and are **not** shared across devices. Every device syncs to the same backend.
 - Sheet writes are serialized with Apps Script `LockService`. That is fine for one store or a few; it is not built for heavy scale.
 - **Roles, in short**:
-  - **Cashiers**: sell, run their own shift and clock, and handle repairs.
+  - **Cashiers**: sell, run their own shift and clock, and handle repairs. With a manager's approval they also refund, give over-limit discounts, open the drawer without a sale and give deposits back.
   - **Managers**: add refunds, cash out, customers and ledgers, products and stock, purchase orders, reports, conflict review and lockout release.
   - **Admins alone**: staff, PINs, terminals, store settings, suppliers, bulk pricing, stock takes, PO cancellation, repair voids, backups, scheduled reports and the audit log.
 - Still English by design: CSV column headers, the Sheets workbook and report emails.

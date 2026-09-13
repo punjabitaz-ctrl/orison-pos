@@ -123,6 +123,7 @@ export const screen = {
           <div class="dash-kpi"><span>${$t('Avg ticket')}</span><strong>${money(sum.avgTicket)}</strong></div>
           <div class="dash-kpi"><span>${$t('Tax collected')}</span><strong>${money(sum.tax)}</strong></div>
           <div class="dash-kpi dash-gp"><span>${$t('Gross profit')}</span><strong>${money(sum.grossProfit)}</strong></div>
+          <div class="dash-kpi"><span>${$t('Discounts given')}</span><strong>${money(sum.discounts || 0)}</strong>${sum.approvedDiscounts ? `<em class="muted">${esc($tn('{n} approved', '{n} approved', sum.approvedDiscounts))}</em>` : ''}</div>
         </div>
 
         <section class="dash-section">
@@ -140,7 +141,7 @@ export const screen = {
           </section>
           <section class="dash-section">
             <h3>${$t('By cashier')}</h3>
-            ${panel(data.byCashier, (c) => c.userName, (c) => [money(c.sales), $t('{count} tx · {units} units', { count: c.count, units: c.units }), $t('gp {amount}', { amount: money(c.gp) })])}
+            ${panel(data.byCashier, (c) => c.userName, (c) => [money(c.sales), $t('{count} tx · {units} units', { count: c.count, units: c.units }), $t('gp {amount}', { amount: money(c.gp) })].concat(c.discounts ? [$t('discounts {amount} on {n} · {approved} approved', { amount: money(c.discounts), n: c.discountedSales || 0, approved: c.approvedDiscounts || 0 })] : []))}
           </section>
           <section class="dash-section">
             <h3>${$t('By payment method')}</h3>
@@ -191,14 +192,14 @@ function panel(rows, name, cells) {
   if (!rows || !rows.length) return `<p class="empty">${$t('Nothing in this window.')}</p>`;
   const max = Math.max(1, ...rows.map((r) => r.sales != null ? r.sales : r.amount != null ? r.amount : r.spent != null ? r.spent : 0));
   return `<div class="rep-list">${rows.slice(0, 6).map((r) => {
-    const [a, b, c] = cells(r);
+    const [a, ...rest] = cells(r);
     const v = r.sales != null ? r.sales : r.amount != null ? r.amount : r.spent != null ? r.spent : 0;
     const w = Math.round((v / max) * 100);
     return `
       <div class="rep-item">
         <div class="rep-top"><span class="rep-name">${esc(name(r))}</span><b>${a}</b></div>
         <div class="rep-bar"><div class="rep-fill" style="width:${w}%"></div></div>
-        <div class="rep-sub muted">${esc([b, c].filter(Boolean).join(' · '))}</div>
+        <div class="rep-sub muted">${esc(rest.filter(Boolean).join(' · '))}</div>
       </div>`;
   }).join('')}</div>`;
 }
@@ -251,13 +252,15 @@ function exportCsv(data, range) {
   lines.push(['tax_collected', money(s.tax)].join(','));
   lines.push(['gross_profit', money(s.grossProfit)].join(','));
   lines.push(['avg_ticket', money(s.avgTicket)].join(','));
+  lines.push(['discounts_given', money(s.discounts || 0)].join(','));
+  lines.push(['discounts_approved', String(s.approvedDiscounts || 0)].join(','));
   lines.push('');
   pushList('BY_DAY', ['date', 'gross', 'count', 'gross_profit'], data.byDay,
     (r) => [r.date, money(r.sales), String(r.count), money(r.gp)]);
   pushList('BY_CATEGORY', ['category', 'sales', 'units', 'gross_profit'], data.byCategory,
     (r) => [r.category, money(r.sales), String(r.units), money(r.gp)]);
-  pushList('BY_CASHIER', ['cashier', 'sales', 'count', 'units', 'gross_profit'], data.byCashier,
-    (r) => [r.userName, money(r.sales), String(r.count), String(r.units), money(r.gp)]);
+  pushList('BY_CASHIER', ['cashier', 'sales', 'count', 'units', 'gross_profit', 'discounts', 'discounted_sales', 'approved'], data.byCashier,
+    (r) => [r.userName, money(r.sales), String(r.count), String(r.units), money(r.gp), money(r.discounts || 0), String(r.discountedSales || 0), String(r.approvedDiscounts || 0)]);
   pushList('BY_PAYMENT', ['method', 'net_amount', 'tenders'], data.byTender,
     (r) => [r.label, money(r.amount), String(r.count)]);
   pushList('TOP_PRODUCTS', ['name', 'sku', 'units', 'sales', 'gross_profit'], data.topProducts,

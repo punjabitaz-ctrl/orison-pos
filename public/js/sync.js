@@ -218,8 +218,14 @@ async function rollbackLocal(payload) {
   emit({ kind: 'stock-restored' });
 }
 
+export function newClientTxId() {
+  return crypto.randomUUID ? crypto.randomUUID() : 'tx-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+}
+
 export async function enqueueTransaction(tx) {
-  const clientTxId = crypto.randomUUID ? crypto.randomUUID() : 'tx-' + Date.now();
+  /* A transaction that needed a manager's approval was given its id before
+     the approval was asked for, because the approval is bound to that id. */
+  const clientTxId = tx.clientTxId || newClientTxId();
   const payload = {
     clientTxId,
     userId: tx.userId,
@@ -239,6 +245,7 @@ export async function enqueueTransaction(tx) {
     externalRef: tx.externalRef || '',
     items: tx.items,
   };
+  if (tx.approval) payload.approval = tx.approval;
   await idb.put('outbox', {
     clientTxId,
     payload,

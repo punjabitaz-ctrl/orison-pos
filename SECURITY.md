@@ -170,14 +170,16 @@ privileged action. The role is carried in the signed session token; because a
 role **change** revokes that user's sessions immediately, a promotion or
 demotion takes effect at the first request after the change (no 12-hour lag).
 
-Verified route by route against `Code.gs` at v1.36.0. The task-level view —
+Verified route by route against `Code.gs` at v1.37.0. The task-level view —
 what each role can actually do on screen, and what they cannot — is in
 [`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
 
 | Route | Roles |
 |---|---|
 | `/api/sync/push` — sale | any signed-in role |
-| `/api/sync/push` — refund, payout, pickup, expense, payment (collection) | admin, manager (refused per row otherwise) |
+| `/api/sync/push` — refund | admin, manager; a cashier with a `refund` approval for that clientTxId |
+| `/api/sync/push` — sale over the seller's discount limit | needs a `discount` approval covering it (`discount_over_limit`) |
+| `/api/sync/push` — payout, pickup, expense, payment (collection) | admin, manager (refused per row otherwise) |
 | `/api/sync/push` — deposit, deposit_refund, or a `deposit` tender | nobody — server-written only |
 | `/api/transactions`, `/api/shifts`, `/api/timeclock`, `/api/drive/export` | admin, manager see the store; a cashier is scoped to their own rows |
 | `/api/shifts/open`, `/close`, `/api/timeclock/punch`, `/api/pin`, `/api/logout` | any signed-in user, own records only |
@@ -185,9 +187,10 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/config` | any; the staff roster only to admin, manager |
 | `/api/customers` (search) | any signed-in role |
 | `/api/repairs`, `/detail`, `/parts`, `/labour`, `/status`, `/deposit`, `/collect` | any signed-in role (all audited) |
-| `/api/repairs/deposit-refund` | admin, manager |
+| `/api/repairs/deposit-refund` | admin, manager; a cashier with a single-use `deposit_refund` approval for that ticket |
 | `/api/repairs/void` | admin |
-| `/api/drawer/open` | admin, manager (audited) |
+| `/api/drawer/open` | admin, manager; a cashier with a single-use `drawer` approval (audited) |
+| `/api/approve` | any signed-in role asks; the approver must be a different, active manager or admin, and within their own discount limit |
 | `/api/reports`, `/api/price-history`, `/api/inventory/aging`, `/api/inventory/reorder` | admin, manager |
 | `/api/customers/ledger`, `/receivables`, `/statement`, `/api/admin/customers` | admin, manager |
 | `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` | admin, manager |
@@ -203,18 +206,32 @@ what each role can actually do on screen, and what they cannot — is in
 A sale on any `channel` other than `in_store` (Sold Elsewhere) is refused from a
 cashier with `unauthorized_role` (v1.36.0).
 
+## Manager approval (v1.37.0)
+
+Some actions a cashier may take only with a manager present: a refund, a discount over their limit, a no-sale drawer open, a deposit refund. The manager types their own email and PIN on the cashier's screen, and `POST /api/approve` returns a signed approval.
+
+- **It is not a session.** It is signed over `'approval:' + body`, and a session token is signed over `body`. An approval fed in as a session fails verification.
+- **It is narrow.** It is bound to one action and one reference that the terminal generated before asking (the refund's or sale's `clientTxId`, a drawer nonce, `ticketId|nonce`). It may carry a maximum discount (`p`) or amount (`m`).
+- **It expires and is re-checked.** It lasts 24 hours, so a refund queued behind a dropped connection still lands. When it is used, the approver must still be active and still a manager or admin, and for a discount still within their limit.
+- **Single-use where there is no transaction.** A drawer approval and a deposit-refund approval are remembered in CacheService for six hours. A refund or discount approval is bound to a `clientTxId`, which push idempotency already makes single-use.
+- **Throttled like sign-in.** A wrong approval PIN counts toward that address's lockout. It answers **403, not 401**, because the terminal treats a 401 as its own session expiring and signs the cashier out.
+- **Nobody approves themself**, and every grant is audited as `approval.granted`. The transaction records the approver in `approved_by`.
+- **Approvals need a connection.** A PIN is only checked by the server; there is no offline approval, by design.
+
+Discount limits (`discount_limit_cashier`, default 10; `discount_limit_manager`, default 50; admins unlimited) are enforced on the server against the deepest line: `1 − (1 − line%)(1 − order%)`.
+
 ## Audit log
 
 `AuditLog` (v1.22.0) is append-only — the API has no update or delete path —
 and readable by admins only. It records the actor, their role, the action, the
 target, a summary and the terminal.
 
-**Recorded (v1.36.0):**
+**Recorded (v1.36.0, approvals v1.37.0):**
 
 - **Money:** refunds, paid out, cash pick-ups, staff expenses and payments on account, written as they sync; no-sale drawer opens; Drive exports.
 - **Stock:** stock adjustments with a reason; stock takes; product create and edit, field by field; bulk repricing; serials added; suppliers; purchase orders created, received and cancelled.
 - **Repairs:** every repair action.
-- **People and access:** sign-ins; the attempt that trips a lockout; lockout releases; new staff; staff edits; PIN resets; revoke-all; terminal revocations; customer creation; conflict reviews.
+- **People and access:** manager approvals; sign-ins; the attempt that trips a lockout; lockout releases; new staff; staff edits; PIN resets; revoke-all; terminal revocations; customer creation; conflict reviews.
 - **The business:** store settings, scheduled reports and backups.
 
 **Deliberately not recorded:**
@@ -359,11 +376,9 @@ is tracked; none is silent.
 7. **Salted single SHA-256 PIN hashes** are fast to brute-force if the
    workbook ever leaks; bounded by the login throttle and Google account
    access. Move to a memory-hard hash if the store moves off Sheets.
-8. **Discounts have no ceiling or approval.** Any role can apply a 50 % line
-   discount and any order discount; the server clamps to 0–100 % only, and no
-   report breaks discounts out by cashier. Combined with #1 this is the
-   largest shrink exposure. A per-role limit with manager PIN approval is the
-   recommended fix.
-9. **No manager-approval step exists.** A refund on a cashier's till means the
-   manager signs in there, and signing the cashier out revokes every session
-   that cashier holds.
+8. ~~**Discounts have no ceiling or approval.**~~ **Fixed in v1.37.0**: per-role
+   limits enforced on the server, with approval over them, and discounts by
+   cashier in reports. Weakness #1 still stands: the unit price itself is
+   client-supplied.
+9. ~~**No manager-approval step exists.**~~ **Fixed in v1.37.0**: see
+   [Manager approval](#manager-approval-v1370).

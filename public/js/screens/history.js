@@ -11,6 +11,7 @@ import { screenHead } from '../components.js';
 import { api } from '../api.js';
 import { fmt, fmtFor, esc, openModal, closeModal, toast, debounce } from '../ui.js';
 import { kindInfo, createRefund, refundGroups, refundTotal } from '../money.js';
+import { newClientTxId } from '../sync.js';
 import { receiptDoc } from '../receipt-doc.js';
 import { receiptContext } from '../receipt-labels.js';
 import { docToLines } from '../receipt-render.js';
@@ -156,8 +157,9 @@ export const screen = {
 
     function openDetail(t) {
       const k = kindInfo(t.kind);
-      const refundable = (user.role === 'admin' || user.role === 'manager')
-        && (t.kind || 'sale') === 'sale'
+      /* Anyone can start a refund; a cashier's needs a manager's approval,
+         asked for when they confirm it (v1.37.0). */
+      const refundable = (t.kind || 'sale') === 'sale'
         && (t.status === 'SYNCED' || t.status === 'SERVER')
         && (t.items || []).length > 0;
       const lineTotal = (i) => {
@@ -224,7 +226,8 @@ export const screen = {
          customer can see the whole sale, but they cannot be selected. */
       const productsById = {};
       for (const p of (await idb.getAll('products')) || []) productsById[String(p.id)] = p;
-      const groups = refundGroups(t.items || [], productsById);
+      const saleTotal = Number(t.total != null ? t.total : t.grandTotal) || 0;
+      const groups = refundGroups(t.items || [], productsById, { discountPct: t.discountPct, total: saleTotal });
       const anyRefundable = groups.some((g) => g.refundable);
       const pickedSerial = new Set();
       let method = 'cash';
@@ -298,8 +301,21 @@ export const screen = {
         });
         if (!items.length) return;
         confirm.disabled = true;
+        const clientTxId = newClientTxId();
+        let approval;
+        if (user.role !== 'admin' && user.role !== 'manager') {
+          const { requestApproval } = await import('../approval-dialog.js');
+          const amount = Math.min(saleTotal, Math.round(items.reduce((s, it) => s + (it.unitPrice || 0) * (it.quantity || 1), 0) * 100) / 100);
+          const granted = await requestApproval({
+            action: 'refund', ref: clientTxId, amount,
+            detail: $t('Refund {amount} on {ref}', { amount: fmt(amount), ref: t.receiptNo || t.clientTxId || t.id }),
+            note: modalEl.querySelector('#rf-note').value.trim(),
+          });
+          if (!granted) { confirm.disabled = false; return; }
+          approval = granted.approval;
+        }
         try {
-          await createRefund({ original: t, items, method, note: modalEl.querySelector('#rf-note').value.trim(), user });
+          await createRefund({ original: t, items, method, note: modalEl.querySelector('#rf-note').value.trim(), user, clientTxId, approval, cap: saleTotal });
           closeModal();
           toast($t('Refund queued'), 'ok', 1800);
           if (navigator.onLine) loadServer(false); else render();
@@ -313,7 +329,7 @@ export const screen = {
          serial check, so plain items never counted and Confirm stayed disabled.
          refundTotal() is unit-tested for exactly that case. */
       function updateTotal() {
-        const total = refundTotal(groups, pickedSerial);
+        const total = refundTotal(groups, pickedSerial, saleTotal);
         modalEl.querySelector('#rf-total').textContent = fmt(total);
         confirm.disabled = Math.round(total * 100) <= 0;
       }

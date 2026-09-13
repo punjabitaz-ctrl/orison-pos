@@ -2200,7 +2200,7 @@ check('statement carries the changer/cashier',
       tenders: [{ type: 'cash', amount: 18.34 }], note: '', createdAt: new Date().toISOString(),
       items: [{ productId: hdDisP, quantity: 1, unitPrice: 20, discountPct: 10 }],
     }],
-  }, { session: hCas });
+  }, { session: hAdm }); // 14.5 % effective is over a cashier's 10 % limit since v1.37.0
   const disDeliver = req('/api/transactions', {}, { params: { limit: '500' }, session: hAdm }).data.transactions.find((t) => t.clientTxId === 'tx-hd-dis');
   const disRep = req('/api/reports', {}, { session: hAdm, params: { from: hpDay, to: hpDay } }).data;
   const disCat = disRep.byCategory.find((c) => c.category === 'HD Discount');
@@ -4015,6 +4015,134 @@ check('statement carries the changer/cashier',
   req('/api/admin/customers', { name: 'Named After Edit' }, { session: nTok2 });
   check('new audit entries carry the corrected name',
     log('customer.create').some((e) => /Named After Edit/.test(e.summary) && e.userName === 'Nadya Auditor'));
+}
+{
+  section('manager approval and discount limits (v1.37.0)');
+
+  const pAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const pMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const pCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const pUsers = req('/api/admin/users/list', {}, { session: pAdm }).data.users;
+  const pCashId = pUsers.find((u) => u.email === 'amara@example.com').id;
+  const pMgrId = pUsers.find((u) => u.email === 'sarah@example.com').id;
+  req('/api/admin/store', { taxRate: 0 }, { session: pAdm });
+
+  const cfgStore = req('/api/config', {}, { session: pCash }).data.store;
+  check('the store carries default discount limits: cashier 10 %, manager 50 %',
+    cfgStore.discountLimitCashier === 10 && cfgStore.discountLimitManager === 50, JSON.stringify(cfgStore));
+  check('a manager cannot change the limits', req('/api/admin/store', { discountLimitCashier: 30 }, { session: pMgr }).status === 403);
+  check('a limit outside 0-100 is refused', req('/api/admin/store', { discountLimitCashier: 120 }, { session: pAdm }).status === 400);
+
+  const pProd = req('/api/admin/products', { name: 'Approval Case', sku: 'APV-1', category: 'APV', costPrice: 5, retailPrice: 100, onHand: 50 }, { session: pAdm }).data.id;
+  const sell = (clientTxId, linePct, orderPct, approval, as) => req('/api/sync/push', {
+    deviceId: 'till-apv',
+    batch: [{ clientTxId, userId: pCashId, discountPct: orderPct || 0, grandTotal: 1, createdAt: new Date().toISOString(),
+      tenders: [{ type: 'cash', amount: 100 }], items: [{ productId: pProd, quantity: 1, unitPrice: 100, discountPct: linePct || 0 }],
+      approval }],
+  }, { session: as || pCash }).data.results[0];
+  const approve = (payload, as) => req('/api/approve', payload, { session: as || pCash });
+
+  check('a cashier gives 10 % without asking', sell('tx-apv-10', 10).accepted === true);
+  const over = sell('tx-apv-15', 15);
+  check('15 % from a cashier is refused as over the limit',
+    over.accepted === false && over.conflicts[0].reason === 'discount_over_limit', JSON.stringify(over));
+  const stacked = sell('tx-apv-stack', 6, 6);
+  check('line and order discounts are combined (6 % + 6 % = 11.64 %, over 10 %)',
+    stacked.accepted === false && stacked.conflicts[0].reason === 'discount_over_limit', JSON.stringify(stacked));
+
+  const mgrEmail = 'sarah@example.com';
+  const mgrPin = CREDS['sarah@example.com'];
+  check('an approval needs a reference', approve({ email: mgrEmail, pin: mgrPin, action: 'discount', pct: 15 }).status === 400);
+  check('a wrong PIN is refused with 403, never 401 (a 401 signs the cashier out)',
+    approve({ email: mgrEmail, pin: '000001', action: 'discount', ref: 'tx-apv-15b', pct: 15 }).status === 403);
+  check('and the cashier is still signed in', req('/api/products', {}, { session: pCash }).ok === true);
+  check('a cashier cannot approve',
+    approve({ email: 'diego@example.com', pin: CREDS['diego@example.com'], action: 'discount', ref: 'tx-apv-15b', pct: 15 }, pMgr).status === 403);
+  check('nobody approves their own request',
+    approve({ email: mgrEmail, pin: mgrPin, action: 'drawer', ref: 'self-1' }, pMgr).status === 403);
+  check('a manager cannot approve more than their own limit',
+    approve({ email: mgrEmail, pin: mgrPin, action: 'discount', ref: 'tx-apv-60', pct: 60 }).status === 403);
+
+  const ok15 = approve({ email: mgrEmail, pin: mgrPin, action: 'discount', ref: 'tx-apv-15b', pct: 15, note: 'loyal customer' });
+  check('a manager approves 15 % for one sale', ok15.ok === true && ok15.data.approver.role === 'manager', JSON.stringify(ok15));
+  const tok15 = ok15.data.approval;
+  check('an approval is not a session', req('/api/products', {}, { session: tok15 }).status === 401);
+  check('it does not work on another sale', sell('tx-apv-other', 15, 0, tok15).accepted === false);
+  check('it does not cover more than was approved', sell('tx-apv-15b', 20, 0, tok15).accepted === false);
+  const good = sell('tx-apv-15b', 15, 0, tok15);
+  check('with it, the 15 % sale goes through', good.accepted === true, JSON.stringify(good));
+  const row15 = req('/api/transactions', {}, { session: pAdm, params: { q: 'tx-apv-15b' } }).data.transactions[0];
+  check('the sale names who approved it', row15 && row15.approvedBy === 'Sarah Lindqvist', JSON.stringify(row15 && row15.approvedBy));
+  check('the grant is in the audit log',
+    req('/api/audit', {}, { session: pAdm, params: { action: 'approval.granted' } }).data.entries
+      .some((e) => e.targetId === 'tx-apv-15b' && /loyal customer/.test(e.summary) && e.userName === 'Sarah Lindqvist'));
+
+  const adm60 = approve({ email: 'tariq@example.com', pin: CREDS['tariq@example.com'], action: 'discount', ref: 'tx-apv-60', pct: 60 });
+  check('an admin can approve past the manager limit', adm60.ok === true);
+  check('and a 60 % sale then goes through', sell('tx-apv-60', 60, 0, adm60.data.approval).accepted === true);
+  check('a manager selling at 40 % needs nobody', sell('tx-apv-mgr40', 40, 0, null, pMgr).accepted === true);
+  check('a manager at 55 % does', sell('tx-apv-mgr55', 55, 0, null, pMgr).accepted === false);
+
+  req('/api/admin/store', { discountLimitCashier: 20 }, { session: pAdm });
+  check('raising the cashier limit to 20 % lets 15 % through', sell('tx-apv-after', 15).accepted === true);
+  req('/api/admin/store', { discountLimitCashier: 10 }, { session: pAdm });
+
+  /* --- refunds --- */
+  const noApv = req('/api/sync/push', { deviceId: 'till-apv', batch: [{ clientTxId: 'rf-apv-1', kind: 'refund', originalClientTx: 'tx-apv-10',
+    userId: pCashId, grandTotal: 90, createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 90 }],
+    items: [{ productId: pProd, quantity: 1, unitPrice: 90 }] }] }, { session: pCash }).data.results[0];
+  check('a cashier refund without approval is still refused', noApv.accepted === false && noApv.conflicts[0].reason === 'unauthorized_role');
+  const rfCap = approve({ email: mgrEmail, pin: mgrPin, action: 'refund', ref: 'rf-apv-1', amount: 50 }).data.approval;
+  const capped = req('/api/sync/push', { deviceId: 'till-apv', batch: [{ clientTxId: 'rf-apv-1', kind: 'refund', originalClientTx: 'tx-apv-10',
+    userId: pCashId, grandTotal: 90, createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 90 }], approval: rfCap,
+    items: [{ productId: pProd, quantity: 1, unitPrice: 90 }] }] }, { session: pCash }).data.results[0];
+  check('a refund bigger than the approved amount is refused', capped.accepted === false && capped.conflicts[0].reason === 'approval_amount_exceeded', JSON.stringify(capped));
+  const rfTok = approve({ email: mgrEmail, pin: mgrPin, action: 'refund', ref: 'rf-apv-2', amount: 90 }).data.approval;
+  const rfOk = req('/api/sync/push', { deviceId: 'till-apv', batch: [{ clientTxId: 'rf-apv-2', kind: 'refund', originalClientTx: 'tx-apv-10',
+    userId: pCashId, grandTotal: 90, createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 90 }], approval: rfTok, note: 'wrong colour',
+    items: [{ productId: pProd, quantity: 1, unitPrice: 90 }] }] }, { session: pCash }).data.results[0];
+  check('with approval a cashier refund goes through', rfOk.accepted === true, JSON.stringify(rfOk));
+  const rfRow = req('/api/transactions', {}, { session: pAdm, params: { q: 'rf-apv-2' } }).data.transactions[0];
+  check('the refund names who approved it', rfRow && rfRow.approvedBy === 'Sarah Lindqvist');
+
+  /* an approver switched off since no longer counts */
+  const stale = approve({ email: mgrEmail, pin: mgrPin, action: 'refund', ref: 'rf-apv-3' }).data.approval;
+  req('/api/admin/users/patch', { id: pMgrId, active: false }, { session: pAdm });
+  const staleRes = req('/api/sync/push', { deviceId: 'till-apv', batch: [{ clientTxId: 'rf-apv-3', kind: 'refund', originalClientTx: 'tx-apv-15b',
+    userId: pCashId, grandTotal: 85, createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 85 }], approval: stale,
+    items: [{ productId: pProd, quantity: 1, unitPrice: 85 }] }] }, { session: pCash }).data.results[0];
+  check('an approval from someone switched off since is refused', staleRes.accepted === false && staleRes.conflicts[0].reason === 'approval_invalid', JSON.stringify(staleRes));
+  req('/api/admin/users/patch', { id: pMgrId, active: true }, { session: pAdm });
+  const pMgr2 = req('/api/login', { email: mgrEmail, pin: mgrPin }).data.token;
+
+  /* --- no-sale drawer --- */
+  check('a cashier cannot open the drawer alone', req('/api/drawer/open', { reason: 'change', ref: 'dr-1' }, { session: pCash }).status === 403);
+  const drTok = approve({ email: mgrEmail, pin: mgrPin, action: 'drawer', ref: 'dr-1' }).data.approval;
+  const drOk = req('/api/drawer/open', { reason: 'change for a 100', ref: 'dr-1', approval: drTok }, { session: pCash });
+  check('with approval they can, and the approver is named', drOk.ok === true && drOk.data.approvedBy === 'Sarah Lindqvist', JSON.stringify(drOk));
+  check('the same approval cannot open it twice',
+    req('/api/drawer/open', { reason: 'again', ref: 'dr-1', approval: drTok }, { session: pCash }).status === 409);
+  check('nor under another reference',
+    req('/api/drawer/open', { reason: 'again', ref: 'dr-2', approval: drTok }, { session: pCash }).status === 403);
+  check('a manager still opens it on their own authority', req('/api/drawer/open', { reason: 'float check' }, { session: pMgr2 }).ok === true);
+
+  /* --- deposit refunds --- */
+  const tA = req('/api/repairs', { customerName: 'Apv A', customerPhone: '0500000001', deviceMake: 'Apple', deviceModel: 'iPhone 13', reportedFault: 'Battery' }, { session: pCash }).data;
+  const tB = req('/api/repairs', { customerName: 'Apv B', customerPhone: '0500000002', deviceMake: 'Apple', deviceModel: 'iPhone 14', reportedFault: 'Screen' }, { session: pCash }).data;
+  req('/api/repairs/deposit', { id: tA.id, amount: 40 }, { session: pCash });
+  req('/api/repairs/deposit', { id: tB.id, amount: 40 }, { session: pCash });
+  const depTok = approve({ email: mgrEmail, pin: mgrPin, action: 'deposit_refund', ref: tA.id + '|n1', amount: 40 }).data.approval;
+  check('an approval for one ticket cannot refund another',
+    req('/api/repairs/deposit-refund', { id: tB.id, amount: 40, reason: 'customer left', ref: tA.id + '|n1', approval: depTok }, { session: pCash }).status === 403);
+  const depOk = req('/api/repairs/deposit-refund', { id: tA.id, amount: 40, reason: 'customer left', ref: tA.id + '|n1', approval: depTok }, { session: pCash });
+  check('with the right one a cashier gives the deposit back', depOk.ok === true, JSON.stringify(depOk));
+
+  /* --- reports --- */
+  const pRep = req('/api/reports', {}, { session: pAdm }).data;
+  const amara = (pRep.byCashier || []).find((c) => c.userName.trim() === 'Amara Njoku');
+  check('reports total the discounts given', pRep.summary.discounts > 0 && pRep.summary.approvedDiscounts >= 2, JSON.stringify(pRep.summary));
+  check('and break them down by cashier, with how many were approved',
+    amara && amara.discounts >= 10 + 15 + 60 && amara.approvedDiscounts >= 2, JSON.stringify(amara));
 }
 {
   section('setup() deploy entry point (v1.35.1)');

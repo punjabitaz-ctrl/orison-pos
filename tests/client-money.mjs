@@ -398,3 +398,74 @@ describe('refund lines (v1.33.0)', async () => {
     assert.equal(refundTotal(g, new Set(['IMEI-1'])), 37.5 + 400);
   });
 });
+
+/* ── discount limits (v1.37.0) ─────────────────────────────── */
+
+describe('discount limits', async () => {
+  const { effectiveDiscountPct, deepestDiscountPct, discountLimit, needsDiscountApproval } = await import('../public/js/money.js');
+
+  it('combines a line and an order discount the way the customer pays', () => {
+    assert.equal(effectiveDiscountPct(10, 10), 19);
+    assert.equal(effectiveDiscountPct(6, 6), 11.64);
+    assert.equal(effectiveDiscountPct(0, 0), 0);
+    assert.equal(effectiveDiscountPct(150, 0), 100, 'clamped');
+  });
+
+  it('measures the deepest line, not the average', () => {
+    assert.equal(deepestDiscountPct([{ discountPct: 5 }, { discountPct: 20 }, {}], 0), 20);
+    assert.equal(deepestDiscountPct([], 30), 0);
+  });
+
+  it('uses the store limits, with the documented defaults', () => {
+    assert.equal(discountLimit('cashier', {}), 10);
+    assert.equal(discountLimit('manager', {}), 50);
+    assert.equal(discountLimit('admin', { discountLimitManager: 5 }), 100, 'admins are never limited');
+    assert.equal(discountLimit('cashier', { discountLimitCashier: 0 }), 0, 'a zero limit is a real limit, not a missing one');
+    assert.equal(discountLimit('nonsense', { discountLimitCashier: 15 }), 15, 'an unknown role is a cashier');
+  });
+
+  it('asks for approval only when a line goes over the limit', () => {
+    const store = { discountLimitCashier: 10, discountLimitManager: 50 };
+    assert.equal(needsDiscountApproval([{ discountPct: 10 }], 0, 'cashier', store), false);
+    assert.equal(needsDiscountApproval([{ discountPct: 10 }], 1, 'cashier', store), true);
+    assert.equal(needsDiscountApproval([{ discountPct: 40 }], 0, 'manager', store), false);
+    assert.equal(needsDiscountApproval([{ discountPct: 90 }], 0, 'admin', store), false);
+  });
+});
+
+/* ── refunding a discounted sale (v1.37.0) ─────────────────── */
+
+describe('refund price of a discounted sale', async () => {
+  const { paidUnitPrice, refundGroups, refundTotal } = await import('../public/js/money.js');
+
+  it('refunds what was paid, not the shelf price', () => {
+    const items = [{ productId: 'p1', unitPrice: 20, quantity: 1, discountPct: 15 }];
+    assert.equal(paidUnitPrice(items[0], { discountPct: 0, total: 17 }, items), 17);
+    const g = refundGroups(items, {}, { discountPct: 0, total: 17 });
+    assert.equal(refundTotal(g, new Set(), 17), 17);
+  });
+
+  it('spreads the order discount and the tax across the lines', () => {
+    const items = [
+      { productId: 'a', unitPrice: 100, quantity: 1 },
+      { productId: 'b', unitPrice: 50, quantity: 2 },
+    ];
+    /* 200 less 10 % = 180, plus 5 % tax = 189 */
+    const sale = { discountPct: 10, total: 189 };
+    assert.equal(paidUnitPrice(items[0], sale, items), 94.5);
+    assert.equal(paidUnitPrice(items[1], sale, items), 47.25);
+    const g = refundGroups(items, {}, sale);
+    assert.equal(refundTotal(g, new Set(), 189), 189);
+  });
+
+  it('never asks for more than the sale took', () => {
+    const items = [{ productId: 'a', unitPrice: 10, quantity: 3 }];
+    const g = refundGroups(items, {}, { discountPct: 0, total: 10 });
+    assert.equal(g[0].unitPrice, 3.33);
+    assert.equal(refundTotal(g, new Set(), 9.98), 9.98, 'capped');
+  });
+
+  it('keeps the old behaviour when no sale is given', () => {
+    assert.equal(paidUnitPrice({ unitPrice: 20, discountPct: 50 }), 20);
+  });
+});

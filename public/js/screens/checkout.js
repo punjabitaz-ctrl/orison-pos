@@ -6,8 +6,8 @@ import { $t, $tn, N_ } from '../lang.js';
    completes the sale offline-first, then offers receipt print/share. */
 
 import { fmt, fmtFor, esc, toast, beep } from '../ui.js';
-import { enqueueTransaction, pushImmediate } from '../sync.js';
-import { saleTotals, round2 } from '../money.js';
+import { enqueueTransaction, pushImmediate, newClientTxId } from '../sync.js';
+import { saleTotals, round2, deepestDiscountPct, discountLimit } from '../money.js';
 import { api } from '../api.js';
 import { publishCheckout, publishThanks, publishIdle } from '../customer-display.js';
 import { screenHead } from '../components.js';
@@ -84,6 +84,10 @@ export const screen = {
     let customer = null;
     const role = (state.user || {}).role || 'cashier';
     const canManage = role === 'admin' || role === 'manager';
+
+    function overLimit() {
+      return deepestDiscountPct(sale.items, sale.orderPct) > discountLimit(role, state.store) + 0.001;
+    }
 
     function remaining() {
       const tendered = tenders.reduce((s, t) => s + t.amount, 0);
@@ -176,6 +180,7 @@ export const screen = {
                 <span>${$t('Order discount %')}</span>
                 <input id="orderDisc" type="number" inputmode="decimal" min="0" max="100" step="0.5" value="${sale.orderPct}" placeholder="0">
               </div>
+              ${overLimit() ? `<p class="co-limit" role="note">🔑 ${esc($t('{pct}% off is over your {limit}% limit - a manager approves it when you complete the sale.', { pct: deepestDiscountPct(sale.items, sale.orderPct), limit: discountLimit(role, store) }))}</p>` : ''}
             </div>
             <div class="co-breakdown">
               <div class="co-bd-row"><span>${$t('Subtotal')}</span><b>${fmt(t.subtotal)}</b></div>
@@ -336,8 +341,26 @@ export const screen = {
       }));
       const cleanTenders = tendered.map((t) => ({ type: t.type, amount: t.amount, label: t.label }));
 
+      /* Over the seller's discount limit: a manager approves this sale, bound
+         to its id, before anything is queued. Cancelling leaves the cart as is. */
+      const clientTxId = newClientTxId();
+      let approval;
+      if (overLimit()) {
+        const { requestApproval } = await import('../approval-dialog.js');
+        const pct = deepestDiscountPct(sale.items, sale.orderPct);
+        const granted = await requestApproval({
+          action: 'discount', ref: clientTxId, pct,
+          detail: $t('{pct}% off · total {amount}', { pct, amount: fmt(sale.total) }),
+        });
+        if (!granted) return;
+        approval = granted.approval;
+        toast($t('Approved by {name}', { name: granted.approver.name }), 'ok', 2200);
+      }
+
       beep('ok');
-      const clientTxId = await enqueueTransaction({
+      await enqueueTransaction({
+        clientTxId,
+        approval,
         userId: state.user.id,
         cashier: `${state.user.firstName} ${state.user.lastName || ''}`,
         grandTotal: sale.total,

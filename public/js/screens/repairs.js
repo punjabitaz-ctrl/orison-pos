@@ -240,7 +240,7 @@ export const screen = {
             </div>
             ${t.overpaid > 0 ? `<p class="muted">${$t('The deposit is more than the job. Give the difference back before collecting.')}</p>` : ''}`}
 
-          ${isManager && t.status !== 'collected' && t.depositTotal > 0
+          ${t.status !== 'collected' && t.depositTotal > 0
     ? `<button class="btn btn-ghost btn-danger" id="rpDepRefund" type="button">${$t('Give deposit back')}</button>` : ''}
 
           ${moves.length ? `
@@ -531,11 +531,25 @@ export const screen = {
       modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
       modal.querySelector('#rpDrGo').addEventListener('click', async () => {
         const raw = modal.querySelector('#rpDrAmt').value.trim();
-        try {
-          const res = await api.post('/api/repairs/deposit-refund', {
-            id: t.id, reason: modal.querySelector('#rpDrWhy').value.trim(),
-            amount: raw === '' ? undefined : Number(raw),
+        const reason = modal.querySelector('#rpDrWhy').value.trim();
+        const amount = raw === '' ? undefined : Number(raw);
+        const payload = { id: t.id, reason, amount };
+        /* a cashier gives a deposit back with a manager's approval, bound to
+           this ticket (v1.37.0) */
+        if (!isManager) {
+          if (!reason) { err.textContent = $t('Giving a deposit back needs a reason'); return; }
+          const { requestApproval } = await import('../approval-dialog.js');
+          payload.ref = t.id + '|' + Date.now().toString(36);
+          const granted = await requestApproval({
+            action: 'deposit_refund', ref: payload.ref, amount: amount == null ? t.depositTotal : amount,
+            detail: $t('{amount} back on {ticket}', { amount: fmt(amount == null ? t.depositTotal : amount), ticket: t.ticketNo }),
+            note: reason,
           });
+          if (!granted) return;
+          payload.approval = granted.approval;
+        }
+        try {
+          const res = await api.post('/api/repairs/deposit-refund', payload);
           closeModal();
           toast($t('{amount} given back', { amount: fmt(res.amount) }), 'ok');
           await openTicket(t.id);

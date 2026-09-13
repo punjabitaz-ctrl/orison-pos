@@ -5,6 +5,64 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.0] — 2026-09-13
+
+Sprint 2 of the staff-gaps program: manager approval and discount limits.
+
+### Added
+
+- **Manager approval on the cashier's screen.** A manager or admin enters
+  their own email and PIN, and the cashier stays signed in.
+  - `POST /api/approve` checks the PIN under the same throttle as sign-in and
+    returns a signed approval.
+  - The approval is bound to one action (`refund`, `discount`, `drawer`,
+    `deposit_refund`, `credit`) and one reference the terminal chose first.
+    It lasts 24 hours.
+  - It is signed over a different message from a session token, so it can
+    never be used as one.
+  - It is re-checked when used: an approver switched off or demoted since no
+    longer counts.
+  - Nobody approves their own request, and every grant is audited as
+    `approval.granted`.
+  - Approvals need a connection, because PINs are only ever checked by the
+    server.
+- **Cashiers can now do these with a manager's approval:**
+  - refund a sale. The approval can cap the amount.
+  - give an over-limit discount
+  - open the drawer without a sale. The approval is single-use.
+  - give a repair deposit back. The approval is bound to the ticket and is
+    single-use.
+
+  The Refund and Open Drawer tiles now show for cashiers.
+- **Discount limits** (store settings, admin): cashier **10 %**, manager
+  **50 %**, admins unlimited.
+  - The limit applies to the deepest discount on any line, with the line and
+    order discounts combined (10 % + 10 % = 19 %).
+  - The server refuses a sale over the seller's limit without an approval
+    covering it (`discount_over_limit`).
+  - A manager cannot approve past their own limit.
+  - Checkout warns while the discount is over the limit, and asks for
+    approval when the sale is completed.
+- **Approver on the record.** Transactions gain `approved_by`, and History
+  shows who approved a sale or refund.
+- **Discounts in reports:** a *Discounts given* KPI, discounts and approvals
+  per cashier, and matching columns in the CSV.
+
+### Fixed
+
+- **Refunding a discounted sale asked for the shelf price.** A $20 item sold at
+  15 % off offered a $20 refund; the server refused it as more than the sale,
+  after the terminal had already put the stock back. The refund picker now
+  uses what the customer paid: line and order discounts, with tax spread in
+  proportion. It never asks for more than the sale took.
+
+### Notes
+
+- **A wrong approval PIN returns 403, not 401.** The terminal signs anyone out
+  on a 401, and the browser check caught exactly that happening.
+- The discount-math sim test was pushed as a cashier at 14.5 % off. It now runs
+  as an admin, since that sale is correctly over a cashier's limit.
+
 ## [1.36.0] — 2026-09-13
 
 Sprint 1 of the staff-gaps program (owner and admin controls). Plan:
