@@ -31,8 +31,9 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
   - offline credentials for terminals
 - `/api/login`, `/api/logout`, `/api/pin` (own PIN).
 - `/api/admin/unlock` (admin, manager).
-- `/api/admin/pin`, `/api/admin/revoke`, `/api/admin/devices`, `/api/admin/revoke-device` (admin).
-- `/api/admin/users`, `/users/list`, `/users/patch` (admin). Create staff, list them, and change `firstName`, `lastName`, `email` (unique), `role` or `active`. A role or email change, or a deactivation, revokes that person's sessions. An admin cannot demote or deactivate themself.
+- `/api/admin/pin` (admin; a manager for cashiers only). `/api/admin/users/list` (admin, manager).
+- `/api/admin/revoke`, `/api/admin/devices`, `/api/admin/revoke-device` (admin).
+- `/api/admin/users`, `/users/patch` (admin). Create staff and change `firstName`, `lastName`, `email` (unique), `role` or `active`. A role or email change, or a deactivation, revokes that person's sessions. An admin cannot demote or deactivate themself.
 - `/api/config` returns the store, currencies and, to managers and admins only, the staff roster.
 
 ### Selling and sync
@@ -79,7 +80,8 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 - `/api/shifts/open` and `/api/shifts/close` are own-shift only, for any role. Close takes a denomination count and returns *declared / expected / over-or-short*.
   - Expected cash is the cash side of every movement on that shift: sales, collections and repair deposits in; refunds, paid out, pick ups, staff expenses and deposits given back out. Card is excluded.
   - `/api/shifts` returns the store-wide roster to managers and admins; a cashier gets their own.
-- `/api/timeclock/punch` toggles the caller's own clock; offline punches carry the moment they happened. `/api/timeclock` gives a cashier their own punches, and managers and admins the roster and an `onFloor` count.
+- `/api/timeclock/punch` toggles the caller's own clock; offline punches carry the moment they happened. `/api/timeclock/correct` (admin, manager; own punches admin only) sets `clockIn`/`clockOut` with a required `reason`, recomputes minutes, marks the entry `corrected`, and is audited with the original times.
+- `/api/shifts/force-close` (admin, manager) closes someone else's open shift with a required `reason`. With `denoms` the over/short is computed; without, `declaredCash` and `overShort` stay empty and the shift is *not counted*. `closedBy` is recorded and the close is audited. `/api/timeclock` gives a cashier their own punches, and managers and admins the roster and an `onFloor` count.
 
 ### Stock
 
@@ -125,8 +127,8 @@ Tabs are created, and new columns added, on first use; nothing needs creating by
 | `Serials` | id, product_id, serial_number, status (`IN_STOCK`/`SOLD`/`VOIDED`), tx_id, updated_at |
 | `Transactions` | id, store_id, user_id, device_id, client_tx_id, kind, original_client_tx, counterparty, grand_total, status, tenders_json, items_json, note, created_at, subtotal, tax_amount, discount_pct, customer_id, receipt_no, channel, external_ref, approved_by |
 | `Customers` | id, store_id, name, phone, email, note, created_at, credit_limit |
-| `Shifts` | id, store_id, user_id, device_id, opened_at, closed_at, opening_float, cash_expected, cash_declared, over_short, tenders_json, note, status |
-| `TimeClock` | id, store_id, user_id, device_id, clock_in, clock_out, minutes, note, status |
+| `Shifts` | id, store_id, user_id, device_id, opened_at, closed_at, opening_float, cash_expected, cash_declared, over_short, tenders_json, note, status, closed_by |
+| `TimeClock` | id, store_id, user_id, device_id, clock_in, clock_out, minutes, note, status, corrected_by |
 | `Conflicts` | id, store_id, type, serial_number, device_id, loser_client_tx, winner_tx_id, summary, status, created_at, reviewed_at, reviewed_by, dedupe_key |
 | `Suppliers` | id, store_id, name, phone, email, address, payment_terms, active, created_at |
 | `PurchaseOrders` | id, store_id, supplier_id, po_number, order_date, expected_date, status, items_json, received_json, subtotal, discount_pct, tax_amount, total, note, created_by, created_at, updated_at |
@@ -168,7 +170,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 821 checks
+npm run test:backend   # 850 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.

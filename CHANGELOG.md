@@ -5,6 +5,44 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.0] — 2026-09-13
+
+Sprint 4 of the staff-gaps program: what managers could not do.
+
+### Added
+
+- **The team, for managers.** Staff → *Team* lists everyone active, using
+  `/api/admin/users/list`, which is now open to managers and still carries
+  nothing credential-shaped.
+  - **Unlock** lets a locked-out colleague sign in again. The server already
+    allowed managers to do this; there was no button.
+  - **Reset PIN** is for cashiers only when a manager uses it. Only an admin
+    resets a manager's or an admin's PIN. Audited as `user.pin_reset`.
+- **Correct a punch.** Staff → *Team punches* → *Correct*
+  (`/api/timeclock/correct`, admin and manager).
+  - Sets clock-in or clock-out, recomputes the minutes, and closes an open
+    punch.
+  - A reason is required. A punch cannot be in the future, end before it
+    starts, or run past 24 hours.
+  - Nobody but an admin corrects their own hours.
+  - The entry is marked *corrected*, and the audit log (`timeclock.correct`)
+    keeps the original times.
+- **Close a forgotten shift.** Staff → *Shifts still open* → *Close shift*
+  (`/api/shifts/force-close`, admin and manager), with a required reason.
+  - With a denomination count, the over/short is real.
+  - Without one, the shift closes as *not counted*: expected cash is still
+    worked out, but declared and over/short are left empty rather than
+    invented.
+  - Records who closed it (`closed_by`). Audited as `shift.force_close`.
+
+### Changed
+
+- Shift close and force close share one expected-cash calculation
+  (`shiftExpectedCash_`).
+- The till reconciliation table shows *not counted* for a shift closed without
+  a count.
+- New columns: `Shifts.closed_by`, `TimeClock.corrected_by`.
+
 ## [1.38.0] — 2026-09-13
 
 Sprint 3 of the staff-gaps program: what cashiers could not do.

@@ -76,6 +76,8 @@ function dispatch_(action, session, payload, params) {
     case '/api/shifts/close':    return shiftClose_(session, payload);
     case '/api/timeclock':       return timeClock_(session, params);
     case '/api/timeclock/punch': return timeClockPunch_(session, payload);
+    case '/api/timeclock/correct': return timeClockCorrect_(session, payload);
+    case '/api/shifts/force-close': return shiftForceClose_(session, payload);
     case '/api/conflicts':       return conflicts_(session, params);
     case '/api/conflicts/review': return reviewConflict_(session, payload);
     case '/api/admin/unlock':    return adminUnlock_(session, payload);
@@ -347,13 +349,13 @@ var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 're
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at'];
 var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at', 'credit_limit'];
-var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status'];
+var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status', 'closed_by'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
 var SUPPLIER_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'address', 'payment_terms', 'active', 'created_at'];
 var PO_HEADERS = ['id', 'store_id', 'supplier_id', 'po_number', 'order_date', 'expected_date', 'status', 'items_json', 'received_json', 'subtotal', 'discount_pct', 'tax_amount', 'total', 'note', 'created_by', 'created_at', 'updated_at'];
 var AUDIT_HEADERS = ['id', 'store_id', 'at', 'user_id', 'user_name', 'role', 'action', 'target_type', 'target_id', 'summary', 'device_id'];
 var STOCKTAKE_HEADERS = ['id', 'store_id', 'session_id', 'product_id', 'product_name', 'sku', 'expected', 'counted', 'variance', 'unit_cost', 'value_delta', 'counted_by', 'note', 'created_at'];
-var TIMECLOCK_HEADERS = ['id', 'store_id', 'user_id', 'device_id', 'clock_in', 'clock_out', 'minutes', 'note', 'status'];
+var TIMECLOCK_HEADERS = ['id', 'store_id', 'user_id', 'device_id', 'clock_in', 'clock_out', 'minutes', 'note', 'status', 'corrected_by'];
 
 var REPAIR_HEADERS = ['id', 'store_id', 'ticket_no', 'customer_id', 'customer_name',
   'customer_phone', 'device_make', 'device_model', 'device_serial', 'reported_fault',
@@ -5411,8 +5413,20 @@ function shiftClose_(session, payload) {
     if (String(shift.status) !== 'OPEN') throw statusError_(409, 'shift_already_closed');
 
     var declared = shiftDenomsValue_(payload && payload.denoms, getStore_().denoms);
+    var expected = shiftExpectedCash_(shift, readRows_('Transactions', TX_HEADERS));
+    var overShort = declared - expected;
+    return finishShiftClose_(session, shift, expected, declared, overShort, (payload && payload.denoms) || {}, note, '');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* What the drawer should hold for a shift: the float plus the cash side of
+   everything its cashier did since it opened. One definition for the
+   cashier's own close and a manager's close of a forgotten shift. */
+function shiftExpectedCash_(shift, allTxRows) {
     var openedAt = new Date(String(shift.opened_at)).getTime();
-    var txRows = readRows_('Transactions', TX_HEADERS)
+    var txRows = allTxRows
       .filter(function (t) {
         return String(t.status) === 'COMPLETED'
           && String(t.user_id) === String(shift.user_id)
@@ -5452,30 +5466,61 @@ function shiftClose_(session, payload) {
         }
       }
     }
-    var overShort = declared - expected;
+    return expected;
+}
 
-    /* update the existing OPEN row in place rather than appending a second. */
+/* Write the CLOSED row in place. `declared`/`overShort` are '' for a shift a
+   manager closed without counting the drawer. Caller holds the lock. */
+function finishShiftClose_(session, shift, expected, declared, overShort, denoms, note, closedBy) {
     var closedAt = new Date().toISOString();
-    var tendersJson = JSON.stringify((payload && payload.denoms) || {});
-    applyPatches_('Shifts', SHIFTS_HEADERS, 'id', {
-      [String(shift.id)]: {
-        closed_at: closedAt,
-        cash_expected: expected,
-        cash_declared: declared,
-        over_short: overShort,
-        tenders_json: tendersJson,
-        note: shift.note ? String(shift.note) + ' | ' + note : note,
-        status: 'CLOSED',
-      },
-    });
+    var tendersJson = JSON.stringify(denoms || {});
+    var patch = {
+      closed_at: closedAt,
+      cash_expected: expected,
+      cash_declared: declared,
+      over_short: overShort,
+      tenders_json: tendersJson,
+      note: shift.note ? String(shift.note) + (note ? ' | ' + note : '') : note,
+      status: 'CLOSED',
+      closed_by: closedBy || '',
+    };
+    applyPatches_('Shifts', SHIFTS_HEADERS, 'id', { [String(shift.id)]: patch });
     return {
-      shift: shift_views_(session, [Object.assign(shift, {
-        closed_at: closedAt, cash_expected: expected, cash_declared: declared,
-        over_short: overShort, tenders_json: tendersJson, status: 'CLOSED',
-      })])[0],
+      shift: shift_views_(session, [Object.assign(shift, patch)])[0],
       open: false,
       msg: 'Shift closed',
     };
+}
+
+/* A manager closes a shift someone left open (v1.39.0). With a count, the
+   over/short is real; without one the shift is closed as not counted, so the
+   next open is not blocked and nobody's figures are invented. Always audited. */
+function shiftForceClose_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  payload = payload || {};
+  var shiftId = String(payload.shiftId || '');
+  var reason = String(payload.reason || '').trim().slice(0, 200);
+  if (!shiftId) throw statusError_(400, 'shiftId is required');
+  if (!reason) throw statusError_(400, 'Closing someone else\'s shift needs a reason');
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var rows = readRows_('Shifts', SHIFTS_HEADERS);
+    var shift = null;
+    for (var i = 0; i < rows.length; i++) if (String(rows[i].id) === shiftId) { shift = rows[i]; break; }
+    if (!shift) throw statusError_(404, 'no_open_shift');
+    if (String(shift.status) !== 'OPEN') throw statusError_(409, 'shift_already_closed');
+    var expected = shiftExpectedCash_(shift, readRows_('Transactions', TX_HEADERS));
+    var counted = payload.denoms && typeof payload.denoms === 'object' && Object.keys(payload.denoms).length > 0;
+    var declared = counted ? shiftDenomsValue_(payload.denoms, getStore_().denoms) : '';
+    var overShort = counted ? declared - expected : '';
+    var who = auditName_(String(session.uid));
+    var note = 'Closed by ' + who + ': ' + reason + (counted ? '' : ' (drawer not counted)');
+    var res = finishShiftClose_(session, shift, expected, declared, overShort, counted ? payload.denoms : {}, note, String(session.uid));
+    logAudit_(session, 'shift.force_close', 'shift', shiftId,
+      'Closed ' + auditName_(String(shift.user_id)) + '\'s shift: ' + reason + ' — expected ' + round2_(expected) +
+      (counted ? ', counted ' + round2_(declared) + ', over/short ' + round2_(overShort) : ', not counted'), payload.deviceId);
+    return res;
   } finally {
     lock.releaseLock();
   }
@@ -5526,6 +5571,7 @@ function shift_views_(session, rows) {
       denoms: denoms,
       note: String(s.note || ''),
       status: String(s.status || 'OPEN'),
+      closedBy: s.closed_by ? (String((byUser[String(s.closed_by)] || {}).first_name || '') + ' ' + String((byUser[String(s.closed_by)] || {}).last_name || '')).trim() : '',
     });
   }
   return out;
@@ -5538,6 +5584,64 @@ function shift_views_(session, rows) {
 /* A punch is a self-service act: staff clock themselves in and out, and only
  * managers/admins can read the whole roster. Nobody can punch for somebody
  * else, so an entry is always evidence about the account that created it. */
+/* A manager fixes a punch someone forgot or got wrong (v1.39.0): a missed
+   clock-out, a clock-in keyed on the wrong day. A reason is required, the
+   original times stay in the audit log, and nobody but an admin corrects
+   their own hours. */
+function timeClockCorrect_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  payload = payload || {};
+  var id = String(payload.id || '');
+  var reason = String(payload.reason || '').trim().slice(0, 200);
+  if (!id) throw statusError_(400, 'id is required');
+  if (!reason) throw statusError_(400, 'Correcting a punch needs a reason');
+  var parse = function (v) {
+    if (v == null || v === '') return null;
+    var ms = Date.parse(String(v));
+    if (isNaN(ms)) throw statusError_(400, 'Times must be valid dates');
+    return ms;
+  };
+  var inMs = parse(payload.clockIn);
+  var outMs = parse(payload.clockOut);
+  if (inMs == null && outMs == null) throw statusError_(400, 'Give a clock-in or clock-out time');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var rows = readRows_('TimeClock', TIMECLOCK_HEADERS);
+    var row = null;
+    for (var i = 0; i < rows.length; i++) if (String(rows[i].id) === id) { row = rows[i]; break; }
+    if (!row) throw statusError_(404, 'Punch not found');
+    if (String(row.user_id) === String(session.uid) && String(session.role) !== 'admin') {
+      throw statusError_(403, 'Only an admin can correct their own hours');
+    }
+    var newIn = inMs != null ? inMs : Date.parse(String(row.clock_in));
+    var newOut = outMs != null ? outMs : (row.clock_out ? Date.parse(String(row.clock_out)) : null);
+    var nowMs = Date.now() + 5 * 60000;
+    if (isNaN(newIn) || newIn > nowMs || (newOut != null && newOut > nowMs)) throw statusError_(400, 'A punch cannot be in the future');
+    if (newOut != null && newOut <= newIn) throw statusError_(400, 'Clock-out must be after clock-in');
+    if (newOut != null && newOut - newIn > 24 * 3600000) throw statusError_(400, 'A single punch cannot run past 24 hours');
+
+    var patch = {
+      clock_in: new Date(newIn).toISOString(),
+      corrected_by: String(session.uid),
+      note: (row.note ? String(row.note) + ' | ' : '') + 'Corrected by ' + auditName_(String(session.uid)) + ': ' + reason,
+    };
+    if (newOut != null) {
+      patch.clock_out = new Date(newOut).toISOString();
+      patch.minutes = Math.round((newOut - newIn) / 60000);
+      patch.status = 'CLOSED';
+    }
+    applyPatches_('TimeClock', TIMECLOCK_HEADERS, 'id', { [id]: patch });
+    logAudit_(session, 'timeclock.correct', 'timeclock', id,
+      auditName_(String(row.user_id)) + ': in ' + String(row.clock_in || '—') + ' → ' + patch.clock_in +
+      ', out ' + String(row.clock_out || '—') + ' → ' + String(patch.clock_out || row.clock_out || '—') + ' — ' + reason, payload.deviceId);
+    return { entry: timeClockView_([Object.assign({}, row, patch)], timeClockNames_())[0] };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function timeClockView_(rows, nameById) {
   var out = [];
   for (var i = 0; i < rows.length; i++) {
@@ -5552,6 +5656,7 @@ function timeClockView_(rows, nameById) {
       minutes: r.minutes === '' || r.minutes == null ? null : num_(r.minutes),
       note: String(r.note || ''),
       status: String(r.status || 'OPEN'),
+      corrected: !!r.corrected_by,
     });
   }
   return out;
@@ -5753,7 +5858,9 @@ function changeOwnPin_(session, payload) {
  * one. Stored the same way login checks it: salted, hashed, never in cleartext.
  */
 function adminSetPin_(session, payload) {
-  requireRole_(session, ['admin']);
+  /* managers may reset a cashier's PIN (v1.39.0) - never another manager's or
+     an admin's, which would let a manager take over a senior account */
+  requireRole_(session, ['admin', 'manager']);
   var email = String((payload && payload.email) || '').trim().toLowerCase();
   var pin = String((payload && payload.pin) || '');
   if (!email) throw statusError_(400, 'email is required');
@@ -5765,6 +5872,9 @@ function adminSetPin_(session, payload) {
     if (String(users[i].email).toLowerCase() === email) { found = users[i]; break; }
   }
   if (!found) throw statusError_(404, 'No such user');
+  if (String(session.role) === 'manager' && String(found.role) !== 'cashier') {
+    throw statusError_(403, 'A manager can only reset a cashier\'s PIN');
+  }
 
   var salt = Utilities.getUuid().split('-')[0];
   applyPatches_('Users', USER_HEADERS, 'id', {
@@ -5845,7 +5955,8 @@ function adminUsers_(session, payload) {
 /* Full staff roster for the Settings screen. Admin only. Deliberately omits
  * anything credential-shaped; the client only needs identity + role + state. */
 function adminUsersList_(session) {
-  requireRole_(session, ['admin']);
+  /* managers see the team so they can let a locked-out cashier back in */
+  requireRole_(session, ['admin', 'manager']);
   return {
     users: readRows_('Users', USER_HEADERS).map(function (u) {
       return {

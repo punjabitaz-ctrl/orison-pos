@@ -908,8 +908,8 @@ section('admin PIN reset');
   const target = 'amara@example.com';
   check('cashier may not reset a PIN',
     req('/api/admin/pin', { email: target, pin: '111111' }, { session: cashierToken }).status === 403);
-  check('manager may not reset a PIN',
-    req('/api/admin/pin', { email: target, pin: '111111' }, { session: mgr.data.token }).status === 403);
+  check('a manager may not reset an admin\'s PIN (v1.39.0: cashiers only)',
+    req('/api/admin/pin', { email: 'tariq@example.com', pin: '111111' }, { session: mgr.data.token }).status === 403);
   check('a 4-digit PIN is refused',
     req('/api/admin/pin', { email: target, pin: '1111' }, { session: adminToken }).status === 400);
   check('an unknown address is refused',
@@ -4244,6 +4244,83 @@ check('statement carries the changer/cashier',
     needOver > 0 && oneOnly.accepted === false && oneOnly.conflicts[0].reason === 'credit_over_limit', JSON.stringify({ needOver, oneOnly }));
   const bothOk = both({ discount: discTok, credit: mk('credit', { amount: needOver }) });
   check('with both approvals it goes through', bothOk.accepted === true, JSON.stringify(bothOk));
+}
+{
+  section('manager gaps: team, PIN resets, punches, forgotten shifts (v1.39.0)');
+
+  const mAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const mMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const mDiego = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const mCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const team = req('/api/admin/users/list', {}, { session: mMgr });
+  check('a manager can see the team', team.ok && team.data.users.length >= 4, JSON.stringify(team).slice(0, 200));
+  check('without anything credential-shaped', team.data.users.every((u) => u.pinHash === undefined && u.pin_hash === undefined && u.pin_salt === undefined));
+  check('a cashier still cannot', req('/api/admin/users/list', {}, { session: mCash }).status === 403);
+  const diegoId = team.data.users.find((u) => u.email === 'diego@example.com').id;
+  const sarahId = team.data.users.find((u) => u.email === 'sarah@example.com').id;
+
+  /* --- PIN resets --- */
+  check('a manager resets a cashier\'s PIN', req('/api/admin/pin', { email: 'diego@example.com', pin: '424242' }, { session: mMgr }).ok === true);
+  check('the old PIN no longer works, the new one does',
+    req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).status === 401 &&
+    req('/api/login', { email: 'diego@example.com', pin: '424242' }).ok === true);
+  check('the reset signed them out', req('/api/products', {}, { session: mDiego }).status === 401);
+  check('it is audited to the manager',
+    req('/api/audit', {}, { session: mAdm, params: { action: 'user.pin_reset' } }).data.entries.some((e) => e.targetId === diegoId && e.role === 'manager'));
+  const nm = req('/api/admin/users', { firstName: 'Omar', lastName: 'Mgr', email: 'omar.mgr@example.com', role: 'manager' }, { session: mAdm }).data;
+  check('a manager cannot reset another manager\'s PIN',
+    req('/api/admin/pin', { email: 'omar.mgr@example.com', pin: '111222' }, { session: mMgr }).status === 403);
+  check('an admin still can', req('/api/admin/pin', { email: 'omar.mgr@example.com', pin: '111222' }, { session: mAdm }).ok === true);
+  CREDS['diego@example.com'] = '424242';
+  const dTok = req('/api/login', { email: 'diego@example.com', pin: '424242' }).data.token;
+
+  /* --- punch corrections --- */
+  const inAt = new Date(Date.now() - 5 * 3600000).toISOString();
+  req('/api/timeclock/punch', { direction: 'out' }, { session: dTok }); /* earlier sections may have left Diego clocked in */
+  const punch = req('/api/timeclock/punch', { at: inAt, direction: 'in' }, { session: dTok }).data.entry;
+  const fix = (payload, as) => req('/api/timeclock/correct', Object.assign({ id: punch.id }, payload), { session: as || mMgr });
+  const outAt = new Date(Date.now() - 1 * 3600000).toISOString();
+  check('a cashier cannot correct punches', fix({ clockOut: outAt, reason: 'x' }, dTok).status === 403);
+  check('a correction needs a reason', fix({ clockOut: outAt }).status === 400);
+  check('clock-out cannot be before clock-in', fix({ clockOut: new Date(Date.now() - 6 * 3600000).toISOString(), reason: 'x' }).status === 400);
+  check('nor in the future', fix({ clockOut: new Date(Date.now() + 3600000).toISOString(), reason: 'x' }).status === 400);
+  const fixed = fix({ clockOut: outAt, reason: 'Forgot to clock out' });
+  check('a manager closes a forgotten punch', fixed.ok && fixed.data.entry.status === 'CLOSED' && fixed.data.entry.minutes === 240, JSON.stringify(fixed));
+  check('marked as corrected, with the reason on the entry', fixed.data.entry.corrected === true && /Forgot to clock out/.test(fixed.data.entry.note));
+  const ta = req('/api/audit', {}, { session: mAdm, params: { action: 'timeclock.correct' } }).data.entries.find((e) => e.targetId === punch.id);
+  check('the audit log keeps the original times', ta && ta.summary.indexOf(inAt) >= 0 && /out — →/.test(ta.summary), JSON.stringify(ta));
+  req('/api/timeclock/punch', { direction: 'out' }, { session: mMgr });
+  const myPunch = req('/api/timeclock/punch', { direction: 'in' }, { session: mMgr }).data.entry;
+  check('a manager cannot correct their own hours',
+    req('/api/timeclock/correct', { id: myPunch.id, clockIn: new Date(Date.now() - 9 * 3600000).toISOString(), reason: 'overtime' }, { session: mMgr }).status === 403);
+  check('an admin corrects anyone\'s, a manager\'s included',
+    req('/api/timeclock/correct', { id: myPunch.id, clockIn: new Date(Date.now() - 2 * 3600000).toISOString(), clockOut: new Date().toISOString(), reason: 'end of day' }, { session: mAdm }).ok === true);
+
+  /* --- forgotten shifts --- */
+  const opened = req('/api/shifts/open', { openingFloat: 100 }, { session: dTok });
+  check('a cashier opens a shift', opened.ok === true, JSON.stringify(opened));
+  const shiftId = opened.data.shift.id;
+  const dSale = req('/api/admin/products', { name: 'Shift Widget', sku: 'SHF-1', category: 'SHF', costPrice: 1, retailPrice: 30, onHand: 10 }, { session: mAdm }).data.id;
+  req('/api/admin/store', { taxRate: 0 }, { session: mAdm });
+  req('/api/sync/push', { deviceId: 'till-shf', batch: [{ clientTxId: 'tx-shf-1', userId: diegoId, discountPct: 0, grandTotal: 30, createdAt: new Date().toISOString(),
+    tenders: [{ type: 'cash', amount: 30 }], items: [{ productId: dSale, quantity: 1, unitPrice: 30 }] }] }, { session: dTok });
+  check('a cashier cannot close someone else\'s shift', req('/api/shifts/force-close', { shiftId, reason: 'x' }, { session: mCash }).status === 403);
+  check('closing it needs a reason', req('/api/shifts/force-close', { shiftId }, { session: mMgr }).status === 400);
+  const uncounted = req('/api/shifts/force-close', { shiftId, reason: 'Left without closing' }, { session: mMgr });
+  check('a manager closes it without a count', uncounted.ok && uncounted.data.shift.status === 'CLOSED', JSON.stringify(uncounted));
+  check('expected is worked out, but nothing is invented for declared or over/short',
+    uncounted.data.shift.expectedCash === 130 && uncounted.data.shift.declaredCash === null && uncounted.data.shift.overShort === null, JSON.stringify(uncounted.data.shift));
+  check('and it says who closed it and why', uncounted.data.shift.closedBy === 'Sarah Lindqvist' && /not counted/.test(uncounted.data.shift.note));
+  check('closing it again is refused', req('/api/shifts/force-close', { shiftId, reason: 'again' }, { session: mMgr }).status === 409);
+  check('the cashier can open a fresh shift', req('/api/shifts/open', { openingFloat: 50 }, { session: dTok }).ok === true);
+  const second = req('/api/shifts', {}, { session: mMgr }).data.shifts.find((x) => x.status === 'OPEN' && x.userId === diegoId);
+  const store = req('/api/config', {}, { session: mMgr }).data.store;
+  const top = store.denoms[0];
+  const counted = req('/api/shifts/force-close', { shiftId: second.id, reason: 'Counted after they left', denoms: { [String(top)]: 1 } }, { session: mMgr });
+  check('with a count the over/short is real', counted.ok && counted.data.shift.declaredCash === top && counted.data.shift.overShort === top - 50, JSON.stringify(counted.data && counted.data.shift));
+  const fa = req('/api/audit', {}, { session: mAdm, params: { action: 'shift.force_close' } }).data.entries;
+  check('both closes are audited, naming whose shift it was', fa.filter((e) => /Diego Ramirez/.test(e.summary)).length >= 2, JSON.stringify(fa.slice(0, 2)));
+  check('the unlock path works for managers from the team list', req('/api/admin/unlock', { email: 'diego@example.com' }, { session: mMgr }).ok === true);
 }
 {
   section('setup() deploy entry point (v1.35.1)');

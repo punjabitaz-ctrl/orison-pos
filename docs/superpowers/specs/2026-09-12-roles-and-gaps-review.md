@@ -8,6 +8,8 @@
 > limits and reporting).
 > ✅ v1.38.0 closed Cashiers #2 (create customers), #3 (balance and credit
 > limits) and #4 (whole-shop lookup).
+> ✅ v1.39.0 closed Managers #0 (Unlock button), #1 (cashier PIN resets), #2
+> (punch and shift corrections) and Cashiers #5.
 
 **Date:** 2026-09-12 · **Baseline:** v1.35.0 · **Method:** every route in
 `backend/Code.gs` `dispatch_` was read for its `requireRole_` gate and any role

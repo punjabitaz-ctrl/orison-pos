@@ -170,7 +170,7 @@ privileged action. The role is carried in the signed session token; because a
 role **change** revokes that user's sessions immediately, a promotion or
 demotion takes effect at the first request after the change (no 12-hour lag).
 
-Verified route by route against `Code.gs` at v1.38.0. The task-level view —
+Verified route by route against `Code.gs` at v1.39.0. The task-level view —
 what each role can actually do on screen, and what they cannot — is in
 [`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
 
@@ -199,9 +199,13 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` | admin, manager |
 | `/api/purchase-orders`, `/detail`, `/receive` | admin, manager |
 | `/api/conflicts`, `/api/conflicts/review`, `/api/admin/unlock` | admin, manager |
+| `/api/admin/users/list` | admin, manager (no credential fields) |
+| `/api/admin/pin` | admin for anyone; a manager for **cashiers only** |
+| `/api/timeclock/correct` | admin, manager; only an admin corrects their own punches |
+| `/api/shifts/force-close` | admin, manager; reason required |
 | `/api/suppliers`, `/api/purchase-orders/cancel` | admin |
 | `/api/admin/products/bulk-price`, `/api/admin/stock-take` | admin |
-| `/api/admin/users`, `/users/list`, `/users/patch`, `/api/admin/pin` | admin |
+| `/api/admin/users`, `/users/patch` | admin |
 | `/api/admin/revoke`, `/api/admin/devices`, `/api/admin/revoke-device` | admin |
 | `/api/admin/store`, `/api/reports/schedule`, `/api/backup/status`, `/api/backup/run` | admin |
 | `/api/audit` | admin |
@@ -234,7 +238,7 @@ target, a summary and the terminal.
 - **Money:** refunds, paid out, cash pick-ups, staff expenses and payments on account, written as they sync; no-sale drawer opens; Drive exports.
 - **Stock:** stock adjustments with a reason; stock takes; product create and edit, field by field; bulk repricing; serials added; suppliers; purchase orders created, received and cancelled.
 - **Repairs:** every repair action.
-- **People and access:** manager approvals; customer changes (credit limits); sign-ins; the attempt that trips a lockout; lockout releases; new staff; staff edits; PIN resets; revoke-all; terminal revocations; customer creation; conflict reviews.
+- **People and access:** manager approvals; punches corrected; shifts closed by a manager; customer changes (credit limits); sign-ins; the attempt that trips a lockout; lockout releases; new staff; staff edits; PIN resets; revoke-all; terminal revocations; customer creation; conflict reviews.
 - **The business:** store settings, scheduled reports and backups.
 
 **Deliberately not recorded:**

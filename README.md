@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.38.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.39.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -55,7 +55,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 
 ### Staff and security
 
-- **Time clock**: punch in and out on your own clock, and it works offline. Managers see who is on the floor and per-cashier performance.
+- **Time clock**: punch in and out on your own clock, and it works offline. Managers see who is on the floor and per-cashier performance, correct a missed or wrong punch (with a reason, audited), close a shift someone left open, unlock a locked-out colleague and reset a cashier's PIN.
 - **Roles**: admin, manager and cashier, enforced on the server for every privileged action. The full who-can-do-what table is in [`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
 - **Sign-in**: a PIN pad. Five wrong PINs lock the account for 15 minutes.
 - **Sessions**: signed and revocable per person or per terminal.
@@ -154,7 +154,7 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 ## Development
 
 ```bash
-npm test              # backend logic vs an in-memory Apps Script mock (821 checks)
+npm test              # backend logic vs an in-memory Apps Script mock (850 checks)
 npm run test:client   # client unit tests via node:test + fake-indexeddb (474 checks)
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
 npm run test:pdf      # receipt PDF/share smoke test in a headless browser
@@ -202,7 +202,7 @@ One feature = one validated revision = one git tag. Every release bumps `public/
 - Sheet writes are serialized with Apps Script `LockService`. That is fine for one store or a few; it is not built for heavy scale.
 - **Roles, in short**:
   - **Cashiers**: sell, run their own shift and clock, and handle repairs. They add customers, see a customer's balance at checkout and look up any sale in the shop. With a manager's approval they also refund, give over-limit discounts, charge past a credit limit, open the drawer without a sale and give deposits back.
-  - **Managers**: add refunds, cash out, customers and ledgers, products and stock, purchase orders, reports, conflict review and lockout release.
+  - **Managers**: add refunds, cash out, customers, ledgers and credit limits, products and stock, purchase orders, reports, conflict review, approvals at the till, lockout release, cashier PIN resets, punch corrections and closing forgotten shifts.
   - **Admins alone**: staff, PINs, terminals, store settings, suppliers, bulk pricing, stock takes, PO cancellation, repair voids, backups, scheduled reports and the audit log.
 - Still English by design: CSV column headers, the Sheets workbook and report emails.
 - After any release, terminals pick up the new shell on next load.

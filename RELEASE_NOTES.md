@@ -7,7 +7,27 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.38.0 — cashiers can serve account customers
+## Latest: v1.39.0 — managers can fix the day's loose ends
+
+**2026-09-13.** Sprint 4 of 5. Everything is on the Staff screen (Menu → Time
+Clock).
+
+- **Unlock** a colleague who got locked out, and **reset a cashier's PIN**.
+- **Correct a punch**: a missed clock-out or a wrong time. A reason is
+  required, and the original times stay in the audit log.
+- **Close a shift someone left open**, with or without counting the drawer.
+
+**Validation:** backend-sim **PASS 850 / FAIL 0** · client units **PASS 474 /
+FAIL 0**. The team list, closing a shift and correcting a punch were checked
+in the browser.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.38.0 — cashiers can serve account customers
 
 **2026-09-13.** Sprint 3 of 5.
 

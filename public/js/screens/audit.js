@@ -48,6 +48,8 @@ export const ACTION_GROUPS = [
   ] },
   { label: N_('People and access'), actions: [
     { id: 'approval.granted', label: N_('Manager approvals') },
+    { id: 'timeclock.correct', label: N_('Punches corrected') },
+    { id: 'shift.force_close', label: N_('Shifts closed by a manager') },
     { id: 'auth.login', label: N_('Sign-ins') },
     { id: 'auth.locked', label: N_('Lockouts') },
     { id: 'user.unlock', label: N_('Lockouts released') },

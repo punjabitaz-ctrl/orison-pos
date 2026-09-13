@@ -182,6 +182,9 @@ web-accessible status page without app load.
 | Set up a printer | Settings → *Printer & cash drawer* on each terminal — receipt printer (print dialog), standard printer, or Bluetooth (Chrome/Edge, not iPhone/iPad). Print a test receipt and test the drawer. |
 | Change the language | Sign-in screen, or Settings → *Language* per terminal (English / العربية / اردو). Receipts follow the store's language (Settings → Store, admin). |
 | Add, edit or switch off staff / reset a PIN | Settings → *Staff* (admin) — *Edit* changes name, email and role; *PIN* sets a new one; *Off* signs them out everywhere. |
+| Someone is locked out / forgot their PIN | Menu → *Time Clock* → *Team* → *Unlock*, or *Reset PIN* (a manager resets cashiers; an admin resets anyone). |
+| Fix a missed clock-out | Menu → *Time Clock* → *Team punches* → *Correct* — reason required, original times kept in the audit log. |
+| A shift was left open | Menu → *Time Clock* → *Shifts still open* → *Close shift* — count the drawer if you can, reason required. |
 | Lost or stolen terminal | Settings → *Security* (admin) → list the person's terminals → revoke the one that is gone, or revoke all. |
 | Who did what | Menu → *Audit Log* (admin) — filter by action, export CSV. |
 | See conflicts | Dashboard → amber banner → Review → Keep winner / Dismiss (admin/manager). |
