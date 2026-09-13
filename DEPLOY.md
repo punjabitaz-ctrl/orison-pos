@@ -130,9 +130,8 @@ web-accessible status page without app load.
 ## Security checklist before going live
 
 - [ ] `APP_TOKEN` is a long random secret; terminals only have it locally.
-      Be aware it is readable in Settings → Backend on any signed-in
-      terminal, and in the sign-in screen's Backend prompt — treat every
-      terminal as holding it.
+      The app never displays it (v1.36.0), but it is in each terminal's
+      storage — treat every terminal as holding it.
 - [ ] `setup`, `installBackupTrigger` and `installReportTriggers` have each
       been run once from the Apps Script editor, and the seeded PINs were
       collected from **View → Executions** and changed.
@@ -178,7 +177,7 @@ web-accessible status page without app load.
 | Open the drawer without a sale | Menu → *Open Drawer* (admin/manager) — reason required, written to the audit log. Needs a Bluetooth receipt printer with the drawer attached. |
 | Set up a printer | Settings → *Printer & cash drawer* on each terminal — receipt printer (print dialog), standard printer, or Bluetooth (Chrome/Edge, not iPhone/iPad). Print a test receipt and test the drawer. |
 | Change the language | Sign-in screen, or Settings → *Language* per terminal (English / العربية / اردو). Receipts follow the store's language (Settings → Store, admin). |
-| Add staff / reset a PIN / switch someone off | Settings → *Staff* (admin). Changing an existing person's role, name or email has no button yet — see the roles and gaps review. |
+| Add, edit or switch off staff / reset a PIN | Settings → *Staff* (admin) — *Edit* changes name, email and role; *PIN* sets a new one; *Off* signs them out everywhere. |
 | Lost or stolen terminal | Settings → *Security* (admin) → list the person's terminals → revoke the one that is gone, or revoke all. |
 | Who did what | Menu → *Audit Log* (admin) — filter by action, export CSV. |
 | See conflicts | Dashboard → amber banner → Review → Keep winner / Dismiss (admin/manager). |

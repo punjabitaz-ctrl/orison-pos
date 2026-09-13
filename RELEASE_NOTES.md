@@ -7,7 +7,32 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.35.1 — documentation and a permissions review
+## Latest: v1.36.0 — the owner sees everything that matters
+
+**2026-09-13.** Sprint 1 of 5 in the staff-gaps program.
+
+- **The audit log now records** stock adjustments (with a reason), product and
+  price edits, serials, new staff, PIN resets, sign-ins, lockouts, purchase
+  orders, suppliers, new customers, exports, and every refund and cash-out.
+- **Staff can be edited**: name, email and role, from Settings → Staff.
+- **The app token is hidden.** Only admins see the Backend settings, and the
+  token is never displayed.
+- **Only managers can record a sale made elsewhere**, enforced by the server.
+
+**Tell managers before this goes out:** changing a stock count now asks for a
+reason, and it is logged.
+
+**Validation:** backend-sim **PASS 757 / FAIL 0** · client units **PASS 463 /
+FAIL 0**. Settings, the staff editor and the audit screen checked in the
+browser.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.35.1 — documentation and a permissions review
 
 **2026-09-12.** No new features; the paperwork now matches the app.
 

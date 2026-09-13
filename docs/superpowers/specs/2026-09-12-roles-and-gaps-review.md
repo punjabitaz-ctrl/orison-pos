@@ -1,5 +1,10 @@
 # Roles, permissions and business gaps — review at v1.35.0
 
+> **Status:** being closed sprint by sprint —
+> [`../plans/2026-09-13-staff-gaps-and-uae-program.md`](../plans/2026-09-13-staff-gaps-and-uae-program.md).
+> ✅ v1.36.0 closed Admin #1 (audit gaps), #3 (token exposure), #4 (staff
+> edits) and #6 (channel gate).
+
 **Date:** 2026-09-12 · **Baseline:** v1.35.0 · **Method:** every route in
 `backend/Code.gs` `dispatch_` was read for its `requireRole_` gate and any role
 check inside the handler; every launcher tile in `public/js/nav.js` and every

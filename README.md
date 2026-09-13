@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.35.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.36.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -30,7 +30,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Cash out by reason**: Paid Out, Cash Pick Up and Staff Expense are separate kinds, and each is split in reports and the export.
 - **Refunds**: validated against the original sale and any earlier refunds, with stock returned.
 - **Customers**: Net-30 accounts, a per-customer ledger, collections, receivables with 30/60/90+ day aging, and printable or CSV statements.
-- **Audit log** (admin only): append-only, filterable, exportable.
+- **Audit log** (admin only): append-only, filterable, exportable. It covers refunds and cash-outs, stock adjustments with a reason, product and price edits, purchase orders, staff and PIN changes, sign-ins and lockouts, repairs and drawer opens.
 
 ### Stock
 
@@ -153,8 +153,8 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 ## Development
 
 ```bash
-npm test              # backend logic vs an in-memory Apps Script mock (715 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (459 checks)
+npm test              # backend logic vs an in-memory Apps Script mock (757 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (463 checks)
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
 npm run test:pdf      # receipt PDF/share smoke test in a headless browser
 npm run test:all      # all four

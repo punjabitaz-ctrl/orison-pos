@@ -170,7 +170,7 @@ privileged action. The role is carried in the signed session token; because a
 role **change** revokes that user's sessions immediately, a promotion or
 demotion takes effect at the first request after the change (no 12-hour lag).
 
-Verified route by route against `Code.gs` at v1.35.1. The task-level view —
+Verified route by route against `Code.gs` at v1.36.0. The task-level view —
 what each role can actually do on screen, and what they cannot — is in
 [`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
 
@@ -200,8 +200,8 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/admin/store`, `/api/reports/schedule`, `/api/backup/status`, `/api/backup/run` | admin |
 | `/api/audit` | admin |
 
-A sale's `channel` (Sold Elsewhere) is gated in the interface only; the server
-accepts any channel from any role on a sale.
+A sale on any `channel` other than `in_store` (Sold Elsewhere) is refused from a
+cashier with `unauthorized_role` (v1.36.0).
 
 ## Audit log
 
@@ -209,15 +209,20 @@ accepts any channel from any role on a sale.
 and readable by admins only. It records the actor, their role, the action, the
 target, a summary and the terminal.
 
-**Recorded today:** store settings, bulk repricing, stock takes, staff role and
-active changes, terminal revocations, every repair action, no-sale drawer
-opens, backups and scheduled reports.
+**Recorded (v1.36.0):**
 
-**Not recorded** (the ledger holds some of it, the log does not): stock
-adjustments, product create/edit, serial additions, admin PIN resets, new
-staff accounts, lockout releases, revoke-all, conflict reviews, purchase-order
-receive and cancel, supplier changes, customer creation, Drive exports, and
-sign-ins. Closing these is item 2 of the review's recommended order.
+- **Money:** refunds, paid out, cash pick-ups, staff expenses and payments on account, written as they sync; no-sale drawer opens; Drive exports.
+- **Stock:** stock adjustments with a reason; stock takes; product create and edit, field by field; bulk repricing; serials added; suppliers; purchase orders created, received and cancelled.
+- **Repairs:** every repair action.
+- **People and access:** sign-ins; the attempt that trips a lockout; lockout releases; new staff; staff edits; PIN resets; revoke-all; terminal revocations; customer creation; conflict reviews.
+- **The business:** store settings, scheduled reports and backups.
+
+**Deliberately not recorded:**
+
+- Ordinary sales. The ledger is their record.
+- Individual failed sign-ins. Logging each one would let anyone who knows an address fill the log.
+
+A test (`tests/client-audit.mjs`) fails if the server writes an action the audit screen cannot filter or name.
 
 Anyone with edit access to the Google Sheet can change any row — the log
 included — without going through the API. Keep the workbook's sharing to the
@@ -255,10 +260,11 @@ installation and stored in that browser's IndexedDB alongside the session token.
 
 Three consequences worth planning around:
 
-1. **It is readable on the terminal.** Settings → Backend shows it in plain
-   text to every signed-in role, and the sign-in screen's Backend prompt shows
-   it to anyone holding the device. Restricting that card to admins and
-   masking the field is recommended (review §2 Admin #3).
+1. **It is still in the terminal's storage.** Since v1.36.0 the app never
+   displays it: Settings → Backend is admin-only, the field is masked and
+   never pre-filled, and the sign-in Backend prompt no longer shows the saved
+   value. Anyone with developer tools on an unlocked device can still read
+   IndexedDB.
 2. A single compromised device — or any script running on the origin — yields
    the credential that authorizes every device's requests. Sessions themselves
    are revocable per user and per device (see [Session revocation](#session-revocation)),

@@ -32,7 +32,7 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 - `/api/login`, `/api/logout`, `/api/pin` (own PIN).
 - `/api/admin/unlock` (admin, manager).
 - `/api/admin/pin`, `/api/admin/revoke`, `/api/admin/devices`, `/api/admin/revoke-device` (admin).
-- `/api/admin/users`, `/users/list`, `/users/patch` (admin). Create staff, list them, and change `role` or `active`. A role change or deactivation revokes that person's sessions.
+- `/api/admin/users`, `/users/list`, `/users/patch` (admin). Create staff, list them, and change `firstName`, `lastName`, `email` (unique), `role` or `active`. A role or email change, or a deactivation, revokes that person's sessions. An admin cannot demote or deactivate themself.
 - `/api/config` returns the store, currencies and, to managers and admins only, the staff roster.
 
 ### Selling and sync
@@ -46,7 +46,7 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 - **Refunds** are validated against the original sale and earlier refunds. **Any service line is refused whole** (`service_not_refundable`, v1.33.0).
 - **Tenders:** cash, card, store credit, Net-30 (on account). Card is recorded, and excluded from the expected drawer.
 - **Receipt numbers** (v1.22.0): `Orison-S000001`, gap-free. The number is allocated at push, inside the lock that appends the sale, and only for sales and refunds. The prefix is `Meta` `receipt_prefix`.
-- **Channels** (v1.27.0): `channel` (`in_store`, `online`, `marketplace`, `phone`, `other`) and `external_ref` on every transaction. Reports carry `byChannel`.
+- **Channels** (v1.27.0): `channel` (`in_store`, `online`, `marketplace`, `phone`, `other`) and `external_ref` on every transaction. Reports carry `byChannel`. A non-`in_store` sale from a cashier is refused (v1.36.0).
 - **Conflict registry:** `SERIAL_CLAIM`, `DUPLICATE_CLIENT` and `CLOCK_SKEW` rows in `Conflicts`, via `/api/conflicts` and `/api/conflicts/review` (`dismiss` | `resolve`), admin and manager.
 - **History:** `/api/transactions`, capped at 100 rows with keyset paging (`cursor`) and server-side search (`q`: receipt number, client id, customer, item, IMEI, amount). A cashier gets their own rows.
 - **Cash drawer** (v1.34.0): `/api/drawer/open` (admin, manager) records a no-sale open with its reason and terminal in the audit log.
@@ -79,7 +79,7 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 ### Stock
 
 - `/api/products` and the pull snapshot. Cost prices go to managers and admins only.
-- `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` (admin, manager): create, edit, add serials, adjust counted stock.
+- `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` (admin, manager): create, edit, add serials, adjust counted stock (`reason` is recorded in the audit log).
 - **Suppliers** `/api/suppliers` (admin). **Purchase orders** `/api/purchase-orders`, `/detail`, `/receive` (admin, manager): receiving posts weighted-average cost, serials unit by unit, and a `purchase` ledger row. `/cancel` is admin only.
 - **Price history** `/api/price-history` (admin, manager): sources `create`, `patch`, `po` and `bulk`.
 - **Inventory aging** `/api/inventory/aging` and **reorder worksheet** `/api/inventory/reorder` (admin, manager).
@@ -103,8 +103,8 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
   - It keeps the last 30 daily copies and the first of each of the last 12 months.
   - A failure is recorded, never thrown.
 - **Audit log** `/api/audit` (admin): append-only, 100 per page, filter by actor, action and date. There is no update or delete path.
-  - Records: store settings, bulk repricing, stock takes, staff role and active changes, terminal revokes, repairs, drawer opens, backups and reports.
-  - Not yet: see the review linked above, §2 Admin #1.
+  - Records money (refunds and cash-outs as they sync, drawer opens, exports), stock (adjustments with a reason, stock takes, product create and edit, bulk pricing, serials, suppliers, purchase orders), repairs, and people and access (sign-ins, lockouts, unlocks, staff create and edit, PIN resets, revocations, customers, conflict reviews), plus store settings, reports and backups.
+  - The full action list is in SECURITY.md → Audit log.
 - **Store settings** `/api/admin/store` (admin): any subset of `taxRate`, `tzOffsetMin`, `locale`, `country`, `currency`, `denoms`. Only fields that are sent are written. Changing currency without a ladder adopts that currency's notes and coins. The store `locale` also picks the receipt and customer-display language (en, ar, ur).
 
 ## Tab layout in the Sheet
@@ -163,7 +163,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 719 checks
+npm run test:backend   # 757 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.

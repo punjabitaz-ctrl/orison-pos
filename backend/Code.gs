@@ -718,32 +718,43 @@ function assignReceiptNumbers_(newTxRows, txRewrites) {
 /* Append-only record of who did what. There is no update or delete path in the
  * API by design: a log that can be edited is not evidence. Logging must never
  * fail the action it describes, so every call is wrapped. */
+/* Staff names for the log, read once per execution: a push that audits every
+   refund in a batch must not re-read the Users tab for each row. A name that
+   changes mid-execution is still correct on the next request. */
+var AUDIT_NAMES_ = null;
+
+function auditName_(uid) {
+  if (!uid) return '';
+  if (!AUDIT_NAMES_ || !(uid in AUDIT_NAMES_)) {
+    AUDIT_NAMES_ = Object.create(null);
+    var users = readRows_('Users', USER_HEADERS);
+    for (var i = 0; i < users.length; i++) {
+      AUDIT_NAMES_[String(users[i].id)] = (String(users[i].first_name || '') + ' ' + String(users[i].last_name || '')).trim();
+    }
+  }
+  return AUDIT_NAMES_[uid] || '';
+}
+
+function auditRow_(session, action, targetType, targetId, summary, deviceId) {
+  var uid = session ? String(session.uid || '') : '';
+  return {
+    id: Utilities.getUuid(),
+    store_id: getStore_().id,
+    at: new Date().toISOString(),
+    user_id: uid,
+    user_name: auditName_(uid),
+    role: session ? String(session.role || '') : '',
+    action: String(action || ''),
+    target_type: String(targetType || ''),
+    target_id: String(targetId || ''),
+    summary: String(summary == null ? '' : summary).slice(0, 500),
+    device_id: String(deviceId || ''),
+  };
+}
+
 function logAudit_(session, action, targetType, targetId, summary, deviceId) {
   try {
-    var uid = session ? String(session.uid || '') : '';
-    var name = '';
-    if (uid) {
-      var users = readRows_('Users', USER_HEADERS);
-      for (var i = 0; i < users.length; i++) {
-        if (String(users[i].id) === uid) {
-          name = (String(users[i].first_name || '') + ' ' + String(users[i].last_name || '')).trim();
-          break;
-        }
-      }
-    }
-    appendRows_('AuditLog', AUDIT_HEADERS, [{
-      id: Utilities.getUuid(),
-      store_id: getStore_().id,
-      at: new Date().toISOString(),
-      user_id: uid,
-      user_name: name,
-      role: session ? String(session.role || '') : '',
-      action: String(action || ''),
-      target_type: String(targetType || ''),
-      target_id: String(targetId || ''),
-      summary: String(summary == null ? '' : summary).slice(0, 500),
-      device_id: String(deviceId || ''),
-    }]);
+    appendRows_('AuditLog', AUDIT_HEADERS, [auditRow_(session, action, targetType, targetId, summary, deviceId)]);
   } catch (_) { /* never fail the action being logged */ }
 }
 
@@ -1614,6 +1625,12 @@ function login_(payload) {
     // it also pushed responses past the client's 8s timeout, which api.js maps
     // to "offline" and hides the real error. The attempt cap does the work.
     recordLoginFailure_(email);
+    /* Only the attempt that trips the lockout is logged. Every failure would let
+       anyone who knows an address fill the audit log from outside. */
+    if (loginLockoutRemainingMs_(email) > 0) {
+      logAudit_(found ? { uid: found.id, role: found.role } : null, 'auth.locked', 'user',
+        found ? String(found.id) : '', 'Sign-in locked after repeated wrong PINs for ' + email, deviceId);
+    }
     throw statusError_(401, 'Invalid email or PIN');
   }
 
@@ -1626,6 +1643,7 @@ function login_(payload) {
 
   clearLoginFailures_(email);
   touchDevice_(found.id, deviceId, 0);
+  logAudit_({ uid: found.id, role: found.role }, 'auth.login', 'user', String(found.id), 'Signed in', deviceId);
   var token = signToken_({
     uid: found.id,
     role: found.role,
@@ -1893,6 +1911,12 @@ function syncPush_(session, payload) {
         indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows);
         continue;
       }
+      /* Sold Elsewhere is a manager's tool. A cashier's device recording an
+         online or marketplace sale is refused here, not just hidden on screen. */
+      if (kind === 'sale' && normaliseChannel_(tx.channel) !== 'in_store' && !isStoreRole_(session && session.role)) {
+        pushResult_(results, tx, { errors: [{ reason: 'unauthorized_role' }] });
+        continue;
+      }
       if (kind === 'refund') {
         pushResult_(results, tx, processRefund_(
           txRows, prodRows, serialRows, store, newTxRows, newConflictRows,
@@ -2077,6 +2101,11 @@ function syncPush_(session, payload) {
     lock.releaseLock();
   }
 
+  /* Money that leaves the business or returns to a customer is a trail the
+     owner reads in the audit log, not only a row in the ledger. Written after
+     the lock: the log must never hold up a till's push. */
+  if (newTxRows && newTxRows.length) auditPushedMoney_(session, newTxRows, deviceId);
+
   /* Sync conflicts are for humans, not just the Conflicts tab: one coalesced
      digest per push to every active admin/manager. Mail failure must never
      fail a sale, so the send is fire-and-forget. */
@@ -2209,6 +2238,26 @@ function backfillReceiptResults_(results, newTxRows, txRewrites) {
     var hit = byClient[String(results[i].clientTxId)];
     if (hit) results[i].receiptNo = hit;
   }
+}
+
+var AUDITED_PUSH_KINDS_ = { refund: 'refund', payout: 'cash.payout', pickup: 'cash.pickup', expense: 'cash.expense', payment: 'customer.payment' };
+
+function auditPushedMoney_(session, rows, deviceId) {
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var action = AUDITED_PUSH_KINDS_[String(r.kind)];
+    if (!action || String(r.status) !== 'COMPLETED') continue;
+    var who = String(r.counterparty || '');
+    var summary = String(r.kind) + ' ' + num_(r.grand_total) +
+      (r.receipt_no ? ' · ' + r.receipt_no : '') +
+      (r.original_client_tx ? ' · against ' + r.original_client_tx : '') +
+      (who ? ' · ' + who : '') +
+      (r.note ? ' — ' + String(r.note).slice(0, 160) : '');
+    out.push(auditRow_(session, action, 'transaction', String(r.id), summary, deviceId));
+  }
+  if (!out.length) return;
+  try { appendRows_('AuditLog', AUDIT_HEADERS, out); } catch (_) { /* never fail a push over its log */ }
 }
 
 function pushResult_(results, tx, outcome) {
@@ -2754,6 +2803,7 @@ function adminCustomers_(session, payload) {
     created_at: new Date().toISOString(),
   };
   appendRows_('Customers', CUSTOMERS_HEADERS, [row]);
+  logAudit_(session, 'customer.create', 'customer', row.id, row.name + (row.phone ? ' · ' + row.phone : ''), payload && payload.deviceId);
   return { customer: { id: row.id, name: row.name, phone: row.phone, email: row.email } };
 }
 
@@ -3829,6 +3879,7 @@ function suppliers_(session, payload) {
       address: String(payload.address || '').trim(), payment_terms: String(payload.paymentTerms || '').trim(),
       active: payload.active === false ? 0 : 1, created_at: now,
     }]);
+    logAudit_(session, 'supplier.create', 'supplier', id, name, payload.deviceId);
     return { id: id };
   } finally {
     lock.releaseLock();
@@ -3928,6 +3979,8 @@ function purchaseOrders_(session, payload) {
       note: String(payload.note || '').slice(0, 500), created_by: String(session.uid || ''),
       created_at: now, updated_at: now,
     }]);
+    logAudit_(session, 'po.create', 'purchase_order', id,
+      poNumber + ' for ' + String(supplier.name) + ', ' + built.items.length + ' line(s), total ' + total + ' (' + status + ')', payload.deviceId);
     return { id: id, poNumber: poNumber, status: status, total: total };
   } finally {
     lock.releaseLock();
@@ -4099,6 +4152,8 @@ function purchaseOrderReceive_(session, payload) {
         note: 'Received against ' + String(po.po_number || ''), created_at: new Date().toISOString(), subtotal: '', tax_amount: '', discount_pct: '', customer_id: '',
       }]);
     }
+    logAudit_(session, 'po.receive', 'purchase_order', id,
+      String(po.po_number || '') + ': ' + txItems.length + ' unit(s) received, value ' + round2_(receivedValue) + ' (' + newStatus + ')', payload.deviceId);
     return {
       id: id, status: newStatus, receivedValue: round2_(receivedValue), lines: newReceived.map(function (r) {
         return { productId: String(r.productId), quantity: num_(r.quantity), onHand: project[String(r.productId)] ? project[String(r.productId)].onHand : null, unitCost: project[String(r.productId)] ? project[String(r.productId)].unitCost : null };
@@ -4125,6 +4180,7 @@ function purchaseOrderCancel_(session, payload) {
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
     applyPatches_('PurchaseOrders', PO_HEADERS, 'id', { [id]: { status: 'CANCELLED', updated_at: new Date().toISOString() } });
+    logAudit_(session, 'po.cancel', 'purchase_order', id, String(po.po_number || '') + ' cancelled (was ' + status + ')', payload.deviceId);
     return { id: id, status: 'CANCELLED' };
   } finally {
     lock.releaseLock();
@@ -5268,6 +5324,7 @@ function reviewConflict_(session, payload) {
     applyPatches_('Conflicts', CONFLICT_HEADERS, 'id', {
       [id]: { status: status, reviewed_at: new Date().toISOString(), reviewed_by: session.uid },
     });
+    logAudit_(session, 'conflict.review', 'conflict', id, status, '');
     return { ok: true, id: id, status: status };
   } finally {
     lock.releaseLock();
@@ -5339,6 +5396,7 @@ function adminSetPin_(session, payload) {
   clearLoginFailures_(email);
   revokeTokensForUser_(found.id);
   Logger.log('[orison-pos] PIN reset for ' + email + ' by ' + session.uid);
+  logAudit_(session, 'user.pin_reset', 'user', String(found.id), 'PIN reset for ' + email, '');
   return { ok: true };
 }
 
@@ -5351,6 +5409,7 @@ function adminUnlock_(session, payload) {
   if (!email) throw statusError_(400, 'email is required');
   clearLoginFailures_(email);
   Logger.log('[orison-pos] lockout cleared for ' + email + ' by ' + session.uid);
+  logAudit_(session, 'user.unlock', 'user', email, 'Sign-in lockout released for ' + email, '');
   return { ok: true };
 }
 
@@ -5381,11 +5440,12 @@ function adminUsers_(session, payload) {
 
   var pin = randomPin_();
   var salt = Utilities.getUuid().split('-')[0];
+  var newId = Utilities.getUuid();
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
     appendRows_('Users', USER_HEADERS, [{
-      id: Utilities.getUuid(),
+      id: newId,
       store_id: kv_().store_id || '',
       first_name: firstName,
       last_name: lastName,
@@ -5401,7 +5461,8 @@ function adminUsers_(session, payload) {
   }
   Logger.log('[orison-pos] new staff account ' + email + ' (' + role + ') created by ' + session.uid);
   Logger.log('[orison-pos]   one-time PIN ' + pin + ' for ' + email);
-  return { ok: true, oneTimePin: pin, email: email };
+  logAudit_(session, 'user.create', 'user', newId, 'New ' + role + ' account ' + email, '');
+  return { ok: true, oneTimePin: pin, email: email, id: newId };
 }
 
 /* Full staff roster for the Settings screen. Admin only. Deliberately omits
@@ -5436,7 +5497,9 @@ function adminUserPatch_(session, payload) {
     if (String(users[i].id) === id) { found = users[i]; break; }
   }
   if (!found) throw statusError_(404, 'No such user');
-  if (String(found.role) === 'admin' && String(session.uid) === id) {
+  var self = String(session.uid) === id;
+  if (self && (payload.active === false || payload.active === 0 ||
+      (typeof payload.role === 'string' && payload.role !== String(found.role)))) {
     throw statusError_(400, 'You cannot deactivate or demote yourself');
   }
 
@@ -5446,14 +5509,38 @@ function adminUserPatch_(session, payload) {
   } else if (payload.active === 0 || payload.active === 1) {
     patch.active = payload.active;
   }
-  if (typeof payload.role === 'string' && ['admin', 'manager', 'cashier'].indexOf(payload.role) >= 0) {
+  if (typeof payload.role === 'string' && ['admin', 'manager', 'cashier'].indexOf(payload.role) >= 0
+      && payload.role !== String(found.role)) {
     patch.role = payload.role;
+  }
+  if (typeof payload.firstName === 'string') {
+    var fn = payload.firstName.trim().slice(0, 60);
+    if (!fn) throw statusError_(400, 'First and last name are required');
+    if (fn !== String(found.first_name)) patch.first_name = fn;
+  }
+  if (typeof payload.lastName === 'string') {
+    var ln = payload.lastName.trim().slice(0, 60);
+    if (!ln) throw statusError_(400, 'First and last name are required');
+    if (ln !== String(found.last_name)) patch.last_name = ln;
+  }
+  if (typeof payload.email === 'string') {
+    var em = payload.email.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) throw statusError_(400, 'A valid email is required');
+    if (em !== String(found.email).toLowerCase()) {
+      for (var j = 0; j < users.length; j++) {
+        if (String(users[j].id) !== id && String(users[j].email).toLowerCase() === em) {
+          throw statusError_(409, 'An account with that email already exists');
+        }
+      }
+      patch.email = em;
+    }
   }
   if (!Object.keys(patch).length) return { ok: true, changed: false };
 
   applyPatches_('Users', USER_HEADERS, 'id', { [id]: patch });
+  AUDIT_NAMES_ = null;
   if (patch.active === 0) { revokeTokensForUser_(id); markAllDevicesRevoked_(id); }
-  else if (patch.role && patch.role !== String(found.role)) { revokeTokensForUser_(id); }
+  else if (patch.role || patch.email) { revokeTokensForUser_(id); }
   Logger.log('[orison-pos] user ' + id + ' patched ' + JSON.stringify(patch) + ' by ' + session.uid);
   logAudit_(session, 'user.patch', 'user', id, JSON.stringify(patch), '');
   return { ok: true, changed: true };
@@ -5483,6 +5570,7 @@ function adminRevoke_(session, payload) {
       revokeTokensForUser_(uid);
       markAllDevicesRevoked_(uid);
       Logger.log('[orison-pos] sessions revoked for ' + email + ' by ' + session.uid);
+      logAudit_(session, 'session.revoke_all', 'user', uid, 'Every session and terminal revoked for ' + email, '');
       return { ok: true };
     }
   }
@@ -5591,6 +5679,8 @@ function adminProducts_(session, payload) {
     }]);
     recordPriceChange_({ id: id, name: name }, 'cost_price', '', cost, 'create', null, String(session.uid || ''));
     recordPriceChange_({ id: id, name: name }, 'retail_price', '', retail, 'create', null, String(session.uid || ''));
+    logAudit_(session, 'product.create', 'product', id,
+      name + ' (' + sku + ') ' + itemType + (itemType === 'service' ? '' : ', on hand ' + onHand), payload.deviceId);
     return { id: id };
   } finally {
     lock.releaseLock();
@@ -5652,6 +5742,10 @@ function adminSerials_(session, payload) {
     applyPatches_('Products', PRODUCT_HEADERS, 'id', {
       [productId]: { updated_at: now },
     });
+    if (added.length) {
+      logAudit_(session, 'serial.add', 'product', productId,
+        added.length + ' serial(s) added to ' + String(product.name) + ': ' + added.join(', '), payload.deviceId);
+    }
     return { productId: productId, added: added, duplicates: duplicates };
   } finally {
     lock.releaseLock();
@@ -5685,6 +5779,11 @@ function adminInventory_(session, payload) {
     applyPatches_('Products', PRODUCT_HEADERS, 'id', {
       [productId]: { on_hand: onHand, updated_at: new Date().toISOString() },
     });
+    var was = num_(product.on_hand);
+    var reason = String(payload.reason || '').trim().slice(0, 200);
+    logAudit_(session, 'stock.adjust', 'product', productId,
+      String(product.name) + ': ' + was + ' → ' + onHand + ' (' + (onHand - was >= 0 ? '+' : '') + (onHand - was) + ')' +
+      (reason ? ' — ' + reason : ''), payload.deviceId);
     return { ok: true, onHand: onHand };
   } finally {
     lock.releaseLock();
@@ -5804,6 +5903,16 @@ function adminProductsPatch_(session, payload) {
     }
     if (patch.cost_price !== undefined && num_(product.cost_price) !== num_(patch.cost_price)) {
       recordPriceChange_(product, 'cost_price', num_(product.cost_price), num_(patch.cost_price), 'patch', null, String(session.uid || ''));
+    }
+    var changes = [];
+    var labels = { retail_price: 'retail', cost_price: 'cost', locked: 'locked', taxable: 'taxable', reorder_point: 'reorder at' };
+    for (var key in labels) {
+      if (patch[key] !== undefined && String(patch[key]) !== String(product[key])) {
+        changes.push(labels[key] + ' ' + String(product[key]) + ' → ' + String(patch[key]));
+      }
+    }
+    if (changes.length) {
+      logAudit_(session, 'product.update', 'product', productId, String(product.name) + ': ' + changes.join(', '), payload.deviceId);
     }
     return { ok: true, id: productId };
   } finally {
@@ -5925,6 +6034,8 @@ function driveExport_(session, payload, params) {
   var folder = getDriveFolder_();
   var suffix = isStore ? '' : '-' + ownerId.slice(0, 8);
   var file = folder.createFile('orison-pos-sales-' + day + suffix + '.csv', csv, MimeType.CSV);
+  logAudit_(session, 'export.drive', 'export', file.getId(),
+    file.getName() + ' — ' + dayRows.length + ' transaction(s), ' + (isStore ? 'whole store' : 'own rows'), payload && payload.deviceId);
   return {
     fileId: file.getId(),
     name: file.getName(),

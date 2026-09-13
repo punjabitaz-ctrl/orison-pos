@@ -106,6 +106,7 @@ export const screen = {
         <div class="row"><button class="btn" id="syncNowBtn">${$t('Sync now')}</button></div>
       </section>
 
+      ${(user && user.role === 'admin') ? `
       <section class="set-card">
         <h3>${$t('Backend')}</h3>
         <div class="field">
@@ -115,11 +116,11 @@ export const screen = {
         </div>
         <div class="field">
           <span>${$t('App token (matches Script Properties APP_TOKEN)')}</span>
-          <input id="appToken" type="text" placeholder="${$t('shared app token')}" value="${esc(m.appToken || '')}"
-                 autocapitalize="off" autocorrect="off" spellcheck="false">
+          <input id="appToken" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+                 placeholder="${m.appToken ? $t('Saved — leave blank to keep it') : $t('shared app token')}">
         </div>
         <div class="row"><button class="btn" id="saveUrl">${$t('Save &amp; reconnect')}</button></div>
-      </section>
+      </section>` : ''}
 
       ${m.store ? `
       <section class="set-card">
@@ -318,11 +319,11 @@ export const screen = {
       if (res && res.offline) toast($t('Offline — queued locally'), 'warn');
     });
 
-    root.querySelector('#saveUrl').addEventListener('click', async () => {
+    root.querySelector('#saveUrl')?.addEventListener('click', async () => {
       const url = root.querySelector('#serverUrl').value.trim();
       const token = root.querySelector('#appToken').value.trim();
       await setServerUrl(url);
-      await setAppToken(token);
+      if (token) await setAppToken(token);
       try {
         await pull();
         toast($t('Connected'), 'ok'); beep('ok');
@@ -439,6 +440,56 @@ export const screen = {
         });
         return;
       }
+      if (act === 'edit') {
+        const u = staffRows.find((r) => String(r.id) === String(id));
+        if (!u) return;
+        const me = (await idb.get('meta', 'config'))?.user;
+        const self = String(u.id) === String(me && me.id);
+        const modalEl = openModal(`
+          <div class="tx-detail">
+            <button class="icon-btn abs-close" data-x>✕</button>
+            <h3>${esc($t('Edit {name}', { name: u.firstName + ' ' + u.lastName }))}</h3>
+            <label class="field-label">${$t('First name')}
+              <input class="field" id="esFirst" autocomplete="off" value="${esc(u.firstName)}">
+            </label>
+            <label class="field-label">${$t('Last name')}
+              <input class="field" id="esLast" autocomplete="off" value="${esc(u.lastName)}">
+            </label>
+            <label class="field-label">${$t('Email')}
+              <input class="field" id="esEmail" type="email" autocapitalize="none" autocomplete="off" value="${esc(u.email)}">
+            </label>
+            <label class="field-label">${$t('Role')}
+              <select class="field" id="esRole" ${self ? 'disabled' : ''}>
+                ${['cashier', 'manager', 'admin'].map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${esc($t(roleLabel(r)))}</option>`).join('')}
+              </select>
+            </label>
+            <p class="muted">${$t('Changing the email or the role signs this person out everywhere.')}</p>
+            <button class="btn" id="esSave">${$t('Save')}</button>
+            <p id="esMsg" class="login-err" role="status"></p>
+          </div>`);
+        modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
+        modalEl.querySelector('#esSave').addEventListener('click', async () => {
+          const save = modalEl.querySelector('#esSave');
+          const payload = {
+            id: u.id,
+            firstName: modalEl.querySelector('#esFirst').value,
+            lastName: modalEl.querySelector('#esLast').value,
+            email: modalEl.querySelector('#esEmail').value,
+          };
+          if (!self) payload.role = modalEl.querySelector('#esRole').value;
+          save.disabled = true;
+          try {
+            const res = await api.post('/api/admin/users/patch', payload);
+            closeModal();
+            toast(res.changed ? $t('Staff updated') : $t('Nothing would change'), 'ok'); beep('ok');
+            await loadStaff();
+          } catch (err) {
+            modalEl.querySelector('#esMsg').textContent = (err && err.message) || $t('Update failed');
+            save.disabled = false;
+          }
+        });
+        return;
+      }
       if (act === 'toggle') {
         btn.disabled = true;
         try {
@@ -454,10 +505,12 @@ export const screen = {
       }
     });
 
+    let staffRows = [];
     async function loadStaff() {
       const list = root.querySelector('#staffList');
       try {
         const res = await api.post('/api/admin/users/list', {});
+        staffRows = res.users || [];
         const me = (await idb.get('meta', 'config'))?.user;
         list.innerHTML = res.users.map((u) => `
           <div class="set-row">
@@ -468,6 +521,7 @@ export const screen = {
               ${String(u.id) === String(me && me.id) ? ` <span class="tag-ok">${$t('you')}</span>` : ''}
             </span>
             <span class="set-inline">
+              <button class="btn btn-sm btn-ghost" data-staff data-id="${esc(u.id)}" data-act="edit">${$t('Edit')}</button>
               <button class="btn btn-sm" data-staff data-id="${esc(u.id)}" data-email="${esc(u.email)}" data-name="${esc(u.firstName + ' ' + u.lastName)}" data-act="pin">${$t('PIN')}</button>
               ${String(u.id) === String(me && me.id) ? '' : `
               <button class="btn btn-sm ${u.active ? 'btn-danger' : 'btn-ghost'}" data-staff data-id="${esc(u.id)}" data-want="${u.active ? '0' : '1'}" data-act="toggle">${u.active ? $t('Off') : $t('On')}</button>`}

@@ -12,14 +12,69 @@ import { api } from '../api.js';
 import { esc, toast, skeleton, emptyState, csvRows, downloadCsv } from '../ui.js';
 import { screenHead, sectionHead, dataTable, roleLabel } from '../components.js';
 
-const ACTIONS = [
-  { id: '', label: N_('Everything') },
-  { id: 'store.settings', label: N_('Store settings') },
-  { id: 'price.bulk', label: N_('Bulk pricing') },
-  { id: 'stock.take', label: N_('Stock takes') },
-  { id: 'user.patch', label: N_('Staff changes') },
-  { id: 'device.revoke', label: N_('Terminal revoked') },
+/* Grouped the way an owner asks the question: "who touched the money", "who
+   touched stock", "who touched people". The ids are the server's action names. */
+export const ACTION_GROUPS = [
+  { label: N_('Money'), actions: [
+    { id: 'refund', label: N_('Refunds') },
+    { id: 'cash.payout', label: N_('Paid out') },
+    { id: 'cash.pickup', label: N_('Cash pick-ups') },
+    { id: 'cash.expense', label: N_('Staff expenses') },
+    { id: 'customer.payment', label: N_('Payments on account') },
+    { id: 'drawer.open', label: N_('Drawer opened without a sale') },
+    { id: 'export.drive', label: N_('Drive exports') },
+  ] },
+  { label: N_('Stock'), actions: [
+    { id: 'stock.adjust', label: N_('Stock adjustments') },
+    { id: 'stock.take', label: N_('Stock takes') },
+    { id: 'product.create', label: N_('New products') },
+    { id: 'product.update', label: N_('Product edits') },
+    { id: 'price.bulk', label: N_('Bulk pricing') },
+    { id: 'serial.add', label: N_('Serials added') },
+    { id: 'supplier.create', label: N_('New suppliers') },
+    { id: 'po.create', label: N_('Purchase orders') },
+    { id: 'po.receive', label: N_('Deliveries received') },
+    { id: 'po.cancel', label: N_('Orders cancelled') },
+  ] },
+  { label: N_('Repairs'), actions: [
+    { id: 'repair.created', label: N_('Repairs booked in') },
+    { id: 'repair.part', label: N_('Parts fitted or returned') },
+    { id: 'repair.labour', label: N_('Labour') },
+    { id: 'repair.status', label: N_('Status changes') },
+    { id: 'repair.deposit', label: N_('Deposits taken') },
+    { id: 'repair.deposit_refund', label: N_('Deposits given back') },
+    { id: 'repair.collected', label: N_('Repairs collected') },
+    { id: 'repair.voided', label: N_('Tickets voided') },
+  ] },
+  { label: N_('People and access'), actions: [
+    { id: 'auth.login', label: N_('Sign-ins') },
+    { id: 'auth.locked', label: N_('Lockouts') },
+    { id: 'user.unlock', label: N_('Lockouts released') },
+    { id: 'user.create', label: N_('New staff') },
+    { id: 'user.patch', label: N_('Staff changes') },
+    { id: 'user.pin_reset', label: N_('PIN resets') },
+    { id: 'session.revoke_all', label: N_('Sessions revoked') },
+    { id: 'device.revoke', label: N_('Terminal revoked') },
+    { id: 'customer.create', label: N_('New customers') },
+    { id: 'conflict.review', label: N_('Conflict reviews') },
+  ] },
+  { label: N_('The business'), actions: [
+    { id: 'store.settings', label: N_('Store settings') },
+    { id: 'report.recipients', label: N_('Report recipients') },
+    { id: 'report.cadence', label: N_('Report schedule') },
+    { id: 'report.sent', label: N_('Reports sent') },
+    { id: 'report.failed', label: N_('Reports failed') },
+    { id: 'backup.run', label: N_('Backups') },
+    { id: 'backup.failed', label: N_('Backup failures') },
+  ] },
 ];
+
+const ACTION_LABEL = Object.create(null);
+for (const g of ACTION_GROUPS) for (const a of g.actions) ACTION_LABEL[a.id] = a.label;
+
+export function actionLabel(id) {
+  return ACTION_LABEL[id] ? $t(ACTION_LABEL[id]) : String(id || '');
+}
 
 function when(iso) {
   if (!iso) return '—';
@@ -79,8 +134,11 @@ export const screen = {
         <div class="dash-section">
           ${sectionHead({
             title: $t('{shown} of {total} entries', { shown: entries.length, total }),
-            asideHtml: `<div class="seg seg-sm">${ACTIONS.map((a) =>
-              `<button class="seg-btn ${a.id === action ? 'on' : ''}" data-act="${esc(a.id)}">${esc($t(a.label))}</button>`).join('')}</div>`,
+            asideHtml: `<select class="field au-filter" id="auAction" aria-label="${$t('Action')}">
+              <option value="">${$t('Everything')}</option>
+              ${ACTION_GROUPS.map((g) => `<optgroup label="${esc($t(g.label))}">${g.actions.map((a) =>
+                `<option value="${esc(a.id)}" ${a.id === action ? 'selected' : ''}>${esc($t(a.label))}</option>`).join('')}</optgroup>`).join('')}
+            </select>`,
           })}
           ${entries.length ? dataTable({
             head: [{ label: $t('When') }, { label: $t('Who') }, { label: $t('Role') }, { label: $t('Action') }, { label: $t('Detail') }],
@@ -89,7 +147,7 @@ export const screen = {
                 <td>${esc(when(e.at))}</td>
                 <td>${esc(e.userName || '—')}</td>
                 <td>${esc(e.role ? $t(roleLabel(e.role)) : '')}</td>
-                <td><span class="k-chip k-payout">${esc(e.action)}</span></td>
+                <td><span class="k-chip k-payout" title="${esc(e.action)}">${esc(actionLabel(e.action))}</span></td>
                 <td>${esc(e.summary || '')}</td>
               </tr>`).join(''),
           }) : emptyState({
@@ -103,11 +161,11 @@ export const screen = {
           </div>
         </div>`;
 
-      body.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
-        action = b.dataset.act;
+      body.querySelector('#auAction').addEventListener('change', (ev) => {
+        action = ev.target.value;
         body.innerHTML = skeleton('table', 5);
         load(false);
-      }));
+      });
       const more = body.querySelector('#auMore');
       if (more) more.addEventListener('click', () => load(true));
       const csv = body.querySelector('#auCsv');

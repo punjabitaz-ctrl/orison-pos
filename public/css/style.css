@@ -1053,6 +1053,7 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; in
   gap: 10px; margin: 8px 0;
 }
 .sect-head h3 { margin: 0; }
+.sect-head .au-filter { width: auto; max-width: 18rem; flex: 0 1 auto; min-height: 40px; }
 .sect-head .muted { font-size: 12px; }
 .scr-note { padding: 4px 16px; }
 

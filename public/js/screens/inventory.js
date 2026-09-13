@@ -215,6 +215,8 @@ export const screen = {
           <h3>${$t('Stock level')}</h3>
           <p class="muted">${esc(p.name)}</p>
           <div class="field"><span>${$t('On hand')}</span><input id="sQty" type="number" inputmode="numeric" min="0" step="1" value="${p.onHand || 0}"></div>
+          <div class="field"><span>${$t('Reason')}</span><input id="sReason" type="text" maxlength="200" autocomplete="off" placeholder="${esc($t('e.g. damaged, found in back room'))}"></div>
+          <p class="muted">${$t('Every change is recorded in the audit log with who made it.')}</p>
           <p id="sErr" class="login-err"></p>
           <div class="row"><button class="btn btn-ghost" data-cancel>${$t('Cancel')}</button><button class="btn" id="sSave">${$t('Save count')}</button></div>
         </div>`);
@@ -222,8 +224,10 @@ export const screen = {
       modal.querySelector('#sSave').addEventListener('click', async () => {
         const v = parseInt(modal.querySelector('#sQty').value, 10);
         if (isNaN(v) || v < 0) { modal.querySelector('#sErr').textContent = $t('Enter a whole number ≥ 0.'); return; }
+        const reason = modal.querySelector('#sReason').value.trim();
+        if (v !== Number(p.onHand || 0) && !reason) { modal.querySelector('#sErr').textContent = $t('Say why the count changed.'); return; }
         try {
-          await api.post('/api/admin/inventory', { productId, onHand: v });
+          await api.post('/api/admin/inventory', { productId, onHand: v, reason });
           await pull();
           await screen.refreshProducts();
           renderList();
@@ -240,7 +244,7 @@ export const screen = {
       const modal = openModal(`
         <div class="form-modal">
           <h3>${$t('Add serials / IMEIs')}</h3>
-          <p class="muted">${esc(p.name)} · ${used} currently in stock</p>
+          <p class="muted">${esc(p.name)} · ${esc($t('{n} in stock', { n: used }))}</p>
           <div class="field"><span>${$t('Serials (one per line)')}</span>
             <textarea id="sList" rows="6" placeholder="${$t('IMEI/SN per line…')}"></textarea>
           </div>

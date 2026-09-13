@@ -5,6 +5,56 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.0] — 2026-09-13
+
+Sprint 1 of the staff-gaps program (owner and admin controls). Plan:
+`docs/superpowers/plans/2026-09-13-staff-gaps-and-uae-program.md`.
+
+### Added
+
+- **The audit log now covers the actions that matter most for loss
+  prevention.** New entries:
+  - stock adjustments, with before, after and a reason
+  - product create and edit, with each changed field before and after
+  - serials added, by number
+  - new staff and admin PIN resets
+  - sign-ins, and the single attempt that trips a lockout. Not every failure,
+    or anyone who knows an address could fill the log.
+  - lockout releases and revoke-all
+  - conflict reviews
+  - supplier creation, and purchase orders created, received and cancelled
+  - customer creation and Drive exports
+  - **refunds, paid out, cash pick-ups, staff expenses and payments on account
+    as they sync**, written in one batch after the push releases its lock
+
+  Staff names are read once per execution rather than for every entry.
+- **The audit screen** groups its filter by Money, Stock, Repairs, People and
+  access, and The business, and shows a readable name for each action. A test
+  fails if the server writes an action the screen has no label for.
+- **Staff edits**: admins can change a person's first name, last name, email
+  and role from Settings → Staff.
+  - An email must be valid and not used by another account.
+  - Changing the email or the role signs the person out everywhere.
+  - An admin can correct their own name but cannot demote or switch off
+    themself.
+- **Stock adjustments ask why.** The count dialog has a reason field, required
+  whenever the number changes.
+
+### Changed
+
+- **The app token is no longer shown.** Settings → Backend is admin-only and
+  the token field is masked and never pre-filled; leaving it blank keeps the
+  saved token. The sign-in screen's Backend prompt no longer pre-fills it
+  either.
+- **Sold Elsewhere is enforced on the server.** A cashier's sale on any channel
+  other than in-store is refused with `unauthorized_role`.
+
+### Fixed
+
+- An admin editing their own record was refused outright ("You cannot
+  deactivate or demote yourself"), even for a name change.
+- The serials dialog's "currently in stock" line was still in English.
+
 ## [1.35.1] — 2026-09-12
 
 The docs catch up with the code, and a review of what staff can and cannot do.

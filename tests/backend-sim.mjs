@@ -3172,6 +3172,7 @@ check('statement carries the changer/cashier',
 
   const chAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
   const chCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const chMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
   const chUsers = req('/api/admin/users/list', {}, { session: chAdm }).data.users;
   const chCashId = chUsers.find((u) => u.email === 'amara@example.com').id;
 
@@ -3179,7 +3180,7 @@ check('statement carries the changer/cashier',
     name: 'Channel Widget', sku: 'CH-1', category: 'CH', costPrice: 4, retailPrice: 20, onHand: 50,
   }, { session: chAdm }).data.id;
 
-  const chSell = (clientTxId, channel, externalRef, qty) => req('/api/sync/push', {
+  const chSell = (clientTxId, channel, externalRef, qty, as) => req('/api/sync/push', {
     deviceId: 'dev-ch',
     batch: [{
       clientTxId, userId: chCashId, grandTotal: 20 * (qty || 1),
@@ -3188,7 +3189,15 @@ check('statement carries the changer/cashier',
       tenders: [{ type: 'transfer', amount: 20 * (qty || 1) }],
       items: [{ productId: chProd, quantity: qty || 1, unitPrice: 20 }],
     }],
-  }, { session: chCash });
+  }, { session: as || chMgr });
+
+  const byCashier = chSell('tx-ch-cash-mkt', 'online', 'site 77', 1, chCash).data.results[0];
+  check('a cashier cannot record a sale made elsewhere (v1.36.0)',
+    byCashier.accepted === false && byCashier.conflicts[0].reason === 'unauthorized_role', JSON.stringify(byCashier));
+  check('and the refused sale moves no stock',
+    req('/api/products', {}, { session: chAdm }).data.find((p) => p.sku === 'CH-1').onHand === 50);
+  check('a cashier counter sale is still fine',
+    chSell('tx-ch-cash-counter', 'in_store', '', 1, chCash).data.results[0].accepted === true);
 
   const before = req('/api/products', {}, { session: chAdm }).data.find((p) => p.sku === 'CH-1').onHand;
 
@@ -3240,7 +3249,7 @@ check('statement carries the changer/cashier',
       createdAt: new Date().toISOString(), channel: 'marketplace', externalRef: 'eBay 99-9',
       tenders: [{ type: 'transfer', amount: 300 }],
       items: [{ productId: chSer, quantity: 1, unitPrice: 300, serialNumber: 'CH-SN-1' }] }],
-  }, { session: chCash });
+  }, { session: chMgr });
   const chSerAfter = req('/api/products', {}, { session: chAdm }).data.find((p) => p.sku === 'CH-PH');
   check('an IMEI sold elsewhere is consumed like any other',
     chSerAfter.onHand === 0 && chSerAfter.serials.length === 0,
@@ -3882,6 +3891,130 @@ check('statement carries the changer/cashier',
   check('with who, why and which till',
     drEntry[0] && /Change for a customer/.test(drEntry[0].summary) && drEntry[0].deviceId === 'till-1',
     JSON.stringify(drEntry[0]));
+}
+{
+  section('audit coverage and staff edits (v1.36.0)');
+
+  const aAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'], deviceId: 'till-audit' }).data.token;
+  const aMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const log = (action) => req('/api/audit', {}, { session: aAdm, params: { action } }).data.entries;
+
+  check('a sign-in is audited with its terminal',
+    log('auth.login').some((e) => e.deviceId === 'till-audit' && e.userName === 'Tariq Al-Sayed'));
+
+  const prod = req('/api/admin/products', {
+    name: 'Audit Cable', sku: 'AUD-1', category: 'AUD', costPrice: 2, retailPrice: 9, onHand: 10, deviceId: 'till-audit',
+  }, { session: aMgr }).data.id;
+  const pc = log('product.create').find((e) => e.targetId === prod);
+  check('product create is audited, by the manager who did it', pc && pc.role === 'manager' && /AUD-1/.test(pc.summary), JSON.stringify(pc));
+
+  req('/api/admin/products/patch', { productId: prod, retailPrice: 12, locked: true }, { session: aMgr });
+  const pu = log('product.update').find((e) => e.targetId === prod);
+  check('product edits are audited with before and after', pu && /retail 9 → 12/.test(pu.summary) && /locked 0 → 1/.test(pu.summary), JSON.stringify(pu));
+
+  req('/api/admin/inventory', { productId: prod, onHand: 7, reason: 'Two damaged, one missing' }, { session: aMgr });
+  const sa = log('stock.adjust').find((e) => e.targetId === prod);
+  check('a stock adjustment is audited with the change and the reason',
+    sa && /10 → 7 \(-3\)/.test(sa.summary) && /Two damaged/.test(sa.summary), JSON.stringify(sa));
+
+  const serProd = req('/api/admin/products', {
+    name: 'Audit Phone', sku: 'AUD-PH', category: 'AUD', costPrice: 100, retailPrice: 200, isSerialized: true,
+  }, { session: aMgr }).data.id;
+  req('/api/admin/serials', { productId: serProd, serialNumbers: ['AUD-SN-1', 'AUD-SN-2'] }, { session: aMgr });
+  const sr = log('serial.add').find((e) => e.targetId === serProd);
+  check('serials added are audited by number', sr && /AUD-SN-1, AUD-SN-2/.test(sr.summary), JSON.stringify(sr));
+
+  const nu = req('/api/admin/users', { firstName: 'Nadia', lastName: 'Audit', email: 'nadia.audit@example.com', role: 'cashier' }, { session: aAdm }).data;
+  check('a new staff account is audited', log('user.create').some((e) => e.targetId === nu.id));
+
+  req('/api/admin/pin', { email: 'nadia.audit@example.com', pin: '246810' }, { session: aAdm });
+  check('an admin PIN reset is audited', log('user.pin_reset').some((e) => e.targetId === nu.id));
+
+  for (let i = 0; i < 5; i++) req('/api/login', { email: 'nadia.audit@example.com', pin: '000000' });
+  req('/api/login', { email: 'nadia.audit@example.com', pin: '000000' });
+  const locks = log('auth.locked').filter((e) => e.targetId === nu.id);
+  check('the attempt that trips a lockout is audited once, not every failure', locks.length === 1, String(locks.length));
+
+  req('/api/admin/unlock', { email: 'nadia.audit@example.com' }, { session: aMgr });
+  check('a lockout release is audited', log('user.unlock').some((e) => /nadia\.audit/.test(e.summary) && e.role === 'manager'));
+
+  req('/api/admin/revoke', { email: 'nadia.audit@example.com' }, { session: aAdm });
+  check('revoke-all is audited', log('session.revoke_all').some((e) => e.targetId === nu.id));
+
+  const sup = req('/api/suppliers', { name: 'Audit Supplies' }, { session: aAdm }).data.id;
+  check('a new supplier is audited', log('supplier.create').some((e) => e.targetId === sup));
+  const po = req('/api/purchase-orders', { supplierId: sup, status: 'ORDERED', lines: [{ productId: prod, quantity: 3, unitCost: 2 }] }, { session: aMgr }).data;
+  check('a purchase order is audited', log('po.create').some((e) => e.targetId === po.id && /PO-/.test(e.summary)));
+  req('/api/purchase-orders/receive', { id: po.id, lines: [{ productId: prod, quantity: 3 }] }, { session: aMgr });
+  check('receiving is audited with the value', log('po.receive').some((e) => e.targetId === po.id && /3 unit/.test(e.summary)));
+  const po2 = req('/api/purchase-orders', { supplierId: sup, lines: [{ productId: prod, quantity: 1, unitCost: 2 }] }, { session: aMgr }).data;
+  req('/api/purchase-orders/cancel', { id: po2.id }, { session: aAdm });
+  check('a cancelled order is audited', log('po.cancel').some((e) => e.targetId === po2.id));
+
+  const cust = req('/api/admin/customers', { name: 'Audit Customer', phone: '0501234567' }, { session: aMgr }).data.customer;
+  check('a new customer is audited', log('customer.create').some((e) => e.targetId === cust.id));
+
+  const exp = req('/api/drive/export', { date: new Date().toISOString().slice(0, 10) }, { session: aMgr }).data;
+  check('a Drive export is audited', log('export.drive').some((e) => e.targetId === exp.fileId));
+
+  const cf = req('/api/conflicts', {}, { session: aMgr }).data.conflicts || [];
+  if (cf.length) {
+    req('/api/conflicts/review', { id: cf[0].id, decision: 'dismiss' }, { session: aMgr });
+    check('a conflict review is audited', log('conflict.review').some((e) => e.targetId === cf[0].id));
+  }
+
+  req('/api/admin/products/patch', { productId: prod, locked: false }, { session: aMgr });
+  const mgrUser = req('/api/admin/users/list', {}, { session: aAdm }).data.users.find((u) => u.email === 'sarah@example.com');
+  req('/api/sync/push', {
+    deviceId: 'till-audit',
+    batch: [
+      { clientTxId: 'tx-aud-sale', userId: mgrUser.id, grandTotal: 12, createdAt: new Date().toISOString(),
+        tenders: [{ type: 'cash', amount: 12 }], items: [{ productId: prod, quantity: 1, unitPrice: 12 }] },
+    ],
+  }, { session: aMgr });
+  req('/api/sync/push', {
+    deviceId: 'till-audit',
+    batch: [
+      { clientTxId: 'tx-aud-rf', kind: 'refund', originalClientTx: 'tx-aud-sale', userId: mgrUser.id, grandTotal: 12,
+        createdAt: new Date().toISOString(), tenders: [{ type: 'cash', amount: 12 }], note: 'faulty',
+        items: [{ productId: prod, quantity: 1, unitPrice: 12 }] },
+      { clientTxId: 'tx-aud-po', kind: 'payout', counterparty: 'Window cleaner', userId: mgrUser.id, grandTotal: 20,
+        createdAt: new Date().toISOString(), tenders: [], note: 'monthly' },
+    ],
+  }, { session: aMgr });
+  const rfA = log('refund').find((e) => /against tx-aud-sale/.test(e.summary));
+  check('a synced refund lands in the audit log', rfA && rfA.deviceId === 'till-audit' && /faulty/.test(rfA.summary), JSON.stringify(rfA));
+  check('a synced paid-out lands in the audit log', log('cash.payout').some((e) => /Window cleaner/.test(e.summary)));
+  check('a plain sale is not audited (the ledger is its record)',
+    !req('/api/audit', {}, { session: aAdm }).data.entries.some((e) => /tx-aud-sale/.test(e.summary) && e.action === 'sale'));
+
+  /* --- staff edits --- */
+  const edit = (payload) => req('/api/admin/users/patch', Object.assign({ id: nu.id }, payload), { session: aAdm });
+  check('a manager cannot edit staff', req('/api/admin/users/patch', { id: nu.id, firstName: 'X' }, { session: aMgr }).status === 403);
+  check('a name can be corrected', edit({ firstName: 'Nadya', lastName: 'Auditor' }).data.changed === true);
+  check('an invalid email is refused', edit({ email: 'not-an-email' }).status === 400);
+  check('an email another account uses is refused', edit({ email: 'sarah@example.com' }).status === 409);
+  check('a blank name is refused', edit({ firstName: '   ' }).status === 400);
+  req('/api/admin/pin', { email: 'nadia.audit@example.com', pin: '135799' }, { session: aAdm });
+  const nTok = req('/api/login', { email: 'nadia.audit@example.com', pin: '135799' }).data.token;
+  check('an email change works', edit({ email: 'Nadia.New@Example.com' }).data.changed === true);
+  check('and signs the person out everywhere', req('/api/products', {}, { session: nTok }).status === 401);
+  check('they sign in with the new address, lower-cased',
+    req('/api/login', { email: 'nadia.new@example.com', pin: '135799' }).ok === true);
+  check('a promotion to manager is applied', edit({ role: 'manager' }).data.changed === true &&
+    req('/api/admin/users/list', {}, { session: aAdm }).data.users.find((u) => u.id === nu.id).role === 'manager');
+  const pe = log('user.patch').filter((e) => e.targetId === nu.id);
+  check('each edit is audited', pe.length >= 3, String(pe.length));
+  check('an unchanged value is not a change', edit({ role: 'manager', firstName: 'Nadya' }).data.changed === false);
+  const adminUser = req('/api/admin/users/list', {}, { session: aAdm }).data.users.find((u) => u.email === 'tariq@example.com');
+  check('an admin cannot demote themself', req('/api/admin/users/patch', { id: adminUser.id, role: 'cashier' }, { session: aAdm }).status === 400);
+  check('or switch themself off', req('/api/admin/users/patch', { id: adminUser.id, active: false }, { session: aAdm }).status === 400);
+  check('but can correct their own name',
+    req('/api/admin/users/patch', { id: adminUser.id, lastName: 'Al-Sayed', role: 'admin' }, { session: aAdm }).ok === true);
+  const nTok2 = req('/api/login', { email: 'nadia.new@example.com', pin: '135799' }).data.token;
+  req('/api/admin/customers', { name: 'Named After Edit' }, { session: nTok2 });
+  check('new audit entries carry the corrected name',
+    log('customer.create').some((e) => /Named After Edit/.test(e.summary) && e.userName === 'Nadya Auditor'));
 }
 {
   section('setup() deploy entry point (v1.35.1)');

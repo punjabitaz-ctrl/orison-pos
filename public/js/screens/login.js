@@ -114,8 +114,10 @@ export const screen = {
       if (url !== null) {
         const cfg = (await idb.get('meta', 'config')) || {};
         cfg.serverUrl = url.trim();
-        const token = window.prompt($t('App token (matches Script Properties APP_TOKEN):'), cfg.appToken || '');
-        if (token !== null) cfg.appToken = token.trim();
+        const token = window.prompt(cfg.appToken
+          ? $t('App token (matches Script Properties APP_TOKEN). A token is saved — leave blank to keep it.')
+          : $t('App token (matches Script Properties APP_TOKEN):'), '');
+        if (token !== null && token.trim()) cfg.appToken = token.trim();
         await idb.put('meta', cfg, 'config');
         screen.render(ctx, root);
       }

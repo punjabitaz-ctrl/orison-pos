@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.35.1** — documentation catch-up, `setup()` deploy entry point, roles & gaps review (`2026-09-12`) |
-| Validation bar | `backend-sim` **PASS 719 / FAIL 0** · client units **PASS 459 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.36.0** — Sprint 1 of the staff-gaps program: audit coverage, token hidden, staff edits, channel gate (`2026-09-13`) |
+| Validation bar | `backend-sim` **PASS 757 / FAIL 0** · client units **PASS 463 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,16 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.36.0** Staff-gaps Sprint 1 (owner/admin controls). Audit coverage for
+  stock adjust (+reason), product create/edit, serials, PIN reset, user
+  create, unlock, revoke-all, conflict review, supplier, PO create/receive/
+  cancel, customer create, Drive export, sign-in and lockout, and synced
+  refunds/cash-outs (`auditPushedMoney_`, one batched append after the lock).
+  `auditRow_` + `auditName_` (per-execution name cache, reset on staff edit).
+  `/api/admin/users/patch` gains first/last name and email. Backend card is
+  admin-only with a masked, never pre-filled token. Server refuses a
+  non-`in_store` sale from a cashier. `tests/client-audit.mjs` ties the audit
+  screen's `ACTION_GROUPS` to every action literal in `Code.gs`. 38 sim checks.
 - **v1.35.1** Documentation catch-up and the deploy step that never existed.
   Every deploy guide said *run `setup`*, but `Code.gs` had no `setup`
   function (not in any commit); seeding only happened on the first request.
@@ -431,7 +441,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **719 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **757 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -551,10 +561,9 @@ is below, in the order it should be picked up.
 2. **Staff permission gaps — see the roles & gaps review, §5 for the order.**
    Verified against the code; nothing here needs an owner decision except where
    marked.
-   - **Controls (small):** audit the unaudited actions (stock adjust first);
-     make Settings → Backend admin-only and mask the `APP_TOKEN`; add the
-     missing *Unlock* button (managers are allowed, there is no UI) and staff
-     role/name/email edits (server supports role already).
+   - ~~**Controls (small):** audit gaps, token exposure, staff edits, channel
+     gate~~ — **done v1.36.0.** The *Unlock* button moves to Sprint 4 with the
+     manager team list.
    - **Manager approval by PIN** for refunds, over-limit discounts, no-sale
      drawer and deposit refunds — so a cashier is not signed out (sign-out
      revokes all their sessions) every time a manager steps in.
