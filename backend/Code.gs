@@ -115,6 +115,8 @@ function dispatch_(action, session, payload, params) {
     case '/api/drawer/open':     return drawerOpen_(session, payload);
     case '/api/approve':         return approve_(session, payload);
     case '/api/warranty':        return warrantyLookup_(session, params);
+    case '/api/marketplace/settings': return marketplaceSettings_(session, payload);
+    case '/api/marketplace/import': return marketplaceImport_(session);
     case '/api/drive/export':    return driveExport_(session, payload, params);
     case '/api/price-history':   return priceHistory_(session, params);
     case '/api/inventory/aging': return inventoryAging_(session);
@@ -3488,7 +3490,282 @@ function agingBuckets_(txRows) {
  *  refunds + payouts down per method, so a manager can see *where* cash lives.
  * ------------------------------------------------------------------ */
 
-var REPORT_DENOM_LABELS = { cash: 'Cash', card: 'Card', transfer: 'Transfer', store_credit: 'Store credit', net30: 'On account', account: 'On account', deposit: 'Deposit applied' };
+/* ------------------------------------------------------------------ *
+ *  Marketplace sync from a Google Sheet (v1.42.0)
+ *
+ *  The shop keeps its marketplace orders in one spreadsheet. An "Orders" tab
+ *  holds one row per line; the POS imports rows whose Status is empty, grouped
+ *  by order reference, as sales on the marketplace channel - through the same
+ *  push path as a till, so stock moves, serials are claimed first-committed-
+ *  wins and a receipt number is issued. Each row gets its Status written back.
+ *  A "Stock" tab is rewritten on every run so listings can follow the shelf.
+ *
+ *  Prices come in as the platform charged them and no POS tax is added: the
+ *  platform collects the tax. Re-importing is harmless - an order's clientTxId
+ *  is derived from its reference, so a second push is ALREADY_SYNCED.
+ * ------------------------------------------------------------------ */
+
+var MARKET_ORDER_HEADERS = ['Order ref', 'Date', 'Channel', 'SKU', 'IMEI / Serial', 'Quantity', 'Unit price', 'Status', 'Note'];
+var MARKET_STOCK_HEADERS = ['SKU', 'Name', 'Available', 'Price', 'Updated'];
+var MARKET_DEVICE = 'marketplace-sheet';
+
+function sheetIdFrom_(v) {
+  var s = String(v || '').trim();
+  var m = s.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]{10,})/);
+  if (m) return m[1];
+  return /^[a-zA-Z0-9_-]{10,}$/.test(s) ? s : '';
+}
+
+function marketplaceBook_() {
+  var id = PropertiesService.getScriptProperties().getProperty('MARKETPLACE_SHEET_ID');
+  if (!id) throw statusError_(409, 'No marketplace sheet is set up');
+  var ss;
+  try { ss = SpreadsheetApp.openById(id); } catch (_) { ss = null; }
+  if (!ss) throw statusError_(404, 'Could not open the marketplace sheet - check the link, and that the account running the POS can edit it');
+  var orders = ss.getSheetByName('Orders');
+  if (!orders) {
+    orders = ss.insertSheet('Orders');
+    orders.getRange(1, 1, 1, MARKET_ORDER_HEADERS.length).setValues([MARKET_ORDER_HEADERS]);
+  }
+  var stock = ss.getSheetByName('Stock');
+  if (!stock) stock = ss.insertSheet('Stock');
+  return { id: id, ss: ss, orders: orders, stock: stock };
+}
+
+function marketplaceLast_() {
+  try { return JSON.parse(String(kv_().marketplace_last || 'null')); } catch (_) { return null; }
+}
+
+function marketplaceSettings_(session, payload) {
+  payload = payload || {};
+  var isAdmin = String(session && session.role) === 'admin';
+  if (payload.sheet != null) {
+    requireRole_(session, ['admin']);
+    var id = sheetIdFrom_(payload.sheet);
+    if (!id) throw statusError_(400, 'Paste the Google Sheets link or its ID');
+    var props = PropertiesService.getScriptProperties();
+    var before = props.getProperty('MARKETPLACE_SHEET_ID');
+    props.setProperty('MARKETPLACE_SHEET_ID', id);
+    try {
+      marketplaceBook_();
+    } catch (e) {
+      if (before) props.setProperty('MARKETPLACE_SHEET_ID', before); else props.deleteProperty('MARKETPLACE_SHEET_ID');
+      throw e;
+    }
+    setKv_('marketplace_user', String(session.uid));
+    logAudit_(session, 'marketplace.settings', 'marketplace', id, 'Marketplace sheet set', payload.deviceId);
+  } else {
+    requireRole_(session, ['admin', 'manager']);
+  }
+  var sheetId = PropertiesService.getScriptProperties().getProperty('MARKETPLACE_SHEET_ID') || '';
+  return {
+    configured: !!sheetId,
+    sheetId: isAdmin ? sheetId : '',
+    url: isAdmin && sheetId ? 'https://docs.google.com/spreadsheets/d/' + sheetId + '/edit' : '',
+    last: marketplaceLast_(),
+    headers: MARKET_ORDER_HEADERS,
+  };
+}
+
+var MARKET_REASONS = {
+  unknown_product: 'SKU not found or inactive',
+  serial_not_found: 'IMEI / serial not found for that SKU',
+  serial_not_in_stock: 'IMEI / serial already sold',
+  product_locked: 'Product is locked',
+  server_busy: 'The POS was busy - it will retry next run',
+  unauthorized_role: 'Not allowed',
+};
+
+function marketplaceImportRun_(session) {
+  var book = marketplaceBook_();
+  var values = book.orders.getDataRange().getValues();
+  if (!values.length) return { imported: 0, errors: 0, already: 0, rows: 0 };
+  var head = values[0].map(function (h) { return String(h || '').trim().toLowerCase(); });
+  var col = {};
+  for (var h = 0; h < MARKET_ORDER_HEADERS.length; h++) col[MARKET_ORDER_HEADERS[h]] = head.indexOf(MARKET_ORDER_HEADERS[h].toLowerCase());
+  if (col['Order ref'] < 0 || col['SKU'] < 0 || col['Unit price'] < 0 || col['Status'] < 0) {
+    throw statusError_(400, 'The Orders tab needs the columns Order ref, SKU, Unit price and Status');
+  }
+  var cell = function (row, name) { return col[name] >= 0 ? row[col[name]] : ''; };
+
+  var groups = [];
+  var byRef = Object.create(null);
+  for (var r = 1; r < values.length; r++) {
+    var row = values[r];
+    var ref = String(cell(row, 'Order ref') || '').trim();
+    if (!ref || String(cell(row, 'Status') || '').trim()) continue;
+    var g = byRef[ref];
+    if (!g) { g = byRef[ref] = { ref: ref, rows: [], lines: [], error: '' }; groups.push(g); }
+    g.rows.push(r);
+    g.lines.push(row);
+  }
+  if (!groups.length) {
+    writeMarketplaceStock_(book);
+    var none = { at: new Date().toISOString(), imported: 0, errors: 0, already: 0, rows: 0 };
+    setKv_('marketplace_last', JSON.stringify(none));
+    return none;
+  }
+
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var bySku = Object.create(null);
+  for (var p = 0; p < prodRows.length; p++) if (String(prodRows[p].active) === '1') bySku[String(prodRows[p].sku).toLowerCase()] = prodRows[p];
+
+  var batch = [];
+  /* units already promised to earlier orders in this run */
+  var taken = Object.create(null);
+  /* orders already in the ledger: re-pushed for an honest "already imported",
+     never re-checked against stock they themselves already took */
+  var seen = Object.create(null);
+  var txAll = readRows_('Transactions', TX_HEADERS);
+  for (var ti = 0; ti < txAll.length; ti++) {
+    if (String(txAll[ti].device_id) === MARKET_DEVICE && String(txAll[ti].status) === 'COMPLETED') seen[String(txAll[ti].client_tx_id)] = true;
+  }
+  for (var gi = 0; gi < groups.length; gi++) {
+    var grp = groups[gi];
+    grp.clientTxId = 'mkt-' + sha256Hex_('marketplace:' + grp.ref).slice(0, 24);
+    var already = !!seen[grp.clientTxId];
+    var items = [];
+    var total = 0;
+    var when = '';
+    var channel = 'marketplace';
+    var wantQty = Object.create(null);
+    for (var li = 0; li < grp.lines.length && !grp.error; li++) {
+      var ln = grp.lines[li];
+      var prod = bySku[String(cell(ln, 'SKU') || '').trim().toLowerCase()];
+      var qty = String(cell(ln, 'Quantity')).trim() === '' ? 1 : Number(cell(ln, 'Quantity'));
+      var price = Number(cell(ln, 'Unit price'));
+      var serial = String(cell(ln, 'IMEI / Serial') || '').trim();
+      if (!prod) { grp.error = 'SKU not found: ' + String(cell(ln, 'SKU')); break; }
+      if (String(prod.item_type) === 'service') { grp.error = 'Services cannot be sold on a marketplace order'; break; }
+      if (!(qty >= 1) || Math.floor(qty) !== qty) { grp.error = 'Quantity must be a whole number of at least 1'; break; }
+      if (!(price >= 0) || String(cell(ln, 'Unit price')).trim() === '') { grp.error = 'Unit price is missing'; break; }
+      if (String(prod.is_serialized) === '1') {
+        if (!serial) { grp.error = prod.name + ' needs an IMEI / serial'; break; }
+        if (qty !== 1) { grp.error = 'One IMEI per row - quantity must be 1'; break; }
+      } else if (!already) {
+        wantQty[String(prod.id)] = (wantQty[String(prod.id)] || 0) + qty;
+        var left = num_(prod.on_hand) - (taken[String(prod.id)] || 0);
+        if (wantQty[String(prod.id)] > left) { grp.error = 'Only ' + Math.max(0, left) + ' of ' + prod.name + ' in stock'; break; }
+      }
+      items.push({ productId: String(prod.id), quantity: qty, unitPrice: round2_(price), serialNumber: serial || null });
+      total += qty * price;
+      var d = cell(ln, 'Date');
+      if (!when && d) {
+        var ms = d instanceof Date ? d.getTime() : Date.parse(String(d));
+        if (!isNaN(ms)) when = new Date(ms).toISOString();
+      }
+      var ch = String(cell(ln, 'Channel') || '').trim().toLowerCase();
+      if (ch === 'online' || ch === 'phone' || ch === 'other' || ch === 'marketplace') channel = ch;
+    }
+    if (grp.error) continue;
+    for (var tk in wantQty) taken[tk] = (taken[tk] || 0) + wantQty[tk];
+    batch.push({
+      clientTxId: grp.clientTxId,
+      userId: String(session.uid),
+      grandTotal: round2_(total),
+      tenders: [{ type: 'marketplace', amount: round2_(total) }],
+      items: items,
+      note: 'Marketplace order ' + grp.ref,
+      createdAt: when || new Date().toISOString(),
+      channel: channel,
+      externalRef: grp.ref,
+    });
+  }
+
+  var byId = Object.create(null);
+  if (batch.length) {
+    var res = syncPush_({ uid: session.uid, role: 'manager' }, { deviceId: MARKET_DEVICE, batch: batch });
+    for (var x = 0; x < res.results.length; x++) byId[res.results[x].clientTxId] = res.results[x];
+  }
+
+  var statusCol = col['Status'] + 1;
+  var noteCol = col['Note'];
+  var summary = { at: new Date().toISOString(), imported: 0, errors: 0, already: 0, rows: 0 };
+  for (var k = 0; k < groups.length; k++) {
+    var gr = groups[k];
+    var status;
+    var note = '';
+    var hit = gr.clientTxId ? byId[gr.clientTxId] : null;
+    if (gr.error) { status = 'Error: ' + gr.error; summary.errors++; }
+    else if (hit && hit.accepted && hit.status === 'ALREADY_SYNCED') { status = 'Already imported'; summary.already++; }
+    else if (hit && hit.accepted) { status = 'Imported ' + (hit.receiptNo || ''); summary.imported++; }
+    else {
+      var reasons = hit ? (hit.conflicts || []).map(function (c) { return MARKET_REASONS[c.reason] || c.reason; }) : ['not processed'];
+      status = 'Error: ' + reasons.join(', ');
+      summary.errors++;
+    }
+    note = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    for (var rr = 0; rr < gr.rows.length; rr++) {
+      book.orders.getRange(gr.rows[rr] + 1, statusCol, 1, 1).setValues([[status]]);
+      if (noteCol >= 0) book.orders.getRange(gr.rows[rr] + 1, noteCol + 1, 1, 1).setValues([[note]]);
+      summary.rows++;
+    }
+  }
+  writeMarketplaceStock_(book);
+  setKv_('marketplace_last', JSON.stringify(summary));
+  logAudit_(session, 'marketplace.import', 'marketplace', book.id,
+    summary.imported + ' order(s) imported, ' + summary.already + ' already imported, ' + summary.errors + ' with errors', MARKET_DEVICE);
+  return summary;
+}
+
+/* What the shop has to sell right now, for the listings. */
+function writeMarketplaceStock_(book) {
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var serialRows = readRows_('Serials', SERIAL_HEADERS);
+  var inStock = Object.create(null);
+  for (var i = 0; i < serialRows.length; i++) {
+    if (String(serialRows[i].status) === 'IN_STOCK') inStock[String(serialRows[i].product_id)] = (inStock[String(serialRows[i].product_id)] || 0) + 1;
+  }
+  var stamp = new Date().toISOString();
+  var out = [MARKET_STOCK_HEADERS];
+  for (var j = 0; j < prodRows.length; j++) {
+    var p = prodRows[j];
+    if (String(p.active) !== '1' || String(p.item_type) === 'service') continue;
+    var avail = String(p.locked) === '1' ? 0 : (String(p.is_serialized) === '1' ? (inStock[String(p.id)] || 0) : Math.max(0, num_(p.on_hand)));
+    out.push([String(p.sku), String(p.name), avail, num_(p.retail_price), stamp]);
+  }
+  var old = book.stock.getLastRow();
+  book.stock.getRange(1, 1, out.length, MARKET_STOCK_HEADERS.length).setValues(out);
+  if (old > out.length) {
+    var blank = [];
+    for (var b = out.length; b < old; b++) blank.push(['', '', '', '', '']);
+    book.stock.getRange(out.length + 1, 1, blank.length, MARKET_STOCK_HEADERS.length).setValues(blank);
+  }
+}
+
+function marketplaceImport_(session) {
+  requireRole_(session, ['admin', 'manager']);
+  return marketplaceImportRun_(session);
+}
+
+/* The hourly trigger. Runs as the admin who set the sheet up. Never throws: a
+   trigger that throws is not run again. */
+function marketplaceImport() {
+  try {
+    var uid = String(kv_().marketplace_user || '');
+    if (!uid || !PropertiesService.getScriptProperties().getProperty('MARKETPLACE_SHEET_ID')) return;
+    var users = readRows_('Users', USER_HEADERS);
+    var who = null;
+    for (var i = 0; i < users.length; i++) if (String(users[i].id) === uid && String(users[i].active) === '1') who = users[i];
+    if (!who) return;
+    marketplaceImportRun_({ uid: uid, role: String(who.role) });
+  } catch (err) {
+    try {
+      setKv_('marketplace_last', JSON.stringify({ at: new Date().toISOString(), failed: String((err && err.message) || err) }));
+    } catch (_) {}
+  }
+}
+
+function installMarketplaceTrigger() {
+  var existing = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < existing.length; i++) {
+    if (existing[i].getHandlerFunction() === 'marketplaceImport') ScriptApp.deleteTrigger(existing[i]);
+  }
+  ScriptApp.newTrigger('marketplaceImport').timeBased().everyHours(1).create();
+  return { installed: true, every: '1 hour' };
+}
+
+var REPORT_DENOM_LABELS = { cash: 'Cash', card: 'Card', transfer: 'Transfer', store_credit: 'Store credit', net30: 'On account', account: 'On account', deposit: 'Deposit applied', marketplace: 'Marketplace' };
 
 /* What the shop is holding for customers right now. A liability is a balance,
  * not a flow, so it is read from the tickets rather than summed over whatever

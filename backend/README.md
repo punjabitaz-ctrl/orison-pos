@@ -74,6 +74,15 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 - `/api/warranty?q=` (any role) takes an IMEI, a serial or a receipt number. It returns the matching sales, newest first, each with its covered lines, `expiresAt`, `daysLeft` and `status` (`active` | `expired` | `refunded`).
 - `/api/repairs` create looks up the device serial and stores `warranty_status`, `warranty_until` and `warranty_receipt` on the ticket.
 
+### Marketplace sync (v1.42.0)
+
+- `/api/marketplace/settings` (set the sheet: admin): `{ sheet }` takes a Google Sheets link or ID. The sheet must open, and the **Orders** tab is created if missing. It is stored in the Script Property `MARKETPLACE_SHEET_ID`, with `Meta.marketplace_user` as the account for scheduled runs. Reading (admin, manager) returns `configured`, `last`, and, for admins, the link.
+- `/api/marketplace/import` (admin, manager) and the `marketplaceImport` trigger (`installMarketplaceTrigger()`, hourly):
+  - imports **Orders** rows with an empty *Status*, one sale per *Order ref*
+  - validates SKU, IMEI and quantity on hand, counting earlier orders in the run
+  - pushes through `syncPush_` as device `marketplace-sheet`, with clientTxId `mkt-<hash of ref>`, tender `marketplace` and no tax added
+  - writes *Status* and *Note* back, rewrites the **Stock** tab, and records `Meta.marketplace_last`
+
 ### Customers and receivables
 
 - `/api/customers` (search) and `/api/admin/customers` (create) are open to any role since v1.38.0. Only a manager or admin can set a credit limit when creating a customer.
@@ -154,6 +163,7 @@ Only `APP_TOKEN` holders can reach the data through the API. Anyone with edit ac
 | `setup()` | First-run seed and permissions. Safe to re-run. |
 | `installBackupTrigger()` | Nightly backup at 02:00. Re-running replaces the trigger. |
 | `installReportTriggers()` | Daily, weekly and monthly report triggers. Re-running replaces them. |
+| `installMarketplaceTrigger()` | Hourly import of marketplace orders from the configured Google Sheet. Re-running replaces it. |
 | `clearLoginLockout(email)` | Release a login lockout from the editor. |
 
 ## Envelope
@@ -178,7 +188,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 886 checks
+npm run test:backend   # 914 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.

@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.41.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.42.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -17,6 +17,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Cash drawer**: opens on a cash sale through a Bluetooth printer. Managers get **Open Drawer** with a reason, and every no-sale open is audited.
 - **Customer display**: a second screen mirrors the cart, totals and change due, and never shows cost, margin or customer records.
 - **Sold Elsewhere**: record an online, marketplace or phone sale so stock and reports stay true.
+- **Marketplace orders from a Google Sheet**: orders listed in the shop's sheet are imported hourly as sales. Stock comes off the shelf, each row gets its status written back, and a Stock tab keeps listings current.
 - **Services are not refundable**, on screen or on the server.
 - **Warranty**: each product carries 1 year (brand-new hardware), 30 days or none. The warranty is fixed at the moment of sale, printed on the receipt with its end date, and checkable by IMEI or receipt number.
 
@@ -89,7 +90,7 @@ See [`backend/README.md`](backend/README.md) for the full guide. In short:
 1. Create an Apps Script project and paste `backend/Code.gs`.
 2. Add Script Properties: `APP_TOKEN` (a long secret), and optionally `SPREADSHEET_ID` / `FOLDER_ID`.
 3. Run `setup` once. It authorizes and seeds users, products and serials. It refuses to re-seed a workbook that already has transactions.
-4. Run `installBackupTrigger()` and `installReportTriggers()` once each. Backups and scheduled reports do not start until you do.
+4. Run `installBackupTrigger()` and `installReportTriggers()` once each. Backups and scheduled reports do not start until you do. If you use a marketplace sheet, also run `installMarketplaceTrigger()`.
 5. Deploy as a **Web App**: Execute as **Me**, access **Anyone**. Copy the `/exec` URL.
 
 ### 2. Point the app at it
@@ -156,7 +157,7 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 ## Development
 
 ```bash
-npm test              # backend logic vs an in-memory Apps Script mock (886 checks)
+npm test              # backend logic vs an in-memory Apps Script mock (914 checks)
 npm run test:client   # client unit tests via node:test + fake-indexeddb (482 checks)
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
 npm run test:pdf      # receipt PDF/share smoke test in a headless browser

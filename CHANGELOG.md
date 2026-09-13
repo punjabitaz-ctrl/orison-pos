@@ -5,6 +5,46 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.42.0] — 2026-09-13
+
+Sprint 2 of the warranty, marketplace and accounting program. Owner decision:
+**marketplace sync is driven by a Google Sheets file**, not a platform API.
+
+### Added
+
+- **Marketplace orders from a Google Sheet.** An admin pastes the sheet's link
+  in Settings → *Marketplace orders* (`/api/marketplace/settings`).
+  - The POS checks it can open the sheet, creates an **Orders** tab with the
+    template headers if it is missing, and remembers the admin as the account
+    that scheduled imports run under.
+  - Template columns: *Order ref · Date · Channel · SKU · IMEI / Serial ·
+    Quantity · Unit price · Status · Note*.
+- **Import** (`/api/marketplace/import`, admin and manager; *Import now* in
+  Settings), plus an hourly trigger installed once with
+  `installMarketplaceTrigger()`.
+  - Rows with an empty Status are grouped by order reference.
+  - Each order is checked before anything moves: the SKU exists (in any
+    case), services are refused, an IMEI is required for serialized stock with
+    one per row, and quantities are whole.
+  - **Quantity must be on hand, counting earlier orders in the same run.**
+  - Each order is pushed as one sale through the same path as a till: stock
+    comes off the shelf, IMEIs are claimed first-committed-wins, and a receipt
+    number is issued.
+  - It records the channel (from the Channel column, default `marketplace`),
+    the order reference, a `marketplace` tender and the platform's price, with
+    **no POS tax added** because the platform collects it.
+  - Every row gets its **Status** written back: *Imported Orison-S…*, *Already
+    imported* or *Error: reason*, plus a timestamp in *Note*.
+  - Re-running is safe. An order's id is derived from its reference, so
+    clearing a Status re-imports as *Already imported*, and that order is never
+    re-checked against the stock it already took.
+- **Stock tab.** Every run rewrites a **Stock** tab with SKU, name, available
+  (0 when locked) and price, so listings can follow the shelf.
+- Imports and sheet changes are audited (`marketplace.import`,
+  `marketplace.settings`). The settings card shows the last run, and a failed
+  scheduled run is recorded rather than thrown.
+- **Marketplace** is a tender name on receipts, in History and in reports.
+
 ## [1.41.0] — 2026-09-13
 
 Sprint 1 of the warranty, marketplace and accounting program. Plan:

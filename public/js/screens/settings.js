@@ -81,6 +81,22 @@ export const screen = {
         <p id="bkMsg" class="muted" role="status"></p>
       </section>` : ''}
 
+      ${(user && (user.role === 'admin' || user.role === 'manager')) ? `
+      <section class="set-card" id="mktCard">
+        <h3>${$t('Marketplace orders')}</h3>
+        <p class="muted">${$t('Orders listed in your Google Sheet are imported as sales: stock comes off the shelf, and each row gets a status. A Stock tab keeps your listings in step.')}</p>
+        ${user.role === 'admin' ? `
+        <div class="field">
+          <span>${$t('Google Sheet link')}</span>
+          <input id="mktSheet" type="url" autocomplete="off" spellcheck="false" placeholder="https://docs.google.com/spreadsheets/d/…">
+        </div>
+        <div class="row"><button class="btn btn-ghost" id="mktSave">${$t('Save sheet')}</button> <a id="mktOpen" class="btn btn-ghost" target="_blank" rel="noopener" hidden>${$t('Open sheet')}</a></div>` : ''}
+        <p class="muted mkt-cols">${$t('Columns in the Orders tab: Order ref · Date · Channel · SKU · IMEI / Serial · Quantity · Unit price · Status · Note')}</p>
+        <div id="mktLast" class="muted"></div>
+        <div class="row"><button class="btn" id="mktRun">${$t('Import now')}</button></div>
+        <p id="mktMsg" class="muted" role="status"></p>
+      </section>` : ''}
+
       <section class="set-card">
         <h3>${$t('Customer display')}</h3>
         <p class="muted">${$t('Mirror the cart on a second screen facing the shopper. Item names, quantities, prices and the amount due only — never cost, margin or customer records.')}</p>
@@ -302,6 +318,48 @@ export const screen = {
           toast($t('Backup failed'), 'warn');
         }
         bkRun.disabled = false;
+      });
+    }
+
+    const mktCard = root.querySelector('#mktCard');
+    if (mktCard) {
+      const last = mktCard.querySelector('#mktLast');
+      const msg = mktCard.querySelector('#mktMsg');
+      const paintLast = (st) => {
+        if (!st || !st.configured) { last.textContent = $t('No sheet set up yet.'); return; }
+        const l = st.last;
+        if (st.sheetId) {
+          const inp = mktCard.querySelector('#mktSheet');
+          if (inp && !inp.value) inp.value = st.url;
+          const open = mktCard.querySelector('#mktOpen');
+          if (open) { open.href = st.url; open.hidden = false; }
+        }
+        if (!l) { last.textContent = $t('Not imported yet.'); return; }
+        if (l.failed) { last.innerHTML = `<span class="tag-bad">${esc($t('Last run failed: {reason}', { reason: l.failed }))}</span>`; return; }
+        last.textContent = $t('Last run {when}: {imported} imported, {already} already in, {errors} with errors', {
+          when: new Date(l.at).toLocaleString(dateLocale()), imported: l.imported, already: l.already, errors: l.errors,
+        });
+      };
+      api.post('/api/marketplace/settings', {}).then(paintLast).catch(() => paintLast(null));
+      mktCard.querySelector('#mktSave')?.addEventListener('click', async () => {
+        msg.textContent = '';
+        try {
+          const st = await api.post('/api/marketplace/settings', { sheet: mktCard.querySelector('#mktSheet').value.trim() });
+          paintLast(st);
+          toast($t('Marketplace sheet saved'), 'ok'); beep('ok');
+        } catch (err) { msg.textContent = (err && err.message) || $t('Could not save'); }
+      });
+      mktCard.querySelector('#mktRun').addEventListener('click', async (ev) => {
+        const btn = ev.currentTarget;
+        btn.disabled = true;
+        msg.textContent = $t('Importing…');
+        try {
+          const res = await api.post('/api/marketplace/import', {}, { timeout: 60000 });
+          msg.textContent = $t('{imported} imported, {already} already in, {errors} with errors — see the Status column', res);
+          if (res.imported) { toast($t('Marketplace orders imported'), 'ok'); beep('ok'); pull().catch(() => {}); }
+          api.post('/api/marketplace/settings', {}).then(paintLast).catch(() => {});
+        } catch (err) { msg.textContent = (err && err.message) || $t('Import failed'); }
+        btn.disabled = false;
       });
     }
 

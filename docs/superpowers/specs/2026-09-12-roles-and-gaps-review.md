@@ -220,7 +220,7 @@ reasons* table and the owner decisions:
 | **Layaway / deposits on sales and special orders** | Open | Repairs hold deposits; a sale cannot. Needs a liability treatment like `deposit`. |
 | **Store credit as an object / gift cards** | Closed — owner: no gift cards | — |
 | **Accounting integration** | Owner: GAAP, no platform — in-app books planned for v1.43.0 | — |
-| **Marketplace API sync** | Owner: sync from a Google Sheets file — planned for v1.42.0 | — |
+| **Marketplace API sync** | ✅ v1.42.0 — imported from a Google Sheets file (owner decision) | — |
 | **D4 Tax jurisdiction and invoice compliance** | ✅ v1.40.0: US and UAE (VAT-inclusive, Tax Invoice with TRN) | Have the invoice wording checked by the shop's tax adviser. |
 
 ## 4. Other missing features noticed during this review

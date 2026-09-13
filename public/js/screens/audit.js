@@ -23,6 +23,8 @@ export const ACTION_GROUPS = [
     { id: 'customer.payment', label: N_('Payments on account') },
     { id: 'drawer.open', label: N_('Drawer opened without a sale') },
     { id: 'export.drive', label: N_('Drive exports') },
+    { id: 'marketplace.import', label: N_('Marketplace imports') },
+    { id: 'marketplace.settings', label: N_('Marketplace sheet changes') },
   ] },
   { label: N_('Stock'), actions: [
     { id: 'stock.adjust', label: N_('Stock adjustments') },

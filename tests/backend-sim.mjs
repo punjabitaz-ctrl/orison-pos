@@ -4477,6 +4477,102 @@ check('statement carries the changer/cashier',
   check('a device we never sold has no warranty record', foreign.warranty === null);
 }
 {
+  section('marketplace sync from a Google Sheet (v1.42.0)');
+
+  const kAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const kMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const kCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  req('/api/admin/store', { taxRate: 8 }, { session: kAdm });
+
+  check('before a sheet is set, an import says so', req('/api/marketplace/import', {}, { session: kMgr }).status === 409);
+  const book = sandbox.SpreadsheetApp.create('Marketplace orders');
+  const url = 'https://docs.google.com/spreadsheets/d/' + book.getId() + '/edit#gid=0';
+  check('a manager cannot set the sheet', req('/api/marketplace/settings', { sheet: url }, { session: kMgr }).status === 403);
+  check('a cashier cannot import', req('/api/marketplace/import', {}, { session: kCash }).status === 403);
+  check('a link that is not a sheet is refused', req('/api/marketplace/settings', { sheet: 'hello' }, { session: kAdm }).status === 400);
+  check('a sheet that cannot be opened is refused, and nothing is saved',
+    req('/api/marketplace/settings', { sheet: 'https://docs.google.com/spreadsheets/d/doesnotexist12345/edit' }, { session: kAdm }).status === 404 &&
+    req('/api/marketplace/settings', {}, { session: kAdm }).data.configured === false);
+  const set = req('/api/marketplace/settings', { sheet: url }, { session: kAdm });
+  check('an admin sets the sheet from its link', set.ok && set.data.configured && set.data.sheetId === book.getId(), JSON.stringify(set));
+  const orders = book.getSheetByName('Orders');
+  check('the Orders tab is created with the template headers',
+    orders && orders.getRange(1, 1, 1, 9).getValues()[0].join('|') === 'Order ref|Date|Channel|SKU|IMEI / Serial|Quantity|Unit price|Status|Note');
+  check('a manager sees whether it is set, but not the link', (() => {
+    const m = req('/api/marketplace/settings', {}, { session: kMgr }).data;
+    return m.configured === true && m.sheetId === '' && m.url === '';
+  })());
+
+  const cableId = req('/api/admin/products', { name: 'Mkt Cable', sku: 'MKT-CBL', category: 'MKT', costPrice: 2, retailPrice: 12, onHand: 5 }, { session: kAdm }).data.id;
+  const phoneId = req('/api/admin/products', { name: 'Mkt Phone', sku: 'MKT-PH', category: 'MKT', costPrice: 150, retailPrice: 300, isSerialized: true }, { session: kAdm }).data.id;
+  req('/api/admin/serials', { productId: phoneId, serialNumbers: ['MKT-IMEI-1', 'MKT-IMEI-2'] }, { session: kAdm });
+
+  const today = new Date().toISOString().slice(0, 10);
+  orders.getRange(2, 1, 7, 9).setValues([
+    ['EBAY-1001', today, 'marketplace', 'MKT-CBL', '', 2, 11.5, '', ''],
+    ['EBAY-1001', today, 'marketplace', 'MKT-PH', 'MKT-IMEI-1', 1, 280, '', ''],
+    ['SITE-77', today, 'online', 'mkt-cbl', '', 1, 12, '', ''],
+    ['EBAY-1002', today, 'marketplace', 'NOPE-SKU', '', 1, 5, '', ''],
+    ['EBAY-1003', today, 'marketplace', 'MKT-PH', '', 1, 290, '', ''],
+    ['EBAY-1004', today, 'marketplace', 'MKT-CBL', '', 9, 10, '', ''],
+    ['EBAY-0999', today, 'marketplace', 'MKT-CBL', '', 1, 10, 'Imported by hand', ''],
+  ]);
+  const run = req('/api/marketplace/import', {}, { session: kMgr });
+  check('a manager runs the import', run.ok === true, JSON.stringify(run));
+  check('two orders imported, three with errors, the hand-marked row left alone',
+    run.data.imported === 2 && run.data.errors === 3 && run.data.rows === 6, JSON.stringify(run.data));
+  const status = (r) => orders.getRange(r, 8, 1, 1).getValues()[0][0];
+  check('both rows of a two-line order are marked with its receipt', /^Imported Orison-S\d{6}$/.test(status(2)) && status(2) === status(3), status(2) + ' / ' + status(3));
+  check('an unknown SKU is explained', status(5) === 'Error: SKU not found: NOPE-SKU', status(5));
+  check('a serialized product without an IMEI is explained', /needs an IMEI/.test(status(6)), status(6));
+  check('more than is in stock is refused, not oversold', status(7) === 'Error: Only 2 of Mkt Cable in stock', status(7));
+  check('a row that already had a status was not touched', status(8) === 'Imported by hand');
+
+  const tx = req('/api/transactions', {}, { session: kAdm, params: { q: 'EBAY-1001' } }).data.transactions[0];
+  check('the order is a marketplace sale with its reference', tx && tx.channel === 'marketplace' && tx.externalRef === 'EBAY-1001', JSON.stringify(tx));
+  check('at the platform price, with no POS tax added (2 × 11.50 + 280 = 303)', tx.grandTotal === 303 && tx.taxAmount === 0, JSON.stringify({ g: tx.grandTotal, t: tx.taxAmount }));
+  check('paid by the marketplace', tx.tenders.length === 1 && tx.tenders[0].type === 'marketplace');
+  const site = req('/api/transactions', {}, { session: kAdm, params: { q: 'SITE-77' } }).data.transactions[0];
+  check('the Channel column is honoured, and SKUs match regardless of case', site && site.channel === 'online');
+
+  const prods = req('/api/products', {}, { session: kAdm }).data;
+  check('stock came off the shelf: 5 − 2 − 1 cables, and the IMEI is sold',
+    prods.find((p) => p.sku === 'MKT-CBL').onHand === 2 && !prods.find((p) => p.sku === 'MKT-PH').serials.includes('MKT-IMEI-1'));
+
+  const stockTab = book.getSheetByName('Stock').getDataRange().getValues();
+  const stockRow = (sku) => stockTab.find((r) => r[0] === sku);
+  check('the Stock tab lists what is left to sell', stockTab[0][0] === 'SKU' && stockRow('MKT-CBL')[2] === 2 && stockRow('MKT-PH')[2] === 1, JSON.stringify(stockTab.slice(0, 3)));
+
+  /* fixing a row and running again */
+  orders.getRange(6, 5, 1, 1).setValues([['MKT-IMEI-2']]);
+  orders.getRange(6, 8, 1, 1).setValues([['']]);
+  orders.getRange(2, 8, 2, 1).setValues([[''], ['']]);
+  const again = req('/api/marketplace/import', {}, { session: kAdm }).data;
+  check('clearing a status re-imports safely: the old order is recognised, the fixed one goes in',
+    again.already === 1 && again.imported === 1 && status(2) === 'Already imported' && /^Imported/.test(status(6)), JSON.stringify(again));
+  check('no second sale was created for the re-run order',
+    req('/api/transactions', {}, { session: kAdm, params: { q: 'EBAY-1001' } }).data.transactions.length === 1);
+  check('an already-sold IMEI on a new order is refused', (() => {
+    orders.getRange(9, 1, 1, 9).setValues([['EBAY-2000', today, '', 'MKT-PH', 'MKT-IMEI-1', 1, 250, '', '']]);
+    req('/api/marketplace/import', {}, { session: kAdm });
+    return /already sold/.test(status(9));
+  })(), status(9));
+
+  req('/api/admin/inventory', { productId: cableId, onHand: 0, reason: 'sold out' }, { session: kAdm });
+  orders.getRange(4, 8, 1, 1).setValues([['']]);
+  req('/api/marketplace/import', {}, { session: kAdm });
+  check('an imported order re-run after stock sells out is still recognised, not refused for stock', status(4) === 'Already imported', status(4));
+  req('/api/admin/inventory', { productId: cableId, onHand: 5, reason: 'restock' }, { session: kAdm });
+  check('imports are audited', req('/api/audit', {}, { session: kAdm, params: { action: 'marketplace.import' } }).data.entries.length >= 3);
+  check('the last run is reported to the settings card', req('/api/marketplace/settings', {}, { session: kMgr }).data.last.imported === 0);
+
+  /* the hourly trigger runs as the admin who set it up */
+  orders.getRange(10, 1, 1, 9).setValues([['EBAY-3000', today, '', 'MKT-CBL', '', 1, 12, '', '']]);
+  sandbox.marketplaceImport();
+  check('the scheduled run imports new rows on its own', /^Imported/.test(status(10)), status(10));
+  req('/api/admin/store', { taxRate: 0 }, { session: kAdm });
+}
+{
   section('setup() deploy entry point (v1.35.1)');
 
   const usersBefore = sandbox.readRows_('Users', sandbox.USER_HEADERS).length;

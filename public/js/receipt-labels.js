@@ -34,6 +34,7 @@ const WORDS = {
   tender_net30: N_('On account'),
   tender_account: N_('On account'),
   tender_deposit: N_('Deposit applied'),
+  tender_marketplace: N_('Marketplace'),
   qty: N_('Qty'),
   price: N_('Price'),
   amount: N_('Amount'),

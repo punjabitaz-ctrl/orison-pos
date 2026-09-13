@@ -7,7 +7,34 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.41.0 — warranties
+## Latest: v1.42.0 — marketplace orders from a Google Sheet
+
+**2026-09-13.** Sprint 2 of 3.
+
+- **Keep marketplace orders in a Google Sheet.** The POS imports them as sales,
+  takes the stock off the shelf and writes each row's status back into the
+  sheet.
+- **It runs every hour**, or on demand from Settings → *Marketplace orders*.
+- **A Stock tab** in the same sheet always shows what is left to sell.
+- Orders that would oversell, have an unknown SKU, or are missing an IMEI are
+  marked with the reason and nothing moves. Fix the row, clear its Status, and
+  the next run picks it up.
+
+**Set up once:** share the sheet with the Google account that runs the POS
+backend, paste its link in Settings, and run `installMarketplaceTrigger()` in
+Apps Script for hourly imports.
+
+**Validation:** backend-sim **PASS 914 / FAIL 0** · client units **PASS 482 /
+FAIL 0**. The settings card was checked in the browser. The tests caught, and
+the release fixes, an oversell across two orders in one run.
+
+### Deploying
+
+**Backend redeploy required.**
+
+---
+
+## v1.41.0 — warranties
 
 **2026-09-13.** Sprint 1 of 3 in the warranty, marketplace and accounting
 program.

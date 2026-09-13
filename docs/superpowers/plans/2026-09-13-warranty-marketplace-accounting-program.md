@@ -44,7 +44,7 @@ Trade-in/buyback and layaway were not answered and stay open.
   *Warranty expired …*.
 - The Repairs screen gets a **Check warranty** lookup.
 
-## Sprint 2 — v1.42.0 · Marketplace sync from a Google Sheet
+## Sprint 2 — v1.42.0 · Marketplace sync from a Google Sheet ✅ shipped
 
 - Admin setting: the sheet's URL or ID. The template tab **Orders** has the
   columns *Order ref · Date · Channel · SKU · IMEI / Serial · Quantity · Unit

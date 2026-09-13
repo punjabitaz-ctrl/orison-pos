@@ -38,6 +38,7 @@ const DEFAULT_LABELS = {
   tender_net30: 'On account',
   tender_account: 'On account',
   tender_deposit: 'Deposit applied',
+  tender_marketplace: 'Marketplace',
   qty: 'Qty',
   price: 'Price',
   amount: 'Amount',

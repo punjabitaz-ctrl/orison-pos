@@ -21,7 +21,7 @@ const STATUS_LABELS = { SYNCED: N_('Synced'), PENDING: N_('Pending'), VOIDED: N_
 const statusLabel = (s) => $t(STATUS_LABELS[s] || N_('Pending'));
 
 /* Tenders from the server may carry only a type. */
-const TENDER_NAMES = { cash: N_('Cash'), card: N_('Card'), transfer: N_('Transfer'), store_credit: N_('Store credit'), net30: N_('On account'), account: N_('On account'), deposit: N_('Deposit applied') };
+const TENDER_NAMES = { cash: N_('Cash'), card: N_('Card'), transfer: N_('Transfer'), store_credit: N_('Store credit'), net30: N_('On account'), account: N_('On account'), deposit: N_('Deposit applied'), marketplace: N_('Marketplace') };
 
 export const screen = {
   id: 'history',

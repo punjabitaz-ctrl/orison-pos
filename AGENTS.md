@@ -81,7 +81,7 @@ node tests/pdf-send-smoke.mjs     # receipt PDF/share — unrunnable on the curr
 npm run test:client               # client unit tests, incl. the translation-catalogue check
 ```
 
-Baseline at v1.41.0: backend-sim **886 / 0**, client **482 / 0**.
+Baseline at v1.42.0: backend-sim **914 / 0**, client **482 / 0**.
 
 - `npm test` == backend sim only. `npm run test:client` runs the pure-Node
   client unit suites via `node:test` + `fake-indexeddb`. `npm run test:all`
