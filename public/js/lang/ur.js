@@ -432,6 +432,7 @@ export default {
   "New PIN must be exactly 6 digits.": "نیا PIN بالکل 6 ہندسوں کا ہونا چاہیے۔",
   "New PO": "نیا خریداری آرڈر",
   "New Sale": "نئی فروخت",
+  "New customer: {name}": "نیا گاہک: {name}",
   "New item": "نیا آئٹم",
   "New price": "نئی قیمت",
   "New purchase order": "نیا خریداری آرڈر",

@@ -15,7 +15,8 @@ Owner's device  ◀──same PWA dashboard──┤  (charts, KPIs, conflicts, 
 
 The Apps Script backend stays the single source of truth. The web app is
 protected by the Google-SSO shield; the backend is additionally gated by the
-shared `APP_TOKEN` (never exposed to end users beyond the one terminal setup).
+shared `APP_TOKEN`, which is entered once per terminal and stays readable on
+that terminal (see the security checklist below).
 
 ---
 
@@ -110,9 +111,15 @@ on the dashboard. What's wired in already:
 - **Daily sales report**: admin/manager export the store day to Drive; each
   **cashier can also pull their own day report** (scoped server-side) from
   the dashboard.
-- **Alerting (optional)**: add a small Apps Script **time-driven trigger** (e.g.
-  every 10 min) that calls `/api/conflicts` in the script and emails the owner
-  when `openConflicts > 0` — cheap, no extra infra.
+- **Scheduled reports** (v1.26.0): after `installReportTriggers()` is run once,
+  an admin sets recipients and switches on daily / weekly / monthly emails in
+  Settings → Scheduled reports. Every cadence ships **off**.
+- **Nightly backups** (v1.24.0): after `installBackupTrigger()` is run once, a
+  copy of the workbook lands in Drive → **POS Backup** at 02:00. Admins see
+  the last result and can back up on demand in Settings → Backups.
+- **Alerting (not built)**: nothing emails on an exception such as an open
+  conflict, a large over/short or low stock. A small time-driven trigger
+  could do it; see the roles and gaps review.
 
 The Google Sheets file itself is also a live read-only ops view for the owner
 (any cell-phone) and follows whoever edits it, in real time, if you want a
@@ -123,6 +130,14 @@ web-accessible status page without app load.
 ## Security checklist before going live
 
 - [ ] `APP_TOKEN` is a long random secret; terminals only have it locally.
+      Be aware it is readable in Settings → Backend on any signed-in
+      terminal, and in the sign-in screen's Backend prompt — treat every
+      terminal as holding it.
+- [ ] `setup`, `installBackupTrigger` and `installReportTriggers` have each
+      been run once from the Apps Script editor, and the seeded PINs were
+      collected from **View → Executions** and changed.
+- [ ] The Google Sheet is shared with nobody who does not need it — a hand
+      edit bypasses every role check and the audit log.
 - [ ] Apps Script **Execute as = Me** (data lives under your account, not the
       anonymous caller's).
 - [ ] Cloudflare Access policy restricted to `@orisonigt.com` (or an IAM list
@@ -147,17 +162,27 @@ web-accessible status page without app load.
 | Add a cashier phone | Google-ns it in Access (or hand out OTP) → open `pos.orisonigt.com` → sign in → add to Home screen → paste backend URL + token once. |
 | Change sync cadence | Settings → *Offline sync window (minutes)* → Save. Default 30. Sales sync instantly when online. |
 | Owner live view | Set cadence to 2–5 min; dashboard reloads on focus/sync. |
-| Weekly sales file | Backend → *Export today → Drive* (store-wide for admin/manager). |
-| Daily numbers & GP | Reports tab → Today/Week/Month/Custom presets → CSV export. |
-| Add a supplier | Purchases tab → *New supplier* (name + optional phone/email/terms). |
-| Order stock | Purchases tab → *New PO* → lines with quantities + unit costs → Save draft / Place order. |
-| Receive a delivery | Purchases tab → order → *Receive* → enter what arrived (serials for serialized lines); stock and weighted cost update on post. |
-| See why a price changed | Products → 📈 on any item (admin/manager) — every cost/retail edit and each PO-receipt cost update with who, when, and the order. |
-| Send a customer their statement | Customers → ledger → *Statement* (admin/manager) — chronological debit/credit lines with running balance, printable and exportable as CSV. |
-| See what's sat in stock too long | Products → *Aging* (admin/manager) — 0–30 / 31–60 / 61–90 / 90+ day buckets with units and value at cost, oldest stock first. |
-| Refund a sale | History (admin/manager) → the sale → *Refund items*. Cashiers cannot refund. |
-| See conflicts | Home → amber banner → Review → Keep winner / Dismiss. |
-| Bulk recall/restock | Apps Script `setup` re-seed (writes a backup CSV of transactions to Drive first). |
+| Today's sales file | Dashboard → *Export today → Drive* (store-wide for admin/manager, own rows for a cashier). |
+| Daily numbers & GP | Reports → Today/Week/Month/Custom presets → CSV export (admin/manager). |
+| Reports by email | Settings → *Scheduled reports* (admin) — recipients + daily/weekly/monthly switches. Needs `installReportTriggers()` run once. |
+| Add a supplier | Purchases → Suppliers → *Add supplier* (**admin only** since v1.23.0). |
+| Order stock | Purchases → *New PO* → lines with quantities + unit costs → Save draft / Place order (admin/manager). Cancelling a PO is admin only. |
+| Receive a delivery | Purchases → order → *Receive* → enter what arrived (serials for serialized lines); stock and weighted cost update on post. |
+| Reprice / count stock | Products → Tools → *Bulk price* or *Stock take* (**admin only**). |
+| See why a price changed | Products → 📈 on any item (admin/manager). |
+| Send a customer their statement | Customers → ledger → *Statement* (admin/manager). |
+| See what's sat in stock too long | Products → *Aging* (admin/manager). |
+| Refund a sale | History (admin/manager) → the sale → *Refund items*. Cashiers cannot refund; **services are never refundable**. |
+| Book in a repair | Menu → *Repairs* → *Book in a repair* (any role) — device, fault, condition, optional deposit. Parts, labour, status and collection from the ticket. Giving a deposit back is admin/manager; voiding a ticket is admin. |
+| Record an online / marketplace sale | Menu → *Sold Elsewhere* (admin/manager) — channel + order reference; stock moves like any sale. |
+| Open the drawer without a sale | Menu → *Open Drawer* (admin/manager) — reason required, written to the audit log. Needs a Bluetooth receipt printer with the drawer attached. |
+| Set up a printer | Settings → *Printer & cash drawer* on each terminal — receipt printer (print dialog), standard printer, or Bluetooth (Chrome/Edge, not iPhone/iPad). Print a test receipt and test the drawer. |
+| Change the language | Sign-in screen, or Settings → *Language* per terminal (English / العربية / اردو). Receipts follow the store's language (Settings → Store, admin). |
+| Add staff / reset a PIN / switch someone off | Settings → *Staff* (admin). Changing an existing person's role, name or email has no button yet — see the roles and gaps review. |
+| Lost or stolen terminal | Settings → *Security* (admin) → list the person's terminals → revoke the one that is gone, or revoke all. |
+| Who did what | Menu → *Audit Log* (admin) — filter by action, export CSV. |
+| See conflicts | Dashboard → amber banner → Review → Keep winner / Dismiss (admin/manager). |
+| Restore from a backup | Drive → **POS Backup** → pick the copy → set its id as `SPREADSHEET_ID` in Script Properties. Terminals must sync again; anything sold after the copy was taken is not in it. |
 
 ## Costs (monthly)
 

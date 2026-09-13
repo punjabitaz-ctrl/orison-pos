@@ -1,105 +1,149 @@
 # Backend — Google Apps Script
 
-`Code.gs` is the entire backend: a Web App that fronts a **Google Sheet** for data and **Google Drive** for the sales export. No VM, no runtime cost, no database to run.
-
-## What it provides
-
-- `POST /exec` bridge — every endpoint is an `action` string in the JSON body (see envelope below).
-- Auth: shared `APP_TOKEN` + per-login HMAC session token (12 h), per-user + per-device revocation, login lockout, offline credentials for terminals, admin/manager role gates on every money and admin route (payouts, collections, and refunds are admin/manager-only).
-- Seed: 4 users (admin/manager/cashier/cashier), 42 products, serialized IMEI stock, store config, one supplier, transactions tab, watermark.
-- Sync: pull (`products`, `users`, `store`, `watermark`, `openConflicts`) and First-Committed-Wins push that rejects duplicate serials (loser → `VOIDED`), under `LockService`. Re-pushes of an already-recorded transaction are idempotent (`ALREADY_SYNCED`).
-- **Conflict registry**: when two devices disagree, a row is recorded in the `Conflicts` tab and surfaced via `/api/conflicts` (admin/manager) and in every sync pull as `openConflicts`. Types: `SERIAL_CLAIM` (same IMEI sold by two devices), `DUPLICATE_CLIENT` (same terminal+purchase pushed twice with different contents), `CLOCK_SKEW` (device clock far outside range — sale accepted but flagged). Admin/manager review them with `/api/conflicts/review` (`dismiss` | `resolve`).
-- **Customers & receivables**: accounts, net-30 terms, per-customer ledger, collections (`kind: payment`), and 30/60/90+ day aging buckets via `/api/customers/ledger` and `/api/customers/receivables`.
-- **Customer statements** (`/api/customers/statement`, admin/manager): the
-  customer's whole book as a chronological debit/credit statement — sales
-  charged on account debit, store-credit refunds and collections credit —
-  with a running balance that closes exactly on the ledger balance. Each line
-  names the cashier and reference for disputes.
-- **Inventory aging** (`/api/inventory/aging`, admin/manager): how long stock
-  has been sitting — a product's clock starts at creation and re-sets on every
-  PO receipt (the receipt's own `PriceHistory` timestamp). Bucketed
-  0-30 / 31-60 / 61-90 / 90+ days with units and value-at-cost per bucket,
-  oldest first. Serialized stock counts `IN_STOCK` serials, matching the
-  product DTO.
-- **Till shifts**: `/api/shifts/open` (any role) and `/api/shifts/close` with denomination count → *declared / expected / over-or-short*, scoped per user with `kind`-aware cash math (sales + cash collections − cash refunds − payouts). `/api/shifts` returns the store-wide roster to managers/admins only — a cashier always gets their own rows (v1.14.0 closed a `?status=all` escape hatch that handed anyone every till reconciliation).
-- **Time clock** (v1.14.0): `/api/timeclock/punch` toggles the **caller's own** clock — one OPEN entry per account, closed in place with the elapsed minutes; nobody can punch for somebody else, so an entry is always evidence about the account that made it. `/api/timeclock` lists punches: a cashier sees only their own (a `userId` param is ignored for them), managers/admins see the roster and may filter it, plus an `onFloor` count.
-- **Store localisation** (v1.16.0): `getStore_()` carries `locale` (BCP-47),
-  `country` (ISO-3166), `currency` (ISO-4217), `denoms` (the cash ladder,
-  largest first) and `configured` — false until an admin has saved a locale and
-  currency, which is what the client's first-run setup dialog keys off.
-  `/api/admin/store` (**admin only**) validates and writes any subset of
-  `taxRate`, `tzOffsetMin`, `locale`, `country`, `currency`, `denoms`; every
-  field is optional and only written when sent (it used to reset the sales tax
-  on any call). Changing `currency` without an explicit ladder adopts that
-  currency's default notes, because a ladder left from the previous currency
-  would count the drawer wrong. `/api/config` returns the currency catalogue
-  the setup dialog offers, so the client cannot present a currency the server
-  rejects. `shiftDenomsValue_` values a counted drawer against the store's own
-  ladder in integer cents, and ignores a quantity sent for a denomination the
-  store does not hold.
-- **Reorder worksheet** (`/api/inventory/reorder`, admin/manager): units sold
-  over a window (refunds give units back), demand per day, days of cover, and a
-  suggested quantity that tops each shelf up to a target cover but never below
-  its reorder point — priced at the last cost that actually delivered and
-  tagged with the supplier and PO that did. Read-only: nothing is ordered.
-- **Bulk price update** (`/api/admin/products/bulk-price`, admin/manager): the
-  client sends a *rule* (scope, field, mode `pct`/`delta`/`set`, value, optional
-  rounding step), never prices. The server reads each product under the script
-  lock and computes the new value itself, so a stale catalog on a terminal can
-  never write a price nobody chose. `preview: true` returns the same change
-  list without writing; applied changes are recorded in `PriceHistory` with
-  source `bulk`.
-- **Stock take** (`/api/admin/stock-take`, admin/manager): a count sheet becomes
-  the truth. Read and write happen inside one lock so the variance is measured
-  against the value actually being overwritten; every line — variance or not —
-  is recorded to `StockTakes` with expected, counted, variance, unit cost and
-  value-at-cost. Serialized stock and services are refused (serials are counted
-  by scanning), and one bad line rolls back the whole count.
-- **Reports**: `/api/reports` (manager/admin) — gross sales, refunds, payouts, collections, net revenue, GP, by day / category / cashier / tender, top products and customers, over a date window.
-- **Suppliers & purchase orders**: `/api/suppliers`, `/api/purchase-orders` (draft → ordered → partial/received → cancelled), `/detail`, `/receive` (posts stock with weighted-average cost, per-unit serial intake, and a `purchase` ledger row that never touches drawer math), `/cancel`.
-- **Price history** (`/api/price-history`, admin/manager): per-product audit of every cost/retail change — a `create` baseline when a product is added, a `patch` row when Item settings edit a value (no-op saves stay quiet), and a `po` row when receiving blends cost by weighted average (tagged with the PO number). Written atomically beside the product update, inside the same script lock.
-- Admin: create products/users/customers, add serials, inventory adjust, PIN reset/unlock, revoke devices, store config.
-- **Drive export** (`/api/drive/export`): admin/manager export the whole store's day to Drive with a SALES / REFUNDS / PAID OUT / COLLECTIONS / NET CASH summary (purchase receipts appear as detail rows but never inflate SALES); cashiers export their own day (rows scoped server-side to their user id, distinct filename).
-
-## Tab layout in the Sheet
-
-| Tab | Purpose |
-| --- | --- |
-| `Meta` | key/value store — holds `store_*` settings incl. `store_locale`, `store_country`, `store_currency`, `store_denoms` (JSON), `store_tax_rate`, `store_tz_offset` — **header row required** (the API writes a header so the first row isn't misread) |
-| `Users` | id, firstName, lastName, email, pinHash (+pinSalt), role, active |
-| `Products` | id, sku, name, category, retailPrice, unitCost, qty, isSerialized, serials (JSON), createdBy, createdAt |
-| `Serials` | id/lot#, serial, productId, status (AVAILABLE/SOLD/VOIDED), createdAt |
-| `Transactions` | the transaction ledger (kind sale/refund/payout/payment/purchase); header row written at seed time |
-| `Conflicts` | multi-device disagreements (type, serial, losing client id, winning tx, summary, status OPEN/RESOLVED/DISMISSED, reviewedBy/at) |
-| `Devices` | per-terminal rows (id, user, deviceId, first/last seen, revoked) backing per-device revocation |
-| `Customers` | id, storeId, name, phone, email, note, createdAt |
-| `Shifts` | id, userId, openedAt/closedAt, openingFloat, cashExpected, cashDeclared, overShort, tendersJson (denomination count), status |
-| `Suppliers` | id, storeId, name, phone, email, address, paymentTerms, active, createdAt |
-| `PurchaseOrders` | id, storeId, supplierId, poNumber, orderDate, expectedDate, status, itemsJson, receivedJson, subtotal, discountPct, taxAmount, total, note, createdBy |
-| `StockTakes` | id, storeId, sessionId, productId, productName, sku, expected, counted, variance, unitCost, valueDelta, countedBy, note, createdAt |
-| `TimeClock` | id, storeId, userId, deviceId, clockIn, clockOut, minutes, note, status (OPEN/CLOSED) |
-| `PriceHistory` | id, storeId, productId, productName, field (cost_price/retail_price), oldValue, newValue, source (create/patch/po), poId, changedBy, createdAt |
-
-Only `APP_TOKEN` knows which sheet is the "backend" — keep it secret.
+`Code.gs` is the entire backend: a Web App that fronts a **Google Sheet** for data and **Google Drive** for exports and backups. No VM, no runtime cost, no database to run.
 
 ## Deploy (once)
 
-1. **New Apps Script project** → paste `backend/Code.gs` → save `Code.gs`.
+1. **New Apps Script project** at script.google.com → paste all of `backend/Code.gs` → save.
 2. **Project Settings → Script Properties**:
-   - `APP_TOKEN` — long random secret (e.g. `openssl rand -hex 32`). The app asks for this at first-run setup.
-   - optional `SPREADSHEET_ID` — if omitted, a new spreadsheet named "Orison POS" is created on first seed.
-   - optional `FOLDER_ID` — Drive folder for CSV exports (defaults to a folder named "Orison POS Export").
-3. **Run `setup`** from the Apps Script editor (first execution approves the `ScriptApp`, `SpreadsheetApp` and `DriveApp` scopes). This seeds the sheet.
-4. **Deploy → New deployment → Web app**:
-   - Execute as: **Me**
-   - Who has access: **Anyone** (the `APP_TOKEN` is the actual gate)
-5. Copy the **Web app URL** (`…/script.google.com/macros/s/xxxx/exec`).
+   - `APP_TOKEN` — a long random secret (e.g. `openssl rand -hex 32`). The app asks for it at first launch.
+   - optional `SPREADSHEET_ID` — if omitted, a spreadsheet named "Orison POS" is created and its id stored here.
+   - optional `FOLDER_ID` — the Drive folder for daily exports (defaults to "Orison POS Export").
+3. **Select `setup` and Run.** The first run asks you to approve the script's Google permissions: Sheets, Drive, triggers and mail. It then creates the workbook and seeds the starter accounts and catalog. Open **View → Executions**, open that run, and copy the **one-time 6-digit PIN printed for each starter account**. They are never shown again. `setup` is safe to run again: a seeded workbook is left alone, and a workbook with sales in it is refused.
+4. **Run `installBackupTrigger`** once. Nightly backups start at 02:00.
+5. **Run `installReportTriggers`** once. Daily, weekly and monthly reports are then *able* to run. Each cadence stays **off** until an admin switches it on in Settings → Scheduled reports.
+6. **Deploy → New deployment → Web app**: Execute as **Me**, Who has access **Anyone** (the `APP_TOKEN` is the real gate). Copy the **`/exec` URL**.
 
-Then paste that URL + the `APP_TOKEN` into the app (**Backend** on the login screen, or Settings).
+Then paste that URL and the `APP_TOKEN` into the app (**Backend** on the sign-in screen).
+
+**Updating.** Paste the new `Code.gs`, then **Deploy → Manage deployments → Edit → Version: New version**. An old version keeps serving until you do. Deploy the backend **before** pushing a new front end.
+
+## What it provides
+
+Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). Roles are checked server-side by `requireRole_`; the full who-can-do-what table is in [`../docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](../docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
+
+### Auth, staff and terminals
+
+- **Auth:**
+  - shared `APP_TOKEN` plus a per-login HMAC session token (12 h)
+  - per-user and per-device revocation
+  - login lockout
+  - offline credentials for terminals
+- `/api/login`, `/api/logout`, `/api/pin` (own PIN).
+- `/api/admin/unlock` (admin, manager).
+- `/api/admin/pin`, `/api/admin/revoke`, `/api/admin/devices`, `/api/admin/revoke-device` (admin).
+- `/api/admin/users`, `/users/list`, `/users/patch` (admin). Create staff, list them, and change `role` or `active`. A role change or deactivation revokes that person's sessions.
+- `/api/config` returns the store, currencies and, to managers and admins only, the staff roster.
+
+### Selling and sync
+
+- **Sync:** `/api/sync/pull` (products, users, store, watermark, `openConflicts`) and `/api/sync/push`. Push is First-Committed-Wins under `LockService`: a duplicate serial is rejected and the losing sale is marked `VOIDED`. A re-push of an already-recorded transaction is idempotent.
+- **Transaction kinds:**
+  - `sale`
+  - `refund`, `payout`, `pickup`, `expense`, `payment`: admin and manager only. Refused per row with `unauthorized_role`.
+  - `purchase`: written by PO receiving; never counted as a sale.
+  - `deposit` and `deposit_refund`: **server-only**. A device can neither push them nor tender `deposit`.
+- **Refunds** are validated against the original sale and earlier refunds. **Any service line is refused whole** (`service_not_refundable`, v1.33.0).
+- **Tenders:** cash, card, store credit, Net-30 (on account). Card is recorded, and excluded from the expected drawer.
+- **Receipt numbers** (v1.22.0): `Orison-S000001`, gap-free. The number is allocated at push, inside the lock that appends the sale, and only for sales and refunds. The prefix is `Meta` `receipt_prefix`.
+- **Channels** (v1.27.0): `channel` (`in_store`, `online`, `marketplace`, `phone`, `other`) and `external_ref` on every transaction. Reports carry `byChannel`.
+- **Conflict registry:** `SERIAL_CLAIM`, `DUPLICATE_CLIENT` and `CLOCK_SKEW` rows in `Conflicts`, via `/api/conflicts` and `/api/conflicts/review` (`dismiss` | `resolve`), admin and manager.
+- **History:** `/api/transactions`, capped at 100 rows with keyset paging (`cursor`) and server-side search (`q`: receipt number, client id, customer, item, IMEI, amount). A cashier gets their own rows.
+- **Cash drawer** (v1.34.0): `/api/drawer/open` (admin, manager) records a no-sale open with its reason and terminal in the audit log.
+
+### Repairs (v1.31.0–v1.32.0)
+
+- `/api/repairs`: create a ticket (`Orison-R000001`), or list them (paged 100, search, status filter).
+- `/api/repairs/detail`.
+- `/api/repairs/parts`: fit a part (stock moves when fitted) or return one.
+- `/api/repairs/labour`.
+- `/api/repairs/status`: `intake → diagnosed → awaiting_parts → in_progress → ready → collected`, or `unrepairable` / `cancelled`. Closing without collection returns every fitted part to stock.
+- `/api/repairs/deposit`: taken at intake; held as a liability, not revenue.
+- `/api/repairs/collect`: writes the sale directly, applies the deposit, and moves no stock.
+- All of the above are open to every role.
+- `/api/repairs/deposit-refund` (admin, manager). `/api/repairs/void` (admin only, for a ticket that should never have existed).
+- Every repair action is audited.
+
+### Customers and receivables
+
+- `/api/customers` (search, any role) and `/api/admin/customers` (create, admin and manager).
+- `/api/customers/ledger`, `/api/customers/receivables` (30/60/90+ aging) and `/api/customers/statement` (chronological debit and credit lines, with a running balance that closes on the ledger balance). All three are admin and manager.
+
+### Shifts and time clock
+
+- `/api/shifts/open` and `/api/shifts/close` are own-shift only, for any role. Close takes a denomination count and returns *declared / expected / over-or-short*.
+  - Expected cash is the cash side of every movement on that shift: sales, collections and repair deposits in; refunds, paid out, pick ups, staff expenses and deposits given back out. Card is excluded.
+  - `/api/shifts` returns the store-wide roster to managers and admins; a cashier gets their own.
+- `/api/timeclock/punch` toggles the caller's own clock; offline punches carry the moment they happened. `/api/timeclock` gives a cashier their own punches, and managers and admins the roster and an `onFloor` count.
+
+### Stock
+
+- `/api/products` and the pull snapshot. Cost prices go to managers and admins only.
+- `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` (admin, manager): create, edit, add serials, adjust counted stock.
+- **Suppliers** `/api/suppliers` (admin). **Purchase orders** `/api/purchase-orders`, `/detail`, `/receive` (admin, manager): receiving posts weighted-average cost, serials unit by unit, and a `purchase` ledger row. `/cancel` is admin only.
+- **Price history** `/api/price-history` (admin, manager): sources `create`, `patch`, `po` and `bulk`.
+- **Inventory aging** `/api/inventory/aging` and **reorder worksheet** `/api/inventory/reorder` (admin, manager).
+- **Bulk price update** `/api/admin/products/bulk-price` (admin). The client sends a rule, never prices. `preview: true` writes nothing.
+- **Stock take** `/api/admin/stock-take` (admin). Read and write happen in one lock, every line is recorded, and one bad line rolls back the count.
+
+### Reports, exports and the business
+
+- **Reports** `/api/reports` (admin, manager):
+  - summary: gross sales, refunds, paid out, pick ups, expenses, collections, deposits in / applied / refunded, net revenue, tax, gross profit at the cost captured at sale
+  - breakdowns by day, category, cashier, tender and channel
+  - top products and top customers
+- **Drive export** `/api/drive/export`:
+  - admins and managers export the store's day, with a summary block: SALES, TAX COLLECTED, REFUNDS, PAID OUT, CASH PICK-UP, STAFF EXPENSE, COLLECTIONS, DEPOSITS IN / APPLIED / REFUNDED, CARD, CASH IN DRAWER, NET CASH
+  - cashiers export their own rows
+- **Scheduled reports** `/api/reports/schedule` (admin): recipients and per-cadence switches.
+  - Triggers: `reportDaily` 06:00, `reportWeekly` 07:00, `reportMonthly` 08:00 every 30 days.
+  - Each covers the period that just closed. **Monthly is a rolling 30 days, not a calendar month.**
+- **Backups** `/api/backup/status` and `/api/backup/run` (admin).
+  - The `backupDaily` trigger writes a date-and-time-stamped copy of the workbook to the Drive folder **POS Backup**.
+  - It keeps the last 30 daily copies and the first of each of the last 12 months.
+  - A failure is recorded, never thrown.
+- **Audit log** `/api/audit` (admin): append-only, 100 per page, filter by actor, action and date. There is no update or delete path.
+  - Records: store settings, bulk repricing, stock takes, staff role and active changes, terminal revokes, repairs, drawer opens, backups and reports.
+  - Not yet: see the review linked above, §2 Admin #1.
+- **Store settings** `/api/admin/store` (admin): any subset of `taxRate`, `tzOffsetMin`, `locale`, `country`, `currency`, `denoms`. Only fields that are sent are written. Changing currency without a ladder adopts that currency's notes and coins. The store `locale` also picks the receipt and customer-display language (en, ar, ur).
+
+## Tab layout in the Sheet
+
+Tabs are created, and new columns added, on first use; nothing needs creating by hand.
+
+| Tab | Columns |
+| --- | --- |
+| `Meta` | `key`, `value` — store settings (`store_*`, incl. locale, country, currency, denoms, tax rate, tz offset), counters (`receipt_seq`, `repair_seq`), prefixes, report schedule |
+| `Users` | id, store_id, first_name, last_name, email, pin_salt, pin_hash, role, active, created_at |
+| `Devices` | id, user_id, device_id, first_seen, last_seen, revoked |
+| `Products` | id, sku, upc, name, category, cost_price, retail_price, is_serialized, on_hand, item_type (`product`/`service`), locked, reorder_point, last_sold_at, active, updated_at, taxable |
+| `Serials` | id, product_id, serial_number, status (`IN_STOCK`/`SOLD`/`VOIDED`), tx_id, updated_at |
+| `Transactions` | id, store_id, user_id, device_id, client_tx_id, kind, original_client_tx, counterparty, grand_total, status, tenders_json, items_json, note, created_at, subtotal, tax_amount, discount_pct, customer_id, receipt_no, channel, external_ref |
+| `Customers` | id, store_id, name, phone, email, note, created_at |
+| `Shifts` | id, store_id, user_id, device_id, opened_at, closed_at, opening_float, cash_expected, cash_declared, over_short, tenders_json, note, status |
+| `TimeClock` | id, store_id, user_id, device_id, clock_in, clock_out, minutes, note, status |
+| `Conflicts` | id, store_id, type, serial_number, device_id, loser_client_tx, winner_tx_id, summary, status, created_at, reviewed_at, reviewed_by, dedupe_key |
+| `Suppliers` | id, store_id, name, phone, email, address, payment_terms, active, created_at |
+| `PurchaseOrders` | id, store_id, supplier_id, po_number, order_date, expected_date, status, items_json, received_json, subtotal, discount_pct, tax_amount, total, note, created_by, created_at, updated_at |
+| `PriceHistory` | id, store_id, product_id, product_name, field, old_value, new_value, source, po_id, changed_by, created_at |
+| `StockTakes` | id, store_id, session_id, product_id, product_name, sku, expected, counted, variance, unit_cost, value_delta, counted_by, note, created_at |
+| `Repairs` | id, store_id, ticket_no, customer_id, customer_name, customer_phone, device_make, device_model, device_serial, reported_fault, condition_note, accessories, status, parts_json, labour_json, estimate_total, deposit_total, final_total, assigned_to, note, created_by, created_at, updated_at, promised_at, closed_at, invoice_tx_id |
+| `AuditLog` | id, store_id, at, user_id, user_name, role, action, target_type, target_id, summary, device_id |
+
+Only `APP_TOKEN` holders can reach the data through the API. Anyone with edit access to the Sheet can change it directly, and that leaves no audit entry, so keep Sheet sharing tight.
+
+## Editor functions
+
+| Function | Purpose |
+| --- | --- |
+| `setup()` | First-run seed and permissions. Safe to re-run. |
+| `installBackupTrigger()` | Nightly backup at 02:00. Re-running replaces the trigger. |
+| `installReportTriggers()` | Daily, weekly and monthly report triggers. Re-running replaces them. |
+| `clearLoginLockout(email)` | Release a login lockout from the editor. |
 
 ## Envelope
 
-Every call is an HTTP `POST` to the `/exec` URL with `Content-Type: text/plain;charset=utf-8` (avoids CORS preflight) and a JSON body:
+Every call is an HTTP `POST` to the `/exec` URL with `Content-Type: text/plain;charset=utf-8` (this avoids a CORS preflight) and a JSON body:
 
 ```json
 {
@@ -116,21 +160,26 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 
 ## Testing
 
-`Code.gs` is exercised locally by `tests/backend-sim.mjs` — an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`) running `Code.gs` through `node:vm`. No network or Google account needed:
+`tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 359 cases: auth, throttle, FCW, refunds, payouts, shifts,
-                       # customers/aging, reports, purchase orders, exports
+npm run test:backend   # 719 checks
 ```
 
-Directories on the server (e.g. `/api/sync/push`) map to `action` strings in the Scripts — the Files want `doPost` to route on the same strings so the web/browser transport and mock transport match exactly.
+The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.
 
-## Re-seed / reset
+## Starting over
 
-Run `setup` again in the Apps Script editor to wipe all tabs and write a fresh seed. (The old transactions sheet is cleared too — a backup CSV is left in Drive.)
+There is no reset function, by design.
+
+- A workbook that holds sales is refused unless the `CONFIRM_RESEED` Script Property is `yes`.
+- To start clean:
+  1. Clear `SPREADSHEET_ID` and delete the `SEEDED` property, so a new workbook is created.
+  2. Run `setup` again.
+  3. The old workbook stays in Drive untouched. The nightly backups are separate copies.
 
 ## Caveats
 
-- `SpreadsheetApp` + `LockService` are single-instance; fine for one or a few stores.
-- Serialized sale of a serial another device already sold → the whole transaction is rejected on the server and marked `VOIDED` on the losing device (client handles the conflict).
-- Watch out for Apps Script quotas (6-min execution, daily triggers); a busy single store is well under them.
+- `SpreadsheetApp` and `LockService` are single-instance: fine for one store or a few.
+- Watch the Apps Script quotas (6-minute execution, daily trigger and mail limits). A busy single store is well under them.
+- Sheet edits made by hand bypass every role check and the audit log.

@@ -1258,6 +1258,22 @@ var SEED_PRODUCTS = [
   { sku: 'SRV-SCREEN', upc: '', name: 'Screen Replacement - Labor', category: 'Services', retail: 89, qty: 0, service: 1 },
 ];
 
+/* The deploy step. Run it once from the Apps Script editor after pasting this
+ * file: the first run approves the script's Google permissions, creates the
+ * workbook and seeds the starter accounts, and their one-time PINs appear in
+ * this run's log. Safe to run again - a seeded workbook is left alone and one
+ * with sales in it is refused. Every request also seeds on its own, so this
+ * exists to make the first run deliberate and its PINs easy to find. */
+function setup() {
+  SEED_CREDENTIALS = [];
+  ensureSeed_();
+  var fresh = SEED_CREDENTIALS.length > 0;
+  var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID') || '';
+  Logger.log('[orison-pos] workbook ready: ' + id +
+             (fresh ? '' : ' - already seeded, no new PINs issued'));
+  return { spreadsheetId: id, seeded: fresh };
+}
+
 function ensureSeed_() {
   // Cheap gate so the common case does not queue behind whatever holds the
   // script lock — syncPush_ holds it for seconds, and a login stalled that way

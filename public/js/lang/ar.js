@@ -432,6 +432,7 @@ export default {
   "New PIN must be exactly 6 digits.": "يجب أن يتكون رمز PIN الجديد من 6 أرقام بالضبط.",
   "New PO": "أمر شراء جديد",
   "New Sale": "بيع جديد",
+  "New customer: {name}": "عميل جديد: {name}",
   "New item": "منتج جديد",
   "New price": "السعر الجديد",
   "New purchase order": "أمر شراء جديد",

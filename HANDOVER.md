@@ -13,9 +13,9 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.35.0** — English, Arabic and Urdu, right to left (`2026-09-12`) |
-| Validation bar | `backend-sim` **PASS 715 / FAIL 0** · client units **PASS 459 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
-| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~5,110 lines) |
+| Current version | **v1.35.1** — documentation catch-up, `setup()` deploy entry point, roles & gaps review (`2026-09-12`) |
+| Validation bar | `backend-sim` **PASS 719 / FAIL 0** · client units **PASS 459 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
 
@@ -126,6 +126,19 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.35.1** Documentation catch-up and the deploy step that never existed.
+  Every deploy guide said *run `setup`*, but `Code.gs` had no `setup`
+  function (not in any commit); seeding only happened on the first request.
+  Added `setup()` — calls `ensureSeed_()`, logs the workbook id and whether
+  PINs were issued, safe to re-run (4 sim checks). README, backend/README,
+  DEPLOY, SECURITY, AGENTS and the client handout (both PDFs regenerated)
+  brought up to v1.35 — they had stopped around v1.19–v1.23 (stale role
+  table, missing repairs/printing/backups/reports/audit, wrong serial
+  statuses, a re-seed instruction that could not work). Two untranslated
+  strings fixed (checkout *New customer*, supplier placeholder). New
+  **`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`**: the
+  verified who-can-do-what matrix and what staff cannot do — read it before
+  planning the next release.
 - **v1.35.0** English / Arabic / Urdu with RTL (owner decision: RTL in scope,
   options offered in-app). `lang.js` is the whole mechanism: the English text
   is the key (`$t('New sale')`, `$tn(one, other, n)`, `N_()` to mark data,
@@ -404,18 +417,21 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
 
 `Meta` (kv) · `Users` · `Products` · `Serials` (`IN_STOCK`/`SOLD`/`VOIDED`) ·
 `Transactions` · `Conflicts` · `Devices` · `Customers` · `Shifts` ·
-`Suppliers` · `PurchaseOrders` · `PriceHistory` · `TimeClock` · `StockTakes` · `Repairs`.
+`Suppliers` · `PurchaseOrders` · `PriceHistory` · `TimeClock` · `StockTakes` ·
+`Repairs` · `AuditLog`. Column lists: `backend/README.md`.
 
-Ledger kinds: `sale` (incl. legacy `''`), `refund`, `payout`, `payment`
-(= collection, money-in), `purchase` (PO receipt — must never count as sales
-anywhere). Every money kind has a `requireRole_` gate: payout/payment/refund =
-admin/manager.
+Ledger kinds: `sale` (incl. legacy `''`), `refund`, `payout`, `pickup`,
+`expense`, `payment` (= collection, money-in), `purchase` (PO receipt — must
+never count as sales anywhere), and the server-only `deposit` /
+`deposit_refund` (repair deposits — a liability, never revenue). Refund /
+payout / pickup / expense / payment are admin/manager; deposits can only be
+written by the repair routes.
 
 ## 6. Validation & test map
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **715 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **719 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -516,33 +532,54 @@ The approved roadmap (v1.8–v1.16), the interface-v2 rebuild (v1.17–v1.20) an
 the operational-readiness program (v1.21–v1.30) are all complete. What is left
 is below, in the order it should be picked up.
 
-1. **Deploy v1.35.0 — both halves.** The backend has changed in nearly every
+1. **Deploy v1.35.1 — both halves.** The backend has changed in nearly every
    release since v1.16.0, so a frontend-only push ships a client that calls
    endpoints the server does not have.
-   - Paste `backend/Code.gs` into Apps Script and **deploy a new Web App
-     version**. New tabs (`TimeClock`, `StockTakes`, `Audit`, `Repairs`) are created on
-     first use.
+   - Paste `backend/Code.gs` into Apps Script. On a **fresh** project run
+     **`setup()`** once and collect the seeded PINs from View → Executions.
+     Then **deploy a new Web App version**. New tabs (`TimeClock`,
+     `StockTakes`, `AuditLog`, `Repairs`) are created on first use.
    - Run **`installBackupTrigger()`** once — nightly Drive backups into the
      `POS Backup` folder do not start until it is installed.
    - Run **`installReportTriggers()`** once, then set recipients in
      Settings → *Scheduled reports*. **Every cadence ships off**; nobody
      starts receiving mail because a release landed.
-   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.35.0 shell
+   - Push `public/` to Cloudflare Pages. Terminals pick up the v1.35.1 shell
      on next load (`sw.js` VERSION is bumped).
    - Sign in as an admin once and complete the store setup dialog (language,
      country, currency) if this is a fresh deployment.
-2. **Warranty per serial, unscheduled.** Cheap now that fitted serials point at
+2. **Staff permission gaps — see the roles & gaps review, §5 for the order.**
+   Verified against the code; nothing here needs an owner decision except where
+   marked.
+   - **Controls (small):** audit the unaudited actions (stock adjust first);
+     make Settings → Backend admin-only and mask the `APP_TOKEN`; add the
+     missing *Unlock* button (managers are allowed, there is no UI) and staff
+     role/name/email edits (server supports role already).
+   - **Manager approval by PIN** for refunds, over-limit discounts, no-sale
+     drawer and deposit refunds — so a cashier is not signed out (sign-out
+     revokes all their sessions) every time a manager steps in.
+   - **Discount limits per role** (*owner decision on the limits*) and a
+     discounts-by-cashier report.
+   - **Cashiers:** create customers, see balance at checkout (+ optional
+     credit limit), read-only lookup of another cashier's sale by receipt/IMEI.
+   - **Managers:** reset cashier PINs; correct time punches and force-close a
+     forgotten shift, with a reason, audited.
+3. **Business review items still open** (review §3): trade-in / buyback
+   (*owner: cost basis*), layaway / deposits on sales, store credit as an
+   object / gift cards, accounting integration, marketplace API sync, tax
+   jurisdiction D4 (assumed US/NJ).
+4. **Warranty per serial, unscheduled.** Cheap now that fitted serials point at
    their invoice. Needs the owner's warranty terms. (Repair refunds are settled:
    services are not refunded, v1.33.0.)
-3. **First print on real hardware.** v1.34.0 is tested against exact bytes and
+5. **First print on real hardware.** v1.34.0 is tested against exact bytes and
    a fake Bluetooth printer, not a physical one. Before go-live, on the shop's
    own till: connect the printer, press *Print a test receipt*, and *Test the
    drawer*. If a Bluetooth printer connects but reports no writable channel,
    it uses a GATT service missing from `PRINTER_SERVICES` in `printer.js` —
    add its UUID. Buy a **Bluetooth Low Energy** printer; Web Bluetooth needs
    **Chrome or Edge** and does not exist on iPhone or iPad.
-4. **Re-run `pdf-smoke`** somewhere Edge will launch headless — see §6.
-5. **Native-speaker review of Arabic and Urdu** (v1.35.0). Walk every screen
+6. **Re-run `pdf-smoke`** somewhere Edge will launch headless — see §6.
+7. **Native-speaker review of Arabic and Urdu** (v1.35.0). Walk every screen
    in each language and fix wording in `public/js/lang/ar.js` / `ur.js`. The
    catalogue test keeps the fix honest. Still English by design: CSV headers,
    the Sheets workbook, scheduled report emails.
@@ -636,7 +673,7 @@ translation / RTL (the same as #1 above), and tax-compliance specifics.
   `main -> main` and `* [new tag]` lines.
 - `AGENTS.md` is the operating guide future sessions should follow verbatim.
 
-## 12. Session handover — 2026-09-11
+## 12. Session handover — 2026-09-11 (historical; §13 supersedes it)
 
 What happened in one line: **the interface-v2 rebuild and the whole
 operational-readiness program shipped — fourteen tagged releases, v1.17.0
@@ -651,10 +688,10 @@ through v1.30.0.**
 | v1.19.0 | Three money-out kinds — paid out, cash pick-up, staff expense |
 | v1.20.0 | Remaining screens brought onto the new shell |
 | v1.21.0 | **No sale is lost if interrupted** — cart persists to IndexedDB; availability is *derived*, never mutated (`cart.js`) |
-| v1.22.0 | Audit log, admin-only, with day/time stamps |
+| v1.22.0 | Receipt numbering — `Orison-S000001`, allocated at sync — and the admin-only audit log |
 | v1.23.0 | Management and ownership functions moved to admin-only |
-| v1.24.0 | Receipt numbering — `Orison-S000001`, allocated at sync |
-| v1.25.0 | Drive backups into `POS Backup` (date+time in every filename) + the 100-row cap with search |
+| v1.24.0 | Drive backups into `POS Backup` (date+time in every filename) |
+| v1.25.0 | The 100-row cap with server-side search and paging |
 | v1.26.0 | Daily / weekly / monthly reports emailed to nominated admins |
 | v1.27.0 | Record a sale made elsewhere — marketplace, own site, phone |
 | v1.29.0 | Card tender — kept out of the drawer, counted as revenue |
@@ -701,3 +738,37 @@ shift-roster leak (v1.17.0) and the dead cart ✕ button (v1.18.0).
   Run the gate, read it, then commit, then tag, as separate commands.
 - The Bash heredoc breaks on very long commands (~6KB+); use the file-write
   tool for anything large.
+
+## 13. Session handover — 2026-09-12
+
+What happened: **repairs, service-refund rule, printing, three languages, and a
+full documentation and permissions review — v1.31.0 through v1.35.1.**
+
+| Release | What it does |
+|---|---|
+| v1.31.0 | Repair tickets — intake, parts from stock, labour, status flow |
+| v1.32.0 | Repair deposits (server-only liability kinds) and collection |
+| v1.33.0 | Services are never refundable; plain-item refunds and five dead buttons fixed |
+| v1.34.0 | Printing (receipt / standard / Bluetooth) and the cash drawer; SW precache fix |
+| v1.35.0 | English / Arabic / Urdu with RTL; money bidi isolation |
+| v1.35.1 | Docs brought current; `setup()` added; roles & gaps review |
+
+### Pick up here
+
+1. **Deploy** (§9 #1). Still the gating item — nothing from v1.16.0 on is live.
+2. **Read `docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`** and
+   agree the next release with the owner. Recommended first: the small control
+   fixes (audit gaps, token exposure, Unlock button, staff edits), then the
+   manager-approval prompt.
+3. Owner questions that block building: trade-in cost basis, warranty terms,
+   discount limits per role, tax jurisdiction.
+4. Hardware test of the printer and drawer; native-speaker read of ar/ur.
+
+### Worth knowing before you touch it
+
+- **Write/Edit tools and bash heredocs turn `\u2066`-style escapes into the
+  literal invisible character.** To put an escape into source, write it from a
+  Python script using `chr(92)`.
+- `public/js/i18n.js` and `public/locales/` are untracked and **not** this
+  project's translation system — never `git add -A`.
+- The local preview has no backend; screens that fetch show a load error there.

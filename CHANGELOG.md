@@ -5,6 +5,57 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.1] — 2026-09-12
+
+The docs catch up with the code, and a review of what staff can and cannot do.
+
+### Added
+
+- **`setup()` in `Code.gs`.** Every deploy guide and the client handout said
+  to *select `setup` and Run*, but no such function had ever existed. Seeding
+  only happened on the first web request, so the step failed and the PINs
+  were hard to find. `setup()` does the seed, logs the workbook id, and says
+  whether PINs were issued. It is safe to run again: it leaves a seeded
+  workbook alone and refuses one that has sales in it.
+- **`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`**:
+  - a who-can-do-what matrix for every role, checked route by route against
+    the server and the screens
+  - what each role needs but cannot do
+  - the business-review items still open
+  - a recommended build order
+
+### Fixed
+
+- **Two strings were still in English** in Arabic and Urdu: *New customer* at
+  checkout, and the supplier-name placeholder.
+- **Documentation that described an older app:**
+  - **README:** features stopped at v1.19; the roles line predated v1.23; the
+    test counts were from v1.12; there was no repairs, printing, backups,
+    reports, audit or languages.
+  - **backend/README:** routes, tabs and columns updated for v1.20–v1.35.
+    Serial statuses were wrong. The re-seed instruction could not work.
+  - **SECURITY:** the role table still showed bulk price, stock take and
+    suppliers as manager routes. There was no audit-log section. The workbook
+    recovery described a reseed that the `SEEDED` flag prevents.
+  - **DEPLOY:** the workflows table now covers repairs, printing, languages,
+    staff, backups and restore. It no longer tells you to re-seed a live
+    workbook.
+  - **AGENTS:** the module map is current, and the translation and RTL rules
+    are written down.
+  - **Handout:** feature list, one-page setup guide and demo page updated;
+    both PDFs regenerated.
+
+### Documented, not yet changed
+
+These are recorded in the review and in SECURITY.md:
+
+- Settings → Backend shows the `APP_TOKEN` to every role.
+- Many admin actions are not in the audit log, stock adjustments among them.
+- Discounts have no ceiling.
+- Managers may release a lockout, but no button exists for it.
+- Staff role, name and email cannot be edited in the app.
+- There is no manager-approval step.
+
 ## [1.35.0] — 2026-09-12
 
 English, Arabic and Urdu, with right-to-left layouts. Owner decision: RTL is in

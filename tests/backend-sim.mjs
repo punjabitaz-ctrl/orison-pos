@@ -3883,6 +3883,17 @@ check('statement carries the changer/cashier',
     drEntry[0] && /Change for a customer/.test(drEntry[0].summary) && drEntry[0].deviceId === 'till-1',
     JSON.stringify(drEntry[0]));
 }
+{
+  section('setup() deploy entry point (v1.35.1)');
+
+  const usersBefore = sandbox.readRows_('Users', sandbox.USER_HEADERS).length;
+  const res = sandbox.setup();
+  check('setup() exists and reports the workbook', res && typeof res.spreadsheetId === 'string' && res.spreadsheetId.length > 0, JSON.stringify(res));
+  check('on a seeded workbook it issues no new PINs', res.seeded === false && sandbox.SEED_CREDENTIALS.length === 0);
+  check('and leaves the staff untouched', sandbox.readRows_('Users', sandbox.USER_HEADERS).length === usersBefore);
+  check('the admin still signs in with the original PIN',
+    req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).ok === true);
+}
 
 
 console.log('\n-------------------------------------');

@@ -30,19 +30,41 @@ customer owes.
 a time. Selling one requires capturing its IMEI or serial, which is then bound to
 that sale for life — through history, refunds, receipts and the audit trail.
 
-**Split tender.** A single sale can be paid part cash, part store credit, part on
-account, with change calculated automatically and a quick-round keypad for notes.
+**Split tender.** A single sale can be paid part cash, part card, part store
+credit, part on account, with change calculated automatically and a quick-round
+keypad for notes. Card payments are recorded and kept out of the drawer count.
 
 **Discounts and tax.** Per-line discounts and an order-level discount, applied on
 top of each other, with the store's sales-tax rate computed on the taxable
 portion only.
 
-**Receipts.** Print to an 80 mm thermal roll, share by the phone's native share
-sheet, or copy to the clipboard. A PDF can be sent directly to the customer.
+**Receipts.** Numbered without gaps (`Orison-S000001`). Print through a receipt
+printer, an ordinary office printer, or straight to a Bluetooth receipt printer
+with no print dialog. Send by WhatsApp or email, or as a PDF.
+
+**Cash drawer.** Opens automatically on a cash sale through a Bluetooth printer.
+Managers can open it without a sale — a reason is required and recorded.
+
+**Sold elsewhere.** Record an online, marketplace or phone sale so stock and
+reports stay true.
 
 **Customer display.** A second screen facing the shopper mirrors the cart live:
 item names, quantities, prices, amount due, and change. Cost, margin and customer
 records never cross to that screen.
+
+---
+
+## Repairs
+
+**Tickets.** Book a device in with its fault, condition and accessories, and
+follow it from intake through diagnosis, waiting for parts and repair to ready
+and collected.
+
+**Parts and labour.** Parts come off the shelf when they are fitted, and go back
+if the job is cancelled. Labour is added as it is done.
+
+**Deposits.** Taken at intake and held — not counted as a sale — then applied
+automatically when the customer collects. A manager can give one back.
 
 ---
 
@@ -76,7 +98,8 @@ Cash Pick Up (to the bank, the safe or the owner) and Staff Expense
 went out as staff expense last month?" is a question the ledger answers.
 
 **Refunds.** Restricted to managers and admins, validated against the original
-sale and any prior refunds, with stock returned automatically.
+sale and any prior refunds, with stock returned automatically. Services are
+never refundable.
 
 **Customer accounts.** Net-30 terms, a per-customer ledger, money-in collections,
 outstanding receivables, and 30/60/90+ day ageing buckets.
@@ -136,6 +159,15 @@ product's cost today never rewrites last month's margin.
 One-tap CSV export to Google Drive with a cash summary block for reconciliation.
 Everything buckets by the store's own calendar day, not UTC.
 
+**Reports by email.** Daily, weekly and monthly figures sent automatically to the
+people the owner chooses.
+
+**Nightly backups.** A full copy of the books lands in a Google Drive folder
+every night, with thirty nights and twelve months kept.
+
+**Audit log.** Owner-only, append-only record of who changed settings, prices,
+stock counts, staff and terminals, repairs and drawer opens.
+
 ---
 
 ## Staff
@@ -147,7 +179,10 @@ closed in place with elapsed minutes. Nobody can punch for anyone else.
 per hour, per cashier, over today, seven days or thirty days.
 
 **Roles.** Admin, manager and cashier, enforced on the server for every
-privileged action — not merely hidden in the interface.
+privileged action — not merely hidden in the interface. Cashiers sell, run their
+own shift and handle repairs; managers add refunds, cash out, customers, stock
+and reports; the owner keeps staff, pricing rules, suppliers, backups and the
+audit log.
 
 ---
 
@@ -175,6 +210,10 @@ offline-first design, ships with the system.
 Phones, tablets and desktop computers — the interface adapts to each. Install it
 from the browser and it behaves like an app, full screen, with its own icon.
 
+**English, Arabic and Urdu.** Each till picks its language on the sign-in
+screen; Arabic and Urdu lay the whole app out right to left. Receipts and the
+customer display use the shop's language.
+
 Eighteen currencies are supported, including **USD, GBP, EUR, AED and PKR**, each
 with the correct notes and coins for counting a drawer. The shop picks its
 language region, country and currency at setup.
@@ -185,10 +224,11 @@ language region, country and currency at setup.
 
 Every release is a single tagged revision, validated before it ships:
 
-- **462** automated back-end checks against a simulated Google environment
-- **326** automated front-end checks
-- Receipt and PDF rendering smoke-tested in a real browser
-- Every screen verified at phone, tablet and desktop widths
+- **719** automated back-end checks against a simulated Google environment
+- **459** automated front-end checks, including one that fails if any text on
+  screen is missing a translation
+- Screens verified in a real browser at phone, tablet and desktop widths, and
+  the main selling screens checked in Arabic and Urdu
 
 ---
 

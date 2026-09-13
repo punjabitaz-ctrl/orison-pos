@@ -114,7 +114,8 @@ throttling with no second dimension, and the alternative — leaving PIN guessin
 uncapped — is worse for a system that holds money and stock.
 
 It is bounded rather than eliminated: the lockout expires on its own after 15
-minutes, and an admin or manager can clear one immediately from the app:
+minutes, and an admin or manager can clear one immediately through the API (there
+is no button for it in the app yet — review §2 Managers #0):
 
 ```
 POST /api/admin/unlock   { "email": "someone@example.com" }
@@ -142,9 +143,14 @@ POST /api/pin          { "currentPin": "481902", "newPin": "246813" }   # yourse
 POST /api/admin/pin    { "email": "...", "pin": "246813" }              # admin, for someone else
 ```
 
-The admin route is also the recovery path. `spreadSheet_` recreates the workbook
-if `openById` ever fails, which reseeds and rotates all four starter PINs —
-without a reset route that would leave nobody able to sign in.
+The admin route is the everyday recovery path for a forgotten PIN.
+
+**If the workbook itself is lost:** `spreadSheet_` creates a new, empty one when
+`openById` fails, but the `SEEDED` Script Property is already set, so it is
+**not** reseeded and nobody can sign in. Recover by restoring a copy from Drive →
+**POS Backup** and setting its id as `SPREADSHEET_ID`. With no backup, delete the
+`SEEDED` property and run `setup()` — that seeds fresh starter accounts with new
+PINs in that run's log.
 
 The Users sheet stores only `salt` and `sha256(salt + ":" + pin)`. SHA-256 is
 fast, which is the wrong property for a password hash; it is acceptable here only
@@ -164,31 +170,58 @@ privileged action. The role is carried in the signed session token; because a
 role **change** revokes that user's sessions immediately, a promotion or
 demotion takes effect at the first request after the change (no 12-hour lag).
 
+Verified route by route against `Code.gs` at v1.35.1. The task-level view —
+what each role can actually do on screen, and what they cannot — is in
+[`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
+
 | Route | Roles |
 |---|---|
-| `/api/sync/push` — sale    | any signed-in role |
-| `/api/sync/push` — payout, payment (collection), refund | admin, manager |
-| `/api/reports`, `/api/drive/export` (store scope) | admin, manager (cashiers export only their own rows) |
-| `/api/shifts` (all shifts) | admin, manager (cashiers see their own) |
-| `/api/customers/ledger`, `/api/customers/receivables` | admin, manager |
-| `/api/customers/statement` | admin, manager |
-| `/api/suppliers`, `/api/purchase-orders`, `/api/purchase-orders/detail`, `/receive`, `/cancel` | admin, manager |
-| `/api/price-history` | admin, manager |
-| `/api/admin/products`, `/serials`, `/inventory`, `/products/patch` | admin, manager |
-| `/api/inventory/aging` | admin, manager |
-| `/api/conflicts`, `/api/conflicts/review` | admin, manager |
-| `/api/admin/unlock` | admin, manager |
-| `/api/admin/users*` | admin |
-| `/api/admin/revoke` | admin |
-| `/api/admin/devices`, `/admin/revoke-device` | admin |
-| `/api/admin/pin` | admin |
-| `/api/admin/customers` | admin, manager |
-| `/api/inventory/reorder` | admin, manager |
-| `/api/admin/products/bulk-price`, `/api/admin/stock-take` | admin, manager |
-| `/api/timeclock` | admin, manager see the roster; a cashier's request is forced to their own punches |
-| `/api/timeclock/punch` | any signed-in user, own clock only |
-| `/api/pin` | any signed-in user, own PIN only |
-| `/api/logout` | any signed-in user, own sessions only |
+| `/api/sync/push` — sale | any signed-in role |
+| `/api/sync/push` — refund, payout, pickup, expense, payment (collection) | admin, manager (refused per row otherwise) |
+| `/api/sync/push` — deposit, deposit_refund, or a `deposit` tender | nobody — server-written only |
+| `/api/transactions`, `/api/shifts`, `/api/timeclock`, `/api/drive/export` | admin, manager see the store; a cashier is scoped to their own rows |
+| `/api/shifts/open`, `/close`, `/api/timeclock/punch`, `/api/pin`, `/api/logout` | any signed-in user, own records only |
+| `/api/products`, `/api/sync/pull` | any; cost prices only to admin, manager |
+| `/api/config` | any; the staff roster only to admin, manager |
+| `/api/customers` (search) | any signed-in role |
+| `/api/repairs`, `/detail`, `/parts`, `/labour`, `/status`, `/deposit`, `/collect` | any signed-in role (all audited) |
+| `/api/repairs/deposit-refund` | admin, manager |
+| `/api/repairs/void` | admin |
+| `/api/drawer/open` | admin, manager (audited) |
+| `/api/reports`, `/api/price-history`, `/api/inventory/aging`, `/api/inventory/reorder` | admin, manager |
+| `/api/customers/ledger`, `/receivables`, `/statement`, `/api/admin/customers` | admin, manager |
+| `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` | admin, manager |
+| `/api/purchase-orders`, `/detail`, `/receive` | admin, manager |
+| `/api/conflicts`, `/api/conflicts/review`, `/api/admin/unlock` | admin, manager |
+| `/api/suppliers`, `/api/purchase-orders/cancel` | admin |
+| `/api/admin/products/bulk-price`, `/api/admin/stock-take` | admin |
+| `/api/admin/users`, `/users/list`, `/users/patch`, `/api/admin/pin` | admin |
+| `/api/admin/revoke`, `/api/admin/devices`, `/api/admin/revoke-device` | admin |
+| `/api/admin/store`, `/api/reports/schedule`, `/api/backup/status`, `/api/backup/run` | admin |
+| `/api/audit` | admin |
+
+A sale's `channel` (Sold Elsewhere) is gated in the interface only; the server
+accepts any channel from any role on a sale.
+
+## Audit log
+
+`AuditLog` (v1.22.0) is append-only — the API has no update or delete path —
+and readable by admins only. It records the actor, their role, the action, the
+target, a summary and the terminal.
+
+**Recorded today:** store settings, bulk repricing, stock takes, staff role and
+active changes, terminal revocations, every repair action, no-sale drawer
+opens, backups and scheduled reports.
+
+**Not recorded** (the ledger holds some of it, the log does not): stock
+adjustments, product create/edit, serial additions, admin PIN resets, new
+staff accounts, lockout releases, revoke-all, conflict reviews, purchase-order
+receive and cancel, supplier changes, customer creation, Drive exports, and
+sign-ins. Closing these is item 2 of the review's recommended order.
+
+Anyone with edit access to the Google Sheet can change any row — the log
+included — without going through the API. Keep the workbook's sharing to the
+owner.
 
 ### Fixed in v1.14.0 — shift roster leak
 
@@ -220,13 +253,17 @@ mirroring is switched off.
 `APP_TOKEN` is **one secret shared by every device**, entered once per
 installation and stored in that browser's IndexedDB alongside the session token.
 
-Two consequences worth planning around:
+Three consequences worth planning around:
 
-1. A single compromised device — or any script running on the origin — yields
+1. **It is readable on the terminal.** Settings → Backend shows it in plain
+   text to every signed-in role, and the sign-in screen's Backend prompt shows
+   it to anyone holding the device. Restricting that card to admins and
+   masking the field is recommended (review §2 Admin #3).
+2. A single compromised device — or any script running on the origin — yields
    the credential that authorizes every device's requests. Sessions themselves
    are revocable per user and per device (see [Session revocation](#session-revocation)),
    but the app token is not; rotating it means re-provisioning every device by hand.
-2. Because it is shared, it cannot identify a device. If that matters, a
+3. Because it is shared, it cannot identify a device. If that matters, a
    per-device credential is the next step.
 
 ## Content-Security-Policy
@@ -316,3 +353,11 @@ is tracked; none is silent.
 7. **Salted single SHA-256 PIN hashes** are fast to brute-force if the
    workbook ever leaks; bounded by the login throttle and Google account
    access. Move to a memory-hard hash if the store moves off Sheets.
+8. **Discounts have no ceiling or approval.** Any role can apply a 50 % line
+   discount and any order discount; the server clamps to 0–100 % only, and no
+   report breaks discounts out by cashier. Combined with #1 this is the
+   largest shrink exposure. A per-role limit with manager PIN approval is the
+   recommended fix.
+9. **No manager-approval step exists.** A refund on a cashier's till means the
+   manager signs in there, and signing the cashier out revokes every session
+   that cashier holds.

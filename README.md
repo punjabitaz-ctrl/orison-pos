@@ -1,74 +1,112 @@
 # Orison POS
 
-A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. Replace Base44 per-seat POS costs with a lean, zero-cost stack and a web app cashiers install on their own phones/tablets. Works fully offline — sales are queued locally and sync when a connection returns.
+A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
+
+**Current version: v1.35.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
-- **Offline-first**: products, users, and every sale are stored in the browser (IndexedDB). Cashiers can sell with zero connectivity; completed sales sync automatically when online. A server-issued offline credential keeps a terminal usable while the network is down.
-- **Sync with First-Committed-Wins**: devices reconcile against the backend. Double-selling the same IMEI is rejected; the losing device is marked **VOIDED** and its stock restored locally.
-- **Serialized (IMEI) inventory**: scan or type a serial per unit. Serialized items are tracked individually through stock, sale, history, and receipt.
-- **Split tender**: Cash / Store Credit / On-account (Net-30), with change calculation and quick-round keypad.
-- **Receipts**: 80mm thermal-friendly print (CSS `@media print`), plus Share via Web Share API or clipboard.
-- **Scanning**: HID barcode scanner via the search field, with camera barcode fallback where supported.
-- **Customers, collections & aging**: customer accounts with net-30 terms, a per-customer ledger, money-in collections (admin/manager), receivables, and 30/60/90+ day aging buckets.
-- **Till shifts** (v1.5.0): open a shift with a float, close it with a denomination count, and get *declared / expected / over-or-short* in one view.
-- **Reports & analytics** (v1.6.0): period KPIs (gross sales, refunds, payouts, collections, net revenue, gross profit, average ticket) broken down by day, category, cashier, tender, plus top products/customers and one-click CSV export.
-- **Suppliers & purchase orders** (v1.7.0): vendor records, PO lifecycle (draft → ordered → partial/received, or cancelled) and receiving that posts stock in with weighted-average cost, per-unit serial intake, and a ledger trail that never touches drawer math.
-- **Price history & tracking** (v1.8.0): every cost/retail change — manual edit or weighted cost from a PO receipt — is recorded per product (who, when, why) and browsable from the Products screen 📈.
-- **Customer statements** (v1.9.0): a printable / CSV-exportable statement of account — every transaction a customer touched as chronological debit/credit lines with a running balance, from the Customers → ledger → *Statement* button.
-- **Inventory aging** (v1.10.0): Products → *Aging* shows 0–30 / 31–60 / 61–90 / 90+ day buckets (units + value at cost) so dead stock is visible before it becomes a write-off.
-- **Hardened offline sync** (v1.11.0): a failed (VOIDED) push is re-evaluated — never answered with a false "already synced" — and its retry rewrites the failure in place with the same transaction id; gross profit uses the cost captured at sale time; reports and Drive export bucket by the store's local time zone day.
-- **Client unit tests** (v1.12.0): 154 `node:test` checks for the register-side money engine, sync outbox, IndexedDB layer, and alert classifier — money math, refund/payout builders, offline/VOIDED paths, CRUD + indexes all automated (`npm run test:client`).
-- **Desktop layout + polish** (v1.13.0): toggleable sidebar (240px labels ↔ 64px icon rail, persisted), dual-panel register (catalog left, sticky live cart right), right-anchored checkout & sheets on wide screens, `matchMedia` viewport state, softer shadows/easing/focus rings/tabular numerals — phones and tablets unchanged.
-- **Staff & time clock** (v1.14.0): a Staff screen everyone can reach — punch in/out on your own clock, see your hours and shift history; managers add who is on the floor right now, per-cashier performance (sales, tickets, avg ticket, margin, hours, sales per hour) over today / 7 / 30 days, and the till reconciliation trail.
-- **Dashboard with context** (v1.14.0): KPIs carry trend chips (vs yesterday, vs the 7-day average), today is charted hour by hour with the busiest hour called out, top sellers became a table with units / revenue / margin %, and the shift picture summarises open, closed and over-short for the day.
-- **Customer display** (v1.15.0): a second-screen mirror of the cart, checkout breakdown and a thank-you with change due, driven over a same-origin `BroadcastChannel` — works offline, and never shows cost, margin, customer records or till figures. Turn it on per terminal in Settings.
-- **Inventory tools** (v1.15.0): **bulk price update** by rule (percent / amount / set, with rounding, previewed before it writes), **stock take** that posts the counted shelf and records expected / counted / variance / value-at-cost, **barcode labels** (Code 128, encoded in-app) with name and price, and a **reorder worksheet** built from real sales velocity — days of cover, suggested quantity, last supplier — printable or CSV.
-- **Store localisation & multi-currency** (v1.16.0): the first admin sets the shop's **language, country and currency** at first run, and gets that currency's notes and coins for the till. Every figure — receipts, reports, exports, the customer display, the drawer count — formats through that choice. 18 currencies ship with real cash ladders; any ladder can be replaced. Changeable later in Settings. (The locale drives formatting; interface copy is still English.)
-- **Cash out by reason** (v1.19.0): **Paid Out**, **Cash Pick Up** and **Staff Expense** are three separate transaction kinds rather than one free-text note — each with its own tile and dialog, split in reports and in the Drive export, and all three subtracted from the expected drawer at shift close. "How much went out as staff expense this month?" is now a question the ledger answers.
-- **Sell & checkout** (v1.18.0): the running total lives in a bar pinned above the tab bar, so it is never out of sight and adding an item no longer throws a sheet over the catalog — the cart opens when you ask for it. Product tiles carry the category's colour, a two-line name clamp and clear stock / IMEI / Locked badges. Checkout collapses its line list behind a summary and leads with **Amount due**.
-- **Shell & navigation** (v1.17.0): the app opens on **Sell**, and one large **Menu** button opens a flat grid of every job the signed-in account can do — big labelled tiles, no group headings, no submenus. The bottom bar is three thumb-sized targets (Menu · Sell · History) instead of ten in a scrolling strip, and one app header carries the store, a live clock, connectivity with the queued-push count, and the signed-in user. Navigation is data: a destination is one line in `nav.js` and appears in the bar, the sidebar and the launcher.
-- **Role-gated dashboard**: admin/manager see store KPIs, a 14-day revenue chart, top sellers, low-stock alerts, open conflicts, recent shift closes, and one-tap Drive export; cashiers get their own daily numbers.
-- **Admin tools** (in-app): create products and users, adjust non-serialized stock, add serials, manage suppliers and purchase orders, release login lockouts, review conflicts, and revoke a stolen terminal's sessions.
-- **POS lock**: staff sign in with a PIN pad; five wrong PINs lock that account for 15 minutes.
+### Selling
+
+- **Register**: search by name, SKU or barcode, scan with a handheld reader or the camera, or tap a tile. The running total is pinned above the tab bar, and a cart survives a crash or refresh and is offered back on the next start.
+- **Serialized (IMEI) stock**: one unit at a time, captured at sale and bound to it through history, refunds and receipts.
+- **Split tender**: Cash, **Card** (recorded; kept out of the expected drawer), Store Credit and On-account (Net-30), with change and a quick-round keypad.
+- **Discounts and tax**: line and order discounts, and store sales tax on the taxable portion only.
+- **Receipts**: gap-free numbers (`Orison-S000001`) allocated at sync. Print through a receipt printer, an ordinary office printer, or straight to a **Bluetooth** receipt printer. You can also send a PDF or text by WhatsApp or email.
+- **Cash drawer**: opens on a cash sale through a Bluetooth printer. Managers get **Open Drawer** with a reason, and every no-sale open is audited.
+- **Customer display**: a second screen mirrors the cart, totals and change due, and never shows cost, margin or customer records.
+- **Sold Elsewhere**: record an online, marketplace or phone sale so stock and reports stay true.
+- **Services are not refundable**, on screen or on the server.
+
+### Repairs
+
+- **Tickets** (`Orison-R000001`): device, reported fault, condition and accessories, with statuses from intake to collected, plus unrepairable, cancelled and voided.
+- **Parts and labour**: parts come off the shelf when fitted and go back if returned or the job is closed.
+- **Deposits** at intake are held as a liability, not revenue, and applied automatically when the customer collects. A manager can give one back.
+
+### Money and accountability
+
+- **Till shifts**: open with a float, close with a count in the store's own notes and coins, and see *declared / expected / over-or-short*.
+- **Cash out by reason**: Paid Out, Cash Pick Up and Staff Expense are separate kinds, and each is split in reports and the export.
+- **Refunds**: validated against the original sale and any earlier refunds, with stock returned.
+- **Customers**: Net-30 accounts, a per-customer ledger, collections, receivables with 30/60/90+ day aging, and printable or CSV statements.
+- **Audit log** (admin only): append-only, filterable, exportable.
+
+### Stock
+
+- **Catalog**: products and services, serialized or counted, with cost, retail, category, reorder point and a lock switch.
+- **Suppliers and purchase orders**: draft → ordered → partial/received, or cancelled. Receiving posts weighted-average cost and takes serials unit by unit.
+- **Price history**: every cost and retail change, with who made it, when, and why.
+- **Inventory tools**:
+  - bulk price update by rule, previewed before it writes
+  - stock take, with variance valued at cost
+  - Code 128 shelf labels
+  - a reorder worksheet built from sales velocity
+- **Aging and alerts**: 0–30 / 31–60 / 61–90 / 90+ day buckets, plus out-of-stock, low, locked and slow-moving items.
+
+### Reporting and the business
+
+- **Dashboard**: KPIs with trend chips, today by hour, and top sellers with margin. Cashiers see their own day.
+- **Reports**: gross sales, refunds, cash out by reason, collections, deposits, net revenue, gross profit at the cost captured at sale, and average ticket. Broken down by day, category, cashier, tender and channel, with CSV export.
+- **Scheduled reports**: daily, weekly and monthly emails to the admins you choose. Every cadence ships off.
+- **Nightly backups** to a Drive folder **POS Backup**. The last 30 nights and the first of each of the last 12 months are kept.
+- **History search**: find sales by receipt number, customer, item, IMEI or amount. Pages load 100 at a time, never more.
+
+### Staff and security
+
+- **Time clock**: punch in and out on your own clock, and it works offline. Managers see who is on the floor and per-cashier performance.
+- **Roles**: admin, manager and cashier, enforced on the server for every privileged action. The full who-can-do-what table is in [`docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`](docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md).
+- **Sign-in**: a PIN pad. Five wrong PINs lock the account for 15 minutes.
+- **Sessions**: signed and revocable per person or per terminal.
+- **Strict CSP**: no third-party code. See [`SECURITY.md`](SECURITY.md).
+
+### Languages and currencies
+
+- **English, العربية, اردو**: pick on the sign-in screen or per terminal in Settings. Arabic and Urdu lay the whole app out right to left. Receipts and the customer display follow the store's language.
+- **18 currencies**, each with its real notes and coins for counting a drawer, chosen by the first admin at setup.
+
+### Works everywhere
+
+- **Offline-first**: products, users and every sale live in IndexedDB. A server-issued offline credential keeps a terminal selling while the network is down.
+- **First-Committed-Wins sync**: the same IMEI sold twice is settled on the server. The losing sale is marked **VOIDED** and logged for a manager to review.
+- **Phone, tablet and desktop layouts**: three thumb-sized tabs on a phone, and a sidebar with a live cart panel on a desktop.
 
 ## Stack
 
-- **Backend**: Google Apps Script Web App backed by **Google Sheets** + **Drive**. API bridge, sync, serial tracking, and admin mutations all run server-side. Zero hosting cost.
-- **Client**: Vanilla ES modules PWA — no build step. Service worker caches the shell (API is never cached).
-- **Auth**: shared `APP_TOKEN` (Script Property) on every call, an HMAC-signed 12-hour session token issued at login, and a server-issued offline credential for terminals that keep selling while the network is down.
+- **Backend**: a single-file Google Apps Script Web App (`backend/Code.gs`) backed by **Google Sheets** and **Drive**. Zero hosting cost.
+- **Client**: vanilla ES modules PWA with no build step. A service worker caches the shell; the API is never cached.
+- **Auth**: a shared `APP_TOKEN` (Script Property) on every call, an HMAC-signed 12-hour session token issued at login, and a server-issued offline credential.
 
 ## Setup
 
 ### 1. Deploy the backend (once, ~5 minutes)
 
-See [`backend/README.md`](backend/README.md) for the full Apps Script deploy guide. In short:
+See [`backend/README.md`](backend/README.md) for the full guide. In short:
 
-1. Create a new Apps Script project, paste `backend/Code.gs`.
-2. Add Script Properties: `APP_TOKEN` (choose a long secret) and optionally `SPREADSHEET_ID` / `FOLDER_ID`.
-3. Run `setup` once (authorizes + seeds users, products, serials). Call it again later to reset the sheet to a clean seed.
-4. Deploy as a **Web App** — Execute as Me, access: Anyone.
-5. Copy the `/exec` URL.
+1. Create an Apps Script project and paste `backend/Code.gs`.
+2. Add Script Properties: `APP_TOKEN` (a long secret), and optionally `SPREADSHEET_ID` / `FOLDER_ID`.
+3. Run `setup` once. It authorizes and seeds users, products and serials. It refuses to re-seed a workbook that already has transactions.
+4. Run `installBackupTrigger()` and `installReportTriggers()` once each. Backups and scheduled reports do not start until you do.
+5. Deploy as a **Web App**: Execute as **Me**, access **Anyone**. Copy the `/exec` URL.
 
 ### 2. Point the app at it
 
-Serve `public/` statically anywhere (GitHub Pages, Cloudflare Pages — see
-[`DEPLOY.md`](DEPLOY.md) — a local web server, or an intranet box). Cloudflare
-Pages is one click: **Connect to Git** → repo → branch `main` → Framework
-preset **None**, build command *empty*, output directory **`public`** → you're
-live on `*.pages.dev` with free TLS in a minute. On first launch of the PWA,
-tap **Backend** on the login screen and paste the `/exec` URL + `APP_TOKEN`.
-Each app install remembers it.
+Serve `public/` statically. Cloudflare Pages is the documented target (see [`DEPLOY.md`](DEPLOY.md)): **Connect to Git** → repo → branch `main` → preset **None**, build command *empty*, output directory **`public`**. On first launch, tap **Backend** on the login screen and paste the `/exec` URL and `APP_TOKEN`. Each install remembers it.
 
-> After a fresh start, the old service worker may serve a cached page. Hard reload (Ctrl+Shift+R) once after updating `public/`.
+### 3. First run
+
+The first admin picks the shop's **language, country and currency**. Then:
+
+- Change every seeded PIN.
+- Add real staff under Settings.
+- Set scheduled-report recipients if you want them.
+- Set up the printer per terminal under **Settings → Printer & cash drawer**.
+
+> After an update, an old service worker may serve a cached page. Hard reload (Ctrl+Shift+R) once.
 
 ## Starter logins (seeded by the backend)
 
-The backend seeds four accounts on its first run and generates a **random
-6-digit PIN for each**, and writes them to the execution log. Apps Script keeps
-that log, so treat these as first-day credentials rather than lasting ones —
-hand them out, then have everyone change theirs. The `Users` sheet itself only
-ever holds a salted hash. To read them:
+The backend seeds four accounts on its first run and generates a **random 6-digit PIN for each**, written to the execution log. Apps Script keeps that log, so treat these as first-day credentials: hand them out, then have everyone change theirs. The `Users` sheet only holds a salted hash.
 
 1. In the Apps Script editor, open **View > Executions**.
 2. Open the first execution (the one that created the workbook).
@@ -87,107 +125,83 @@ ever holds a salted hash. To read them:
 | Cashier | `amara@example.com` |
 | Cashier | `diego@example.com` |
 
-Hand each person their PIN, then edit the `Users` sheet to replace the
-`@example.com` placeholders with real addresses. Staff change their own PIN with
-`POST /api/pin` (`{ "currentPin": "...", "newPin": "..." }`) — which is how the
-logged starter PINs stop being usable.
+Add real staff from **Settings → Staff** (admin) and deactivate the `@example.com` placeholders there. Existing accounts cannot yet be edited in the app; change a name or email in the `Users` sheet. Staff change their own PIN in **Settings → Change PIN** (`POST /api/pin`).
 
-Login is throttled: five wrong PINs lock that account for 15 minutes, measured
-from the most recent failure. An admin or manager can release it from the till
-(`POST /api/admin/unlock` with `{ "email": "someone@example.com" }`), or you can
-run `clearLoginLockout("someone@example.com")` from the Apps Script editor.
+Five wrong PINs lock an account for 15 minutes from the most recent failure. To release it sooner:
 
-An admin can also reset a forgotten PIN from the app (`POST /api/admin/pin` with
-`{ "email": "...", "pin": "246813" }`), which clears any lockout at the same
-time. That is also the recovery path if the workbook is ever recreated: doing so
-reseeds the starter accounts with fresh random PINs, and the only record of them
-is that run's execution log.
+- An admin or manager can release it with `POST /api/admin/unlock`. There is no button for this in the app yet.
+- Or run `clearLoginLockout("someone@example.com")` in the Apps Script editor.
 
-Note the tradeoff: because the counter is per-account and Apps Script does not
-expose the caller's address, someone who knows a staff email can keep that
-account locked by failing against it repeatedly. The unlock endpoint exists so
-a shift is never blocked waiting on the script editor.
+An admin resets a forgotten PIN from **Settings → Staff** (`POST /api/admin/pin`), which also clears the lockout. If the workbook itself is lost, restore a copy from Drive → **POS Backup**; the full recovery path is in [`SECURITY.md`](SECURITY.md#pins).
+
+The counter is per account, because Apps Script does not expose the caller's address. So someone who knows a staff email can keep that account locked. The unlock exists so a shift is never blocked waiting on the script editor.
 
 Store: **Orison Electronics — Main Street** (code `ORSTN-01`)
 
 ## Install as an app
 
-1. Open the app URL in Chrome/Edge on the Android device.
-2. Menu → **Add to Home screen** (or the browser's "Install App" prompt).
-3. Launch the installed icon; it opens standalone with no browser chrome.
+- **Android / Chrome**: menu **⋮ → Install app**.
+- **iPhone / iPad**: **Share → Add to Home Screen**, in Safari.
+- **Windows / Mac**: the install icon in the address bar.
 
-## Hosting at pos.orisonigt.com (Google login · worldwide · near-real-time)
+The installed app opens full screen and keeps selling with no internet. Bluetooth printing needs Chrome or Edge, and is not available on iPhone or iPad.
 
-The app is a static PWA, so it can live on any HTTPS host. For a subdomain
-secured behind Google sign-in, see **[DEPLOY.md](DEPLOY.md)** (recommended:
-Cloudflare Pages + Cloudflare Access, $0 for ≤50 users). Sales sync to the
-backend **the moment they're completed when the device is online**; the
-**30-minute window (configurable in Settings) is only the offline fallback**
-— offline terminals queue sales and catch up on reconnect and on that window.
-Set an owner device to 2–5 min for a near-live view.
+## Hosting at pos.orisonigt.com
+
+The app is a static PWA, so any HTTPS host works. For a subdomain behind Google sign-in, see **[DEPLOY.md](DEPLOY.md)** (Cloudflare Pages + Access, $0 for ≤50 users). Sales sync **the moment they are completed when the device is online**. The **30-minute window** in Settings is only the offline fallback.
 
 ## Development
 
 ```bash
-# Backend logic against an in-memory mock of Apps Script (no network, fast).
-# This is what `npm test` runs — it needs nothing external.
-npm test          # same as: npm run test:backend
-
-# Headless-browser E2E against a deployed backend. Needs the deployment URL and
-# token, plus the two PINs — they are generated per deployment and never
-# committed, so read them from the execution log (see Starter logins above).
-#   $env:E2E_GAS_URL='https://…/exec';  $env:E2E_APP_TOKEN='secret'
-#   $env:E2E_PIN='481902';              $env:E2E_CASHIER_PIN='730155'
-# Without E2E_PIN and E2E_CASHIER_PIN this suite skips rather than failing.
-npm run test:e2e
-
-# Both suites together
-npm run test:all
-
-# Receipt PDF/share smoke test (headless browser, no backend needed)
-npm run test:pdf
-
-# Local static serve of the PWA shell (backend still comes from the /exec URL)
-npm run serve   # http://127.0.0.1:8080
+npm test              # backend logic vs an in-memory Apps Script mock (715 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (459 checks)
+npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
+npm run test:pdf      # receipt PDF/share smoke test in a headless browser
+npm run test:all      # all four
+npm run serve         # static serve of public/ at http://127.0.0.1:8080
 ```
 
-The browser E2E (tests/e2e.mjs) also runs against any same-origin backend when you host the app yourself (`E2E_BASE`). It needs a **freshly seeded** backend because it sells specific serials.
+E2E needs `E2E_GAS_URL`, `E2E_APP_TOKEN`, `E2E_PIN` and `E2E_CASHIER_PIN`. The PINs come from the execution log; without them the suite skips rather than failing.
 
 ## Layout
 
 ```
-backend/Code.gs          Google Apps Script backend (API bridge, sync, admin, reports, purchase orders)
-backend/README.md        Deploy guide for the Apps Script backend
-public/index.html        PWA shell
-public/js/app.js         Router/boot, tab bar, role-gated tabs, session restore
-public/js/api.js         GAS transport (envelope, token, session, offline flag)
-public/js/db.js          IndexedDB layer (products, catalog, outbox, offline credential)
-public/js/sync.js        Outbox push/pull, First-Committed-Wins + VOIDED handling
-public/js/money.js       Money math (integer-cents engine, refund builder)
-public/js/receipt-send.js  Receipt PDF / share transport (thermal, clipboard, Web Share)
-public/js/screens/*.js   login, register, checkout, history, customers, reports, purchases, inventory, inventory-tools, store-setup, settings, dashboard, alerts, staff
-public/css/style.css     Full UI + @media print receipt mode
-public/sw.js             Service worker — VERSION bumped every release; precaches the shell
-tests/backend-sim.mjs    Backend logic tests vs an in-memory Apps Script mock (359 cases)
-tests/client-*.mjs       Client unit tests (money/sync/db/alerts/ui) via node:test + fake-indexeddb (154 cases)
-tests/e2e.mjs            Headless-browser E2E (needs a freshly-seeded live backend)
-tests/pdf-send-smoke.mjs Receipt PDF/share headless-browser smoke test
+backend/Code.gs                Apps Script backend (~6,000 lines): API, sync, repairs, reports, backups, audit
+backend/README.md              Backend deploy guide, routes and sheet tabs
+public/index.html              PWA shell            public/display.html  customer display
+public/sw.js                   Service worker: VERSION bumped every release; SHELL precaches every module
+public/css/style.css           UI, RTL via logical properties, @media print receipt modes
+public/js/app.js               Boot, router, session restore, language
+public/js/api.js               /exec transport (envelope, token, session, per-call timeouts)
+public/js/db.js  sync.js       IndexedDB layer; outbox push/pull, First-Committed-Wins, VOIDED handling
+public/js/cart.js              Cart persistence and availability
+public/js/money.js  stats.js   Money math, refund builders; shared aggregation
+public/js/nav.js  components.js  Navigation model and role gating; shared screen markup
+public/js/lang.js  lang/*.js   Translation ($t, plurals, RTL) and the Arabic / Urdu catalogues
+public/js/receipt-doc.js       One receipt model   receipt-render.js  roll, page and image renderers
+public/js/printer.js  escpos.js  printing.js  Printer decisions, ESC/POS bytes, browser wiring
+public/js/receipt-send.js      Receipt PDF, WhatsApp and email
+public/js/screens/*.js         login menu register checkout history customers repairs reports purchases
+                               inventory inventory-tools external-sale alerts dashboard staff audit
+                               settings printer-settings store-setup
+tests/backend-sim.mjs          Backend suite
+tests/client-*.mjs             Client suites, including the translation-catalogue check
+tests/e2e.mjs  tests/pdf-send-smoke.mjs
+docs/superpowers/              Design specs, release plans and reviews
+docs/handout/                  Client-facing feature list and setup guide
 ```
 
 ## Releases stay in lockstep
 
-One feature = one validated revision = one git tag (v1.0.0 → v1.10.x, all
-tagged). Every release must bump `public/sw.js` `VERSION` and `package.json`,
-append `CHANGELOG.md`, and keep README / DEPLOY / SECURITY / RELEASE_NOTES /
-the backend guide current — **do not ship a version whose docs still describe
-the previous one**. `AGENTS.md` encodes this protocol for AI agents;
-`HANDOVER.md` is the
-living state snapshot that survives between sessions.
+One feature = one validated revision = one git tag. Every release bumps `public/sw.js` `VERSION` and `package.json`, adds to `CHANGELOG.md` and `RELEASE_NOTES.md`, and keeps README / DEPLOY / SECURITY / the backend guide / `HANDOVER.md` current. [`AGENTS.md`](AGENTS.md) is the protocol; [`HANDOVER.md`](HANDOVER.md) is the living state snapshot.
 
 ## Notes / known constraints
 
-- Auth/session data lives in each browser's IndexedDB; it is **not** shared across devices. Every device syncs to the same backend.
-- The dashboard sync clock (`watermark`) is sheet-based; keep your seeded sheet as the single source of truth.
-- Sheet-level writes are serialized with Apps Script `LockService` (single instance) — not built for extreme horizontal scaling.
-- Admin + manager roles can create products and users, adjust stock, add serials, manage suppliers and purchase orders, run reports, and issue refunds; cashiers sell, run their own shift, and record customer sales.
-- After any release, terminals pick up the new shell on next load (the versioned service-worker cache replaces the old one automatically; a hard reload once is enough if anything looks stale).
+- Auth and session data live in each browser's IndexedDB and are **not** shared across devices. Every device syncs to the same backend.
+- Sheet writes are serialized with Apps Script `LockService`. That is fine for one store or a few; it is not built for heavy scale.
+- **Roles, in short**:
+  - **Cashiers**: sell, run their own shift and clock, and handle repairs.
+  - **Managers**: add refunds, cash out, customers and ledgers, products and stock, purchase orders, reports, conflict review and lockout release.
+  - **Admins alone**: staff, PINs, terminals, store settings, suppliers, bulk pricing, stock takes, PO cancellation, repair voids, backups, scheduled reports and the audit log.
+- Still English by design: CSV column headers, the Sheets workbook and report emails.
+- After any release, terminals pick up the new shell on next load.

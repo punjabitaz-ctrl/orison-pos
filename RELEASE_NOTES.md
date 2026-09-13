@@ -7,7 +7,32 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.35.0 — English, Arabic and Urdu
+## Latest: v1.35.1 — documentation and a permissions review
+
+**2026-09-12.** No new features; the paperwork now matches the app.
+
+- **The deploy step works as written.** The guides said to run `setup` in Apps
+  Script, but that function did not exist. It does now.
+- **Every guide is current**: README, deploy, security, the backend guide and
+  the client handout, including both PDFs.
+- **A review of who can do what**: `docs/superpowers/specs/2026-09-12-roles-and-gaps-review.md`.
+  It lists what cashiers and managers need but cannot do. The main gaps:
+  - refunds need a manager to sign in on the till
+  - there is no discount limit
+  - cashiers cannot add a customer
+  - nobody can fix a missed clock-out
+  - there is no Unlock button
+
+**Validation:** backend-sim **PASS 719 / FAIL 0** · client units **PASS 459 /
+FAIL 0**.
+
+### Deploying
+
+**Backend redeploy recommended** (it adds `setup()`; nothing else changed).
+
+---
+
+## v1.35.0 — English, Arabic and Urdu
 
 **2026-09-12.** The whole app speaks three languages, and Arabic and Urdu read
 right to left.

@@ -299,7 +299,7 @@ export const screen = {
               <button class="cust-row" data-id="${esc(c.id)}" data-name="${esc(c.name)}">
                 ${esc(c.name)}<em class="muted">${esc(c.phone || c.email || '')}</em>
               </button>`).join('');
-            const create = canManage ? `<button class="cust-row cust-new" data-create="1" data-name="${esc(q)}">＋ New customer: ${esc(q)}</button>` : '';
+            const create = canManage ? `<button class="cust-row cust-new" data-create="1" data-name="${esc(q)}">＋ ${esc($t('New customer: {name}', { name: q }))}</button>` : '';
             custResults.innerHTML = rows + create;
           }, 300);
         });

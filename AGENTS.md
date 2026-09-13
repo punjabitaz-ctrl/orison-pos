@@ -14,28 +14,36 @@ is role-gated (`admin` / `manager` / `cashier`); sales sync First-Committed-Wins
 ## Layout
 
 ```
-backend/Code.gs          Single-file Apps Script backend (~3,340 lines)
+backend/Code.gs          Single-file Apps Script backend (~6,000 lines)
 public/index.html        PWA shell
-public/js/app.js         Router + session restore
-public/js/api.js         /exec transport (envelope, APP_TOKEN, session, offline flag)
+public/js/app.js         Router, session restore, language boot
+public/js/api.js         /exec transport (envelope, APP_TOKEN, session, per-call timeouts)
 public/js/db.js          IndexedDB layer
 public/js/sync.js        Outbox push/pull + VOIDED handling
-public/js/money.js       Money math
+public/js/cart.js        Cart persistence + availability (never mutates the catalog)
+public/js/money.js       Money math, refund groups (services locked)
 public/js/nav.js         Navigation model (primaryTabs, menuTiles, isRestricted)
 public/js/components.js  Destinations as markup (tile, tileGrid, navButton, appHeaderHtml)
-public/js/money-dialogs.js  Money-out dialogs the launcher opens directly
+public/js/money-dialogs.js  drawer-dialog.js   Dialogs the launcher opens directly
 public/js/stats.js       Shared aggregation (day totals, trends, hourly buckets, top sellers, hours)
 public/js/labels.js      Code 128-B encoder + shelf-label markup
-public/js/print-sheet.js Full-page printing (labels, worksheets) in its own window
+public/js/print-sheet.js Full-page printing (labels, worksheets, receipts on a standard printer)
+public/js/lang.js        $t / $tn / N_ / tIn, plurals, dir, dateLocale, arrow
+public/js/lang/ar.js  lang/ur.js   Translation catalogues (English text is the key)
+public/js/receipt-doc.js  receipt-labels.js  receipt-render.js   One receipt model → roll HTML, page HTML, canvas
+public/js/escpos.js  printer.js  printing.js   ESC/POS bytes; printer decisions (no DOM); browser wiring
 public/js/customer-display.js  Register side of the second-screen mirror
 public/display.html + public/js/display.js + public/css/display.css   The customer-facing display
-public/js/screens/*.js   login register checkout history customers reports purchases inventory inventory-tools store-setup settings dashboard alerts staff menu
-public/js/receipt-send.js  Receipt PDF/share
-public/css/style.css     UI + @media print receipt mode
-public/sw.js             Service worker (VERSION must be bumped every release)
+public/js/screens/*.js   login menu register checkout history customers repairs reports purchases inventory
+                         inventory-tools external-sale alerts dashboard staff audit settings printer-settings store-setup
+public/js/receipt-send.js  Receipt PDF / WhatsApp / email (PDF hidden for scripts Courier cannot carry)
+public/css/style.css     UI (logical properties for RTL) + @media print receipt modes
+public/sw.js             Service worker (VERSION bumped every release; SHELL lists every module)
 tests/backend-sim.mjs    Backend logic suite against an in-memory Apps Script mock
+tests/client-*.mjs       Client suites (incl. lang catalogues, nav, printer, escpos, repairs)
 tests/e2e.mjs            Headless E2E (needs a freshly-seeded live backend)
 tests/pdf-send-smoke.mjs Receipt PDF/share smoke test
+docs/superpowers/        specs/ (designs, reviews) and plans/ (one per release program)
 README.md  DEPLOY.md  SECURITY.md  CHANGELOG.md  RELEASE_NOTES.md  AGENTS.md  HANDOVER.md
 ```
 
@@ -67,9 +75,11 @@ lands, bump again (patch release) and refresh the same five docs.
 ```bash
 node tests/backend-sim.mjs        # backend logic (expect PASS n FAIL 0)
 node --check <touched public js>  # syntax on every touched client file
-node tests/pdf-send-smoke.mjs     # receipt PDF/share (PASS 19 / FAIL 0)
-npm run test:client               # client unit tests (money/sync/db/alerts/ui)
+node tests/pdf-send-smoke.mjs     # receipt PDF/share — unrunnable on the current dev machine (Edge headless); report it as NOT RUN, never as a pass
+npm run test:client               # client unit tests, incl. the translation-catalogue check
 ```
+
+Baseline at v1.35.1: backend-sim **719 / 0**, client **459 / 0**.
 
 - `npm test` == backend sim only. `npm run test:client` runs the pure-Node
   client unit suites via `node:test` + `fake-indexeddb`. `npm run test:all`
@@ -108,16 +118,37 @@ npm run test:client               # client unit tests (money/sync/db/alerts/ui)
 - **Navigation is data.** Add a destination to `public/js/nav.js`; never paste a
   button into `index.html`. Both navs and the launcher render from that model,
   and role gating comes from `isRestricted`, not a hard-coded id list.
-- New backend endpoints: register in `doPost` dispatch, add a handler block
-  with a `requireRole_` gate for privileged actions, then add sim coverage.
-  New UI tabs: register the screen in `app.js` `SCREENS` **and** the restricted
-  tab list **and** add the file to `sw.js` `SHELL` (or the offline shell graph
-  breaks for installed terminals).
+- New backend endpoints: register in `dispatch_`, add a handler block with a
+  `requireRole_` gate for privileged actions, call `logAudit_` for anything an
+  owner would want to trace, then add sim coverage. Update the route table in
+  `SECURITY.md` and the matrix in the roles review.
+- New UI screens: register the screen in `app.js` `SCREENS`, add the
+  destination to `nav.js` with its roles, **and** add every new module to
+  `sw.js` `SHELL`. A guard test walks the import graph and fails if one is
+  missing — an offline till otherwise cannot boot after an update.
+- **Every string a person reads goes through `lang.js`.** `$t('English text')`,
+  `$tn(one, other, n)` for counts, `N_()` to mark strings stored as data,
+  `tIn(storeLanguage(), …)` on receipts and the customer display. Never call
+  `$t` at module scope (catalogues load asynchronously) and never name a local
+  `t`. Add the new key to **both** `lang/ar.js` and `lang/ur.js`; the catalogue
+  test fails on anything missing, stale, untranslated or with a dropped
+  placeholder.
+- **RTL:** use logical CSS properties (`margin-inline-start`, `inset-inline-end`,
+  `text-align: start`), never left/right. Money on screen goes through `fmt()`
+  (it isolates itself in RTL); receipts use `fmtFor(doc.dir)`; anything that
+  must stay ASCII (CSV, ESC/POS text, the PDF) strips isolates.
 
 ## Security invariants (do not regress)
 
 - Every privileged endpoint calls `requireRole_` before doing work.
-- Money routes (payout / payment / refund) are admin/manager-only.
+- Money routes (refund / payout / pickup / expense / payment, deposit refund,
+  no-sale drawer open) are admin/manager-only.
+- `deposit` and `deposit_refund` are server-written only; a device can never
+  push them or tender `deposit`.
+- Services are never refundable (`service_not_refundable`), checked first.
+- Admin-only stays admin-only (v1.23.0 owner decision): staff, PINs, terminals,
+  store settings, suppliers, PO cancel, bulk price, stock take, repair void,
+  backups, scheduled reports, audit log.
 - Purchase receipts write `kind: 'purchase'` ledger rows that never count as
   sales in reports or exports.
 - Sessions are revoked on sign-out, PIN change, role change, and admin

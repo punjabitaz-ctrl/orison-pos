@@ -138,7 +138,7 @@ export const screen = {
       const m = openModal(`
         <h3>${$t('Add supplier')}</h3>
         <label class="field-label">${$t('Name *')}</label>
-        <input class="field" id="supName" placeholder="Acme Distributors">
+        <input class="field" id="supName" placeholder="${esc($t('e.g. Vendor name'))}">
         <label class="field-label">${$t('Phone')}</label>
         <input class="field" id="supPhone" inputmode="tel" placeholder="(555) 000-0000">
         <label class="field-label">${$t('Email')}</label>
