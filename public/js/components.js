@@ -105,12 +105,69 @@ function lockedFlag(p) {
   return p && (p.locked === true || p.locked === 1 || String(p.locked) === '1');
 }
 
-/* A category on the Sell screen's first view: its colour, its name, and how
-   many of its products can be sold now. */
+/* Category icons (v1.46.1). Categories are the shop's own free text, so a name
+   is matched by the words in it; the first rule that fits wins, and anything
+   unrecognised gets a price tag. */
+const S = 'stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"';
+export const CATEGORY_ICONS = {
+  phones: SVG(`<rect x="7" y="2.5" width="10" height="19" rx="2.2" ${S}/><path d="M10.5 18.5h3" ${S}/>`),
+  tablets: SVG(`<rect x="4" y="3" width="16" height="18" rx="2.2" ${S}/><path d="M11 18h2" ${S}/>`),
+  laptops: SVG(`<rect x="4.5" y="5" width="15" height="10" rx="1.4" ${S}/><path d="M2.5 18.5h19l-1.5-3.5H4z" ${S}/>`),
+  monitors: SVG(`<rect x="3" y="4" width="18" height="12" rx="1.6" ${S}/><path d="M9 20h6M12 16v4" ${S}/>`),
+  audio: SVG(`<path d="M4 15v-3a8 8 0 0116 0v3" ${S}/><rect x="3" y="14" width="4.5" height="6.5" rx="1.6" ${S}/><rect x="16.5" y="14" width="4.5" height="6.5" rx="1.6" ${S}/>`),
+  wearables: SVG(`<rect x="6.5" y="6.5" width="11" height="11" rx="3" ${S}/><path d="M9 6.5L9.8 3h4.4l.8 3.5M9 17.5l.8 3.5h4.4l.8-3.5M12 10v2.2l1.5 1" ${S}/>`),
+  cables: SVG(`<path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 01-10 0V7zM12 16v2.5a2.5 2.5 0 002.5 2.5H18" ${S}/>`),
+  power: SVG(`<rect x="3" y="7" width="15" height="10" rx="2" ${S}/><path d="M21 10.5v3M11 9l-2.5 3.5h3L9 15" ${S}/>`),
+  storage: SVG(`<path d="M7 3h7l4 4v14H7a1 1 0 01-1-1V4a1 1 0 011-1z" ${S}/><path d="M10 3v4M13 3v4M9.5 12h5v5h-5z" ${S}/>`),
+  gaming: SVG(`<path d="M7.5 8h9a4.5 4.5 0 014.4 5.4l-.6 3a2.4 2.4 0 01-4.2 1.1L14.5 16h-5l-1.6 1.5a2.4 2.4 0 01-4.2-1.1l-.6-3A4.5 4.5 0 017.5 8z" ${S}/><path d="M8 11v3M6.5 12.5h3M15.5 12h.01M17.5 13.5h.01" ${S}/>`),
+  cameras: SVG(`<path d="M3.5 8.5A1.5 1.5 0 015 7h2.5l1.5-2.5h6L16.5 7H19a1.5 1.5 0 011.5 1.5v9A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5z" ${S}/><circle cx="12" cy="13" r="3.4" ${S}/>`),
+  networking: SVG(`<path d="M2.5 9.5a14 14 0 0119 0M5.5 12.8a9.5 9.5 0 0113 0M8.6 16a5 5 0 016.8 0" ${S}/><path d="M12 19.5h.01" ${S}/>`),
+  smarthome: SVG(`<path d="M3.5 11L12 4l8.5 7M6 9.5V20h12V9.5" ${S}/><path d="M9.8 15.2a3.1 3.1 0 014.4 0M12 17.8h.01" ${S}/>`),
+  services: SVG(`<path d="M15.5 3.5a5 5 0 00-6.1 6.1L3.6 15.4a1.9 1.9 0 002.7 2.7l5.8-5.8a5 5 0 006.1-6.1l-2.8 2.8-2.4-.6-.6-2.4 2.8-2.8z" ${S}/>`),
+  accessories: SVG(`<path d="M12 3l7.5 3v5.5c0 4.7-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.8-7.5-9.5V6z" ${S}/><path d="M9 12l2 2 4-4" ${S}/>`),
+  preowned: SVG(`<path d="M20 12a8 8 0 01-14.3 4.9M4 12a8 8 0 0114.3-4.9" ${S}/><path d="M18.5 3.5v3.8h-3.8M5.5 20.5v-3.8h3.8" ${S}/>`),
+  printers: SVG(`<path d="M7 8V3.5h10V8M7 17H4.5A1.5 1.5 0 013 15.5v-6A1.5 1.5 0 014.5 8h15A1.5 1.5 0 0121 9.5v6a1.5 1.5 0 01-1.5 1.5H17" ${S}/><path d="M7 13.5h10v7H7z" ${S}/>`),
+  other: SVG(`<path d="M3.5 12.3V4.5a1 1 0 011-1h7.8a1 1 0 01.7.3l8 8a1 1 0 010 1.4l-7.8 7.8a1 1 0 01-1.4 0l-8-8a1 1 0 01-.3-.7z" ${S}/><circle cx="8" cy="8" r="1.4" ${S}/>`),
+};
+
+const CATEGORY_RULES = [
+  ['preowned', /pre-?owned|used|refurb|second|trade/],
+  ['services', /service|repair|install|setup|labou?r|support/],
+  ['smarthome', /smart ?home|home|iot|security|doorbell/],
+  /* before phones: headphones and earphones are audio */
+  ['audio', /audio|headphone|earbud|earphone|speaker|sound|music/],
+  ['phones', /phone|mobile|smartphone|iphone|android|cell/],
+  ['tablets', /tablet|ipad/],
+  ['laptops', /laptop|notebook|computer|macbook|chromebook|\bpcs?\b/],
+  ['monitors', /monitor|display|screen|\btvs?\b|television/],
+  ['wearables', /wear|watch|band|fitness/],
+  ['gaming', /gam|console|controller|playstation|xbox|nintendo/],
+  ['cameras', /camera|photo|video|drone/],
+  ['networking', /network|router|wi-?fi|modem|mesh|ethernet/],
+  ['storage', /storage|memory|ssd|\bsd\b|drive|flash/],
+  ['power', /power|batter|charger|charging/],
+  ['cables', /cable|adapter|connector|hub|dock/],
+  ['printers', /print|ink|toner|scanner/],
+  ['accessories', /accessor|case|cover|protector|glass|mount|stand/],
+];
+
+export function categoryIconKey(name) {
+  const n = String(name == null ? '' : name).toLowerCase();
+  for (const [key, re] of CATEGORY_RULES) if (re.test(n)) return key;
+  return 'other';
+}
+
+export function categoryIcon(name) {
+  return CATEGORY_ICONS[categoryIconKey(name)];
+}
+
+/* A category on the Sell screen's first view: its colour and icon, its name,
+   and how many of its products can be sold now. */
 export function categoryTile({ name, count, sellable } = {}) {
   const label = String(name == null ? '' : name);
   return `
     <button class="cat-tile" data-open-cat="${esc(label)}" type="button" style="--cat:${catColor(label)}">
+      <span class="ct-icon">${categoryIcon(label)}</span>
       <span class="ct-name">${esc(label === 'Uncategorized' ? $t('Uncategorized') : label)}</span>
       <span class="ct-meta">${esc($tn('{n} product', '{n} products', Number(count) || 0))}${sellable < count ? ` · ${esc($t('{n} available', { n: Number(sellable) || 0 }))}` : ''}</span>
     </button>`;

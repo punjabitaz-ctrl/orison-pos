@@ -5,6 +5,22 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.46.1] — 2026-09-16
+
+### Added
+
+- **Every category tile on the Sell screen has an icon**, drawn in the
+  category's colour on a light tint of it.
+  - Categories are the shop's own words, so the icon is chosen by matching the
+    words in the name (`categoryIconKey()` in `components.js`).
+  - There are 17 kinds: phones, tablets, laptops, monitors, audio, wearables,
+    cables, power, storage, gaming, cameras, networking, smart home, services,
+    accessories, pre-owned and printers.
+  - A name that matches none of them gets a price tag.
+  - "Headphones" is audio and "Used iPhones" is pre-owned. Both rules are
+    tested.
+- Category tiles are a little taller to fit the icon.
+
 ## [1.46.0] — 2026-09-16
 
 Sprint A of team feedback on the demo: "the main interface is too cluttered;

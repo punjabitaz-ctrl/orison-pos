@@ -7,7 +7,25 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.46.0 — a calmer Sell screen
+## Latest: v1.46.1 — icons on the categories
+
+**2026-09-16.**
+
+- **Every category on the Sell screen now has an icon**: a phone for Phones,
+  headphones for Audio, a gamepad for Gaming, and so on.
+- **The icon follows the category name**, so categories the shop adds later
+  get a fitting one too. A name the app can't place gets a price-tag icon.
+
+**Validation:** client units **PASS 515 / FAIL 0** · demo **PASS 28 / FAIL 0**.
+Checked in the browser.
+
+### Deploying
+
+Frontend only.
+
+---
+
+## v1.46.0 — a calmer Sell screen
 
 **2026-09-16.** From the team's feedback on the demo.
 

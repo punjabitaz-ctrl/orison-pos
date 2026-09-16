@@ -135,6 +135,33 @@ test('icon()', async (t) => {
   });
 });
 
+test('categoryIcon()', async (t) => {
+  const { categoryIcon, categoryIconKey, CATEGORY_ICONS } = await import('../public/js/components.js');
+  await t.test('the demo shop categories each get a fitting icon', () => {
+    const expect = {
+      Phones: 'phones', Tablets: 'tablets', Laptops: 'laptops', Audio: 'audio', Wearables: 'wearables',
+      Cables: 'cables', Storage: 'storage', Gaming: 'gaming', Cameras: 'cameras', Networking: 'networking',
+      'Smart Home': 'smarthome', Services: 'services', Accessories: 'accessories', 'Pre-owned': 'preowned',
+    };
+    for (const [name, key] of Object.entries(expect)) assert.equal(categoryIconKey(name), key, name);
+  });
+  await t.test('names are matched by their words, in any case', () => {
+    assert.equal(categoryIconKey('MOBILE PHONES'), 'phones');
+    assert.equal(categoryIconKey('Used iPhones'), 'preowned', 'pre-owned wins over the device it is');
+    assert.equal(categoryIconKey('Screen Repair'), 'services');
+    assert.equal(categoryIconKey('Chargers & Power Banks'), 'power');
+    assert.equal(categoryIconKey('Headphones'), 'audio');
+  });
+  await t.test('anything unrecognised still gets an icon', () => {
+    assert.equal(categoryIconKey('Gift wrap'), 'other');
+    assert.equal(categoryIconKey(''), 'other');
+    assert.match(categoryIcon(undefined), /^<svg /);
+  });
+  await t.test('every icon is a real drawing', () => {
+    for (const [k, svg] of Object.entries(CATEGORY_ICONS)) assert.ok(/^<svg /.test(svg) && svg.length > 80, k);
+  });
+});
+
 test('tile()', async (t) => {
   await t.test('carries the id as a data attribute the screen can route on', () => {
     assert.ok(tile({ id: 'reports', label: 'Reports' }).includes('data-go="reports"'));

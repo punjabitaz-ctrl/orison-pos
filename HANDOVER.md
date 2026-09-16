@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.46.0** — category-first Sell screen, folded discounts, grouped navigation (`2026-09-16`) |
-| Validation bar | `backend-sim` **PASS 983 / FAIL 0** · client units **PASS 510 / FAIL 0** · demo **PASS 28 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.46.1** — category icons on the Sell screen (`2026-09-16`) |
+| Validation bar | `backend-sim` **PASS 983 / FAIL 0** · client units **PASS 515 / FAIL 0** · demo **PASS 28 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,8 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.46.1** Category icons: `CATEGORY_ICONS` and the `CATEGORY_RULES` keyword
+  table in components.js (first match wins; audio is checked before phones).
 - **v1.46.0** Declutter (Sprint A of `docs/superpowers/plans/2026-09-16-declutter-and-sales-report.md`).
   - register.js: `category === null` shows `categoryTile`s from
     `categorySummaries()`; a category or a search shows products via
