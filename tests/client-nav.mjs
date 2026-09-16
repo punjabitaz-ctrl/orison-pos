@@ -54,7 +54,7 @@ test('menuTiles()', async (t) => {
     // v1.37.0 because a manager approves them on the cashier's screen; money
     // out and management stay off it. Trade-In is on it since v1.44.0: the
     // cashier takes the device in and a manager approves the amount.
-    assert.deepEqual(menuTiles('cashier').map((x) => x.id), ['refund', 'tradein', 'repairs', 'drawer', 'dashboard', 'staff', 'settings']);
+    assert.deepEqual(menuTiles('cashier').map((x) => x.id), ['refund', 'tradein', 'repairs', 'drawer', 'dashboard', 'salesreport', 'staff', 'settings']);
   });
   await t.test('an unknown role is treated as a cashier, not as an admin', () => {
     assert.deepEqual(menuTiles('nonsense').map((x) => x.id), menuTiles('cashier').map((x) => x.id));

@@ -23,12 +23,13 @@ import { screen as menu } from './screens/menu.js';
 import { screen as audit } from './screens/audit.js';
 import { screen as accounts } from './screens/accounts.js';
 import { screen as tradein } from './screens/tradein.js';
+import { screen as salesreport } from './screens/salesreport.js';
 import { screen as repairs } from './screens/repairs.js';
 import { primaryTabs, menuTiles, navGroups, isRestricted } from './nav.js';
 import { navButton, appHeaderHtml } from './components.js';
 import { $t, $tn, setLanguage, resolveLanguage, loadChoice, setStoreLanguage, dateLocale } from './lang.js';
 
-const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff, menu, audit, accounts, tradein, repairs };
+const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff, menu, audit, accounts, tradein, salesreport, repairs };
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -77,6 +78,8 @@ const router = {
     if (cleanup) { try { cleanup(); } catch (_) {} cleanup = null; }
     current = def;
     const root = document.getElementById('screen');
+    /* the screen scrolls, not the window: a new screen starts at its top */
+    root.scrollTop = 0;
     cleanup = (await def.render(ctx, root)) || null;
     /* The nav is built for one role. Signing in (or switching user) changes the
        role, and hiding tabs cannot add the ones a manager or admin gains, so

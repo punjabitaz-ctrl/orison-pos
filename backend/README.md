@@ -130,8 +130,17 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 
 - **Reports** `/api/reports` (admin, manager):
   - summary: gross sales, refunds, paid out, pick ups, expenses, collections, deposits in / applied / refunded, net revenue, tax, gross profit at the cost captured at sale, discounts given and how many sales had an approved discount
-  - breakdowns by day, category, cashier, tender and channel
+  - breakdowns by day, hour (`byHour`), category, cashier, tender and channel; `byCashier` rows carry `userId`, `grossSales`, `refunds`, `refundCount`, `avgSale`, `itemsPerSale` and `margin`
   - top products and top customers
+- **Sales report** `/api/reports/sales` (admin, manager; a cashier is forced to their own `userId` and never gets cost, profit or margin):
+  - **params:**
+    - `from`, `to`
+    - `groupBy`: `day` | `hour` | `staff` | `category` | `product` | `tender` | `channel` | `customer`
+    - filters: `userId`, `category`, `productId`, `tender`, `channel`, `customerId`, `kind` (`sale` | `refund`)
+    - paging: `offset`, `limit` (≤ 5000)
+  - **Line money:** `salesLines_()` splits each transaction's net, tax and cost across its lines with `splitCents_()` (largest remainder), so the lines add back exactly. Refund tax comes from `refundSplit_`, and `tenderAmountsC_()` takes change off cash.
+  - **Filters:** category and product filters keep only the matching lines.
+  - **Returns:** `summary`, `groups`, `rows` (with `lines`), `rowsTotal`, and `options` for the filter lists.
 - **Drive export** `/api/drive/export`:
   - admins and managers export the store's day, with a summary block: SALES, TAX COLLECTED, REFUNDS, PAID OUT, CASH PICK-UP, STAFF EXPENSE, COLLECTIONS, DEPOSITS IN / APPLIED / REFUNDED, CARD, CASH IN DRAWER, NET CASH
   - cashiers export their own rows
@@ -211,7 +220,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 983 checks
+npm run test:backend   # 1022 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.

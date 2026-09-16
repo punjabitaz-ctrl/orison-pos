@@ -7,7 +7,46 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.46.1 — icons on the categories
+## Latest: v1.47.0 — the Sales report
+
+**2026-09-16.** From the team's feedback on the demo.
+
+- **Menu → Sales Report** answers "what did we sell?" any way you ask it.
+  - **Choose** a period, a staff member, a category, a product, a payment
+    method, a channel or a customer.
+  - **See** net sales, the number of sales, the average sale, items per sale,
+    refunds, tax, discounts, and gross profit with margin.
+  - **Break it down** by day, hour, staff member, category, product, payment,
+    channel or customer. Tap a row to look at just that.
+  - **Every sale is listed underneath.** Tap one to see its items, discount,
+    tax, cost and profit.
+  - **Take it away:** a summary CSV, a line-by-line CSV for your accountant, or
+    a printed page.
+- **A category or product filter shows only that part of each basket**, so
+  "Phones this month" is the phones' own sales and profit.
+- **Cashiers can check their own sales**, without cost or profit.
+- **Reports shows more:**
+  - each staff member's average sale, items per sale, refunds and margin
+  - sales by hour of the day
+  - a *Details* link on every breakdown that opens the Sales report
+- **Fixed:** screens now open at the top.
+
+**Validation:** backend-sim **PASS 1022 / FAIL 0** · client units **PASS 530 /
+FAIL 0** · demo **PASS 28 / FAIL 0**.
+- The Sales report's totals are checked against Reports and the books over the
+  simulator's whole ledger.
+- Mutation checks confirm the tests catch a broken cent split and change being
+  counted as cash.
+- Checked in the browser as manager and cashier, at desktop and phone size.
+
+### Deploying
+
+**Backend redeploy required** (new `/api/reports/sales`, more detail in
+`/api/reports`). The demo updates on its own.
+
+---
+
+## v1.46.1 — icons on the categories
 
 **2026-09-16.**
 

@@ -38,6 +38,7 @@ export const DESTINATIONS = [
   { id: 'external', label: N_('Sold Elsewhere'), screen: 'register', roles: MANAGER, dialog: 'external', group: 'stock' },
   { id: 'alerts', label: N_('Alerts'), screen: 'alerts', roles: MANAGER, group: 'stock' },
   { id: 'dashboard', label: N_('Dashboard'), screen: 'dashboard', roles: null, group: 'insights' },
+  { id: 'salesreport', label: N_('Sales Report'), screen: 'salesreport', roles: null, group: 'insights' },
   { id: 'reports', label: N_('Reports'), screen: 'reports', roles: MANAGER, group: 'insights' },
   { id: 'accounts', label: N_('Accounts'), screen: 'accounts', roles: ADMIN, group: 'insights' },
   { id: 'audit', label: N_('Audit Log'), screen: 'audit', roles: ADMIN, group: 'insights' },

@@ -51,7 +51,7 @@ The guide's **Sign in** buttons switch account in one tap. When a cashier needs 
 2. Close a till shift and count the drawer. Amara's shift is open.
 3. Receive the purchase order that is on its way (Purchases).
 4. Take a payment from Liberty Phone Repair (Customers).
-5. Look at Reports for the last 30 days, and the trade-in register.
+5. Open the **Sales Report** for the last 30 days: group by staff member, tap one person, open a sale to see its lines, and export the Sales CSV. Then look at Reports, where every breakdown has a *Details* link, and the trade-in register.
 
 **As the admin (Tariq)**
 1. Settings → Marketplace orders → **Import now**. Then open the guide → *view the demo sheet* to see each row's Status filled in.

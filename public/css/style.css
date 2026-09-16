@@ -1457,6 +1457,62 @@ html[data-nav="rail"] .sb-head { font-size: 0; padding: 0; margin: 6px 14px 2px;
 .cat-title { font-size: 17px; font-weight: 750; color: var(--text); }
 @media (min-width: 1024px) { .cat-bar { padding-inline-start: 24px; padding-inline-end: 24px; } }
 
+/* ---- Reports: section heads with a way into the sales report ---- */
+.rep-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.rep-head h3 { margin: 8px 0; }
+.rep-detail {
+  flex: none; border: 0; background: none; padding: 4px 2px;
+  font-size: 12px; font-weight: 700; color: var(--navy-3); cursor: pointer;
+}
+.rep-detail:hover { text-decoration: underline; }
+
+/* ---- Sales report (v1.47.0) ---- */
+.sr-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sr-filters { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: flex-end; padding: 0 16px 10px; }
+.sr-filter { display: flex; flex-direction: column; gap: 3px; min-width: 140px; flex: 1 1 140px; max-width: 220px; }
+.sr-filter span { font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.sr-filter select {
+  width: 100%; min-height: 40px; padding: 8px 10px; border-radius: 10px;
+  border: 1.5px solid var(--line); background: var(--card); font-size: 13px; color: var(--text);
+}
+.sr-filter select:focus { outline: none; border-color: var(--navy-3); }
+.sr-kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.sr-kpis .dash-kpi em { font-style: normal; font-size: 11px; }
+.sr-group-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
+.sr-group-head h3 { margin: 0; }
+.sr-group-head .seg { overflow-x: auto; max-width: 100%; }
+.sr-groups td:first-child { white-space: normal; font-weight: 650; }
+.sr-drill { cursor: pointer; }
+.sr-drill:hover td, .sr-drill:focus-visible td { background: var(--bg); }
+.sr-share { min-width: 120px; }
+.sr-share-h { min-width: 120px; }
+.sr-bar { display: inline-block; vertical-align: middle; width: 70px; height: 6px; margin-inline-end: 6px; border-radius: 999px; background: #eef2f7; overflow: hidden; }
+.sr-bar span { display: block; height: 100%; background: #1c5d99; border-radius: 999px; }
+.sr-sales .sr-row { cursor: pointer; }
+.sr-sales .sr-row:hover td, .sr-sales .sr-row:focus-visible td { background: var(--bg); }
+.sr-sales tbody.sr-tx + tbody.sr-tx tr:first-child td { border-top: 1px solid var(--line); }
+.sr-sales tbody.sr-tx.open .sr-row td { background: var(--bg); }
+.sr-sales td.sr-items { white-space: normal; max-width: 280px; }
+.sr-sales .data-table tbody td:nth-child(2) { white-space: nowrap; }
+.sr-lines > td { padding: 4px 12px 12px; background: var(--bg); white-space: normal; }
+.sr-line-table { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+.sr-line-table th, .sr-line-table td { padding: 7px 10px; text-align: start; }
+.sr-line-table th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-bottom: 1px solid var(--line); }
+.sr-line-table .num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sr-line-table tbody tr + tr td { border-top: 1px solid var(--line); }
+.sr-pay { margin: 6px 2px 0; font-size: 12px; }
+.sr-more { display: flex; justify-content: center; padding: 12px 0; }
+@media (min-width: 1024px) { .sr-filters { padding-inline-start: 24px; padding-inline-end: 24px; } }
+@media print {
+  body.report-printing .sidebar, body.report-printing .appbar, body.report-printing .tabbar,
+  body.report-printing .cartbar, body.report-printing .app-credit, body.report-printing .sr-noprint,
+  body.report-printing .odemo-pill, body.report-printing #odemo-panel { display: none !important; }
+  body.report-printing .app, body.report-printing .main, body.report-printing .screen { display: block; height: auto; overflow: visible; }
+  body.report-printing .table-wrap { overflow: visible; border: 0; }
+  body.report-printing .data-table { font-size: 10.5px; }
+  body.report-printing .dash-kpi { break-inside: avoid; }
+}
+
 /* A cart line's discount choices stay folded until asked for. */
 .cl-disc-toggle {
   margin-top: 8px; padding: 4px 10px; min-height: 30px; border-radius: 999px;

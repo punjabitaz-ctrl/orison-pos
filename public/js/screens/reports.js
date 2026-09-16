@@ -1,6 +1,6 @@
 'use strict';
 
-import { $t, $tn, N_, arrow } from '../lang.js';
+import { $t, $tn, N_, arrow, dateLocale } from '../lang.js';
 
 /* Reports: store-wide analytics for a date window, manager/admin only.
    Everything is computed server-side from the ledger — this screen never
@@ -102,7 +102,7 @@ export const screen = {
         ${screenHead({
           title: $t('Reports'),
           sub: sum ? `${range.from} ${arrow()} ${range.to} · ${$tn('{n} day', '{n} days', data.period.days)}` : $t('Manager analytics'),
-          actions: data ? `<button class="icon-btn" id="repExport" aria-label="${$t('Export CSV')}">⤓</button>` : '',
+          actions: data ? `<div class="sr-actions"><button class="btn btn-ghost btn-sm" id="repSales">${esc($t('Sales report'))}</button><button class="icon-btn" id="repExport" aria-label="${$t('Export CSV')}">⤓</button></div>` : '',
         })}
 
         <div class="rep-chips">
@@ -127,7 +127,7 @@ export const screen = {
         </div>
 
         <section class="dash-section">
-          <h3>${$t('Sales by day')} <span class="muted">· ${esc($t('{gross} gross · {units} units', { gross: money(sum.grossSales), units: sum.units }))}</span></h3>
+          <div class="rep-head"><h3>${$t('Sales by day')} <span class="muted">· ${esc($t('{gross} gross · {units} units', { gross: money(sum.grossSales), units: sum.units }))}</span></h3>${detail('day')}</div>
           <div class="dash-chart">${barChart(data.byDay)}</div>
           <p class="muted rep-sub">
             ${esc($t('Refunds −{refunds} · paid out −{payouts} · collections +{collections}', { refunds: money(sum.refunds), payouts: money(sum.payouts), collections: money(sum.collections) }))}
@@ -135,27 +135,33 @@ export const screen = {
           ${sum.tradeInCount ? `<p class="muted rep-sub">${esc($t('Trade-ins bought: {amount} · {n} devices', { amount: money(sum.tradeIns), n: sum.tradeInCount }))}</p>` : ''}
         </section>
 
+        ${(data.byHour || []).length ? `
+        <section class="dash-section">
+          <div class="rep-head"><h3>${$t('Sales by hour of the day')}</h3>${detail('hour')}</div>
+          <div class="dash-chart">${hourChart(data.byHour)}</div>
+        </section>` : ''}
+
         <div class="rep-grid">
           <section class="dash-section">
-            <h3>${$t('By category')}</h3>
+            <div class="rep-head"><h3>${$t('By category')}</h3>${detail('category')}</div>
             ${panel(data.byCategory, (c) => c.category, (c) => [money(c.sales), $tn('{n} unit', '{n} units', c.units), $t('gp {amount}', { amount: money(c.gp) })])}
           </section>
           <section class="dash-section">
-            <h3>${$t('By cashier')}</h3>
-            ${panel(data.byCashier, (c) => c.userName, (c) => [money(c.sales), $t('{count} tx · {units} units', { count: c.count, units: c.units }), $t('gp {amount}', { amount: money(c.gp) })].concat(c.discounts ? [$t('discounts {amount} on {n} · {approved} approved', { amount: money(c.discounts), n: c.discountedSales || 0, approved: c.approvedDiscounts || 0 })] : []))}
+            <div class="rep-head"><h3>${$t('By staff member')}</h3>${detail('staff')}</div>
+            ${staffPanel(data.byCashier, money)}
           </section>
           <section class="dash-section">
-            <h3>${$t('By payment method')}</h3>
+            <div class="rep-head"><h3>${$t('By payment method')}</h3>${detail('tender')}</div>
             ${panel(data.byTender, (c) => $t(c.label), (c) => [money(c.amount), $tn('{n} tender', '{n} tenders', c.count)])}
           </section>
           <section class="dash-section">
-            <h3>${$t('Top customers')}</h3>
+            <div class="rep-head"><h3>${$t('Top customers')}</h3>${detail('customer')}</div>
             ${panel(data.topCustomers, (c) => c.name, (c) => [money(c.spent), $t('{n} tx', { n: c.count }), c.balance == null ? '' : $t('balance {amount}', { amount: money(c.balance) })])}
           </section>
         </div>
 
         <section class="dash-section">
-          <h3>${$t('Top products')}</h3>
+          <div class="rep-head"><h3>${$t('Top products')}</h3>${detail('product')}</div>
           ${data.topProducts.length ? rankList(data.topProducts.map((p, i) => ({
             idx: i + 1,
             name: p.name,
@@ -179,6 +185,12 @@ export const screen = {
         if (!from || !to) { toast($t('Pick both dates'), 'warn'); return; }
         load();
       });
+      const openSales = (groupBy) => {
+        ctx.state.salesReportPreset = { preset, from: range.from, to: range.to, groupBy };
+        ctx.router.show('salesreport');
+      };
+      root.querySelector('#repSales')?.addEventListener('click', () => openSales('day'));
+      root.querySelectorAll('[data-detail]').forEach((b) => b.addEventListener('click', () => openSales(b.dataset.detail)));
       const exp = root.querySelector('#repExport');
       if (exp) exp.addEventListener('click', () => exportCsv(data, range));
     }
@@ -188,6 +200,45 @@ export const screen = {
 };
 
 /* ---- render helpers ---- */
+
+/* "Details" opens the Sales report for the same period, grouped the same way. */
+function detail(groupBy) {
+  return `<button class="rep-detail" type="button" data-detail="${esc(groupBy)}">${esc($t('Details'))} <span aria-hidden="true">${arrow()}</span></button>`;
+}
+
+/* Each person's till: what they sold and took back, how big a sale is, and
+   what it earned (v1.47.0). */
+function staffPanel(rows, money) {
+  return panel(rows, (c) => c.userName, (c) => [
+    money(c.sales),
+    $t('{count} sales · average {avg} · {items} items each', { count: c.count, avg: money(c.avgSale || 0), items: c.itemsPerSale || 0 }),
+    c.refundCount ? $t('{n} refunds · {amount}', { n: c.refundCount, amount: money(c.refunds) }) : '',
+    c.margin == null ? $t('gp {amount}', { amount: money(c.gp) }) : $t('gp {amount} · {pct}% margin', { amount: money(c.gp), pct: c.margin }),
+  ].concat(c.discounts ? [$t('discounts {amount} on {n} · {approved} approved', { amount: money(c.discounts), n: c.discountedSales || 0, approved: c.approvedDiscounts || 0 })] : []));
+}
+
+function hourChart(hours) {
+  const W = 340, H = 116, PAD = 8, H2 = 86, base = H - H2;
+  const first = Math.min(...hours.map((h) => h.hour));
+  const last = Math.max(...hours.map((h) => h.hour));
+  const span = [];
+  for (let h = first; h <= last; h++) span.push(hours.find((x) => x.hour === h) || { hour: h, sales: 0, count: 0 });
+  const max = Math.max(1, ...span.map((d) => d.sales));
+  const bw = (W - PAD * 2) / Math.max(1, span.length);
+  const loc = dateLocale();
+  const label = (h) => new Date(2000, 0, 1, h).toLocaleTimeString(loc, { hour: 'numeric' });
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" aria-label="${esc($t('Sales by hour of the day'))}">
+    ${span.map((d, i) => {
+      const h = d.sales ? Math.max(2, Math.round((d.sales / max) * H2)) : 0;
+      const x = Math.round(PAD + i * bw + bw * 0.15);
+      const w = Math.max(2, Math.round(bw * 0.7));
+      return `<g><title>${esc(label(d.hour))} — ${fmt(d.sales)} (${d.count})</title>
+        <rect x="${x}" y="${base + H2 - h}" width="${w}" height="${h}" rx="3" fill="#1c5d99"></rect>
+        ${span.length <= 12 || i % 2 === 0 ? `<text x="${x + w / 2}" y="${H - 3}" text-anchor="middle" font-size="8" fill="#7b8ca0">${esc(label(d.hour))}</text>` : ''}</g>`;
+    }).join('')}
+    <line x1="${PAD}" y1="${base}" x2="${W - PAD}" y2="${base}" stroke="#eef2f7" stroke-width="1"></line>
+  </svg>`;
+}
 
 function panel(rows, name, cells) {
   if (!rows || !rows.length) return `<p class="empty">${$t('Nothing in this window.')}</p>`;
@@ -261,8 +312,10 @@ function exportCsv(data, range) {
     (r) => [r.date, money(r.sales), String(r.count), money(r.gp)]);
   pushList('BY_CATEGORY', ['category', 'sales', 'units', 'gross_profit'], data.byCategory,
     (r) => [r.category, money(r.sales), String(r.units), money(r.gp)]);
-  pushList('BY_CASHIER', ['cashier', 'sales', 'count', 'units', 'gross_profit', 'discounts', 'discounted_sales', 'approved'], data.byCashier,
-    (r) => [r.userName, money(r.sales), String(r.count), String(r.units), money(r.gp), money(r.discounts || 0), String(r.discountedSales || 0), String(r.approvedDiscounts || 0)]);
+  pushList('BY_CASHIER', ['cashier', 'sales', 'count', 'units', 'gross_profit', 'discounts', 'discounted_sales', 'approved', 'refunds', 'refund_count', 'avg_sale', 'items_per_sale', 'margin_pct'], data.byCashier,
+    (r) => [r.userName, money(r.sales), String(r.count), String(r.units), money(r.gp), money(r.discounts || 0), String(r.discountedSales || 0), String(r.approvedDiscounts || 0),
+      money(r.refunds || 0), String(r.refundCount || 0), money(r.avgSale || 0), String(r.itemsPerSale || 0), r.margin == null ? '' : String(r.margin)]);
+  pushList('BY_HOUR', ['hour', 'sales', 'count'], data.byHour || [], (r) => [String(r.hour).padStart(2, '0') + ':00', money(r.sales), String(r.count)]);
   pushList('BY_PAYMENT', ['method', 'net_amount', 'tenders'], data.byTender,
     (r) => [r.label, money(r.amount), String(r.count)]);
   pushList('TOP_PRODUCTS', ['name', 'sku', 'units', 'sales', 'gross_profit'], data.topProducts,

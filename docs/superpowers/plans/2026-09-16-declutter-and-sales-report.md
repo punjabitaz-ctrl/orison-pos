@@ -8,7 +8,7 @@
 
 Two sprints, one release each.
 
-## Sprint A — v1.46.0 · A calmer Sell screen
+## Sprint A — v1.46.0 · A calmer Sell screen ✅ shipped (+ v1.46.1 category icons)
 
 - **Browse by category.** The Sell screen opens on category tiles, each showing
   its name and how many products it holds. Tapping one shows that category's
@@ -29,7 +29,7 @@ Two sprints, one release each.
 
   This replaces one flat list of twenty.
 
-## Sprint B — v1.47.0 · Sales report
+## Sprint B — v1.47.0 · Sales report ✅ shipped
 
 - **Menu → Sales report** (managers and admins; a cashier sees their own sales
   only).

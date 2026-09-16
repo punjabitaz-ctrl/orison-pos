@@ -178,6 +178,7 @@ web-accessible status page without app load.
 | Owner live view | Set cadence to 2–5 min; dashboard reloads on focus/sync. |
 | Today's sales file | Dashboard → *Export today → Drive* (store-wide for admin/manager, own rows for a cashier). |
 | Daily numbers & GP | Reports → Today/Week/Month/Custom presets → CSV export (admin/manager). |
+| What sold, by whom | Menu → *Sales Report* — pick a period and filters (staff, category, product, payment, channel, customer), group the breakdown, open a sale to see its lines; *Summary CSV*, *Sales CSV* (line by line) or *Print*. Cashiers see their own sales. |
 | The books | Menu → *Accounts* (admin) — period presets; P&L, trial balance, balance movements, journal; *Journal CSV* / *Trial balance CSV* for the accountant. "Books balance" should always show; supplier payments are outside the POS. |
 | Reports by email | Settings → *Scheduled reports* (admin) — recipients + daily/weekly/monthly switches. Needs `installReportTriggers()` run once. |
 | Add a supplier | Purchases → Suppliers → *Add supplier* (**admin only** since v1.23.0). |

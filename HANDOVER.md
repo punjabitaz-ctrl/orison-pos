@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.46.1** — category icons on the Sell screen (`2026-09-16`) |
-| Validation bar | `backend-sim` **PASS 983 / FAIL 0** · client units **PASS 515 / FAIL 0** · demo **PASS 28 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.47.0** — dedicated Sales report + more detailed Reports (`2026-09-16`) |
+| Validation bar | `backend-sim` **PASS 1022 / FAIL 0** · client units **PASS 530 / FAIL 0** · demo **PASS 28 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,15 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.47.0** Sales report (Sprint B).
+  - `salesReport_` (`/api/reports/sales`) is built on `salesLines_` /
+    `splitCents_` / `tenderAmountsC_`. Cashiers are forced to their own
+    `userId`, with cost fields omitted.
+  - `reports_` `byCashier` gains detail, and there is a new `byHour`.
+  - Client `public/js/screens/salesreport.js`, with exported pure helpers that
+    are tested. Reports links in via `ctx.state.salesReportPreset`.
+  - 39 sim checks, reconciled with Reports and the books.
+  - The router resets `#screen.scrollTop`.
 - **v1.46.1** Category icons: `CATEGORY_ICONS` and the `CATEGORY_RULES` keyword
   table in components.js (first match wins; audio is checked before phones).
 - **v1.46.0** Declutter (Sprint A of `docs/superpowers/plans/2026-09-16-declutter-and-sales-report.md`).
@@ -567,7 +576,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **983 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **1022 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0

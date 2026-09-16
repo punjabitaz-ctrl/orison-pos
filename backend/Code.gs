@@ -72,6 +72,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/customers/receivables': return receivables_(session);
     case '/api/reports':         return reports_(session, params);
     case '/api/accounting':      return accounting_(session, params);
+    case '/api/reports/sales':   return salesReport_(session, params);
     case '/api/shifts':          return shifts_(session, params);
     case '/api/shifts/open':     return shiftOpen_(session, payload);
     case '/api/shifts/close':    return shiftClose_(session, payload);
@@ -3835,6 +3836,7 @@ function reports_(session, params) {
   var byProduct = Object.create(null);
   var byCustomerTx = Object.create(null);
   var byChannel = Object.create(null);
+  var byHour = Object.create(null);
   var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0, discounts: 0, approvedDiscounts: 0, tradeIns: 0, tradeInCount: 0 };
 
   function costOf_(t) {
@@ -3870,7 +3872,8 @@ function reports_(session, params) {
     var costTotal = costOf_(t);
     var day = dayKeyOf_(t.created_at);
     var d = byDay[day] || (byDay[day] = { sales: 0, count: 0, gp: 0 });
-    var c = byCash[String(t.user_id || '')] || (byCash[String(t.user_id || '')] = { sales: 0, count: 0, units: 0, gp: 0, discounts: 0, discountedSales: 0, approved: 0 });
+    var c = byCash[String(t.user_id || '')] || (byCash[String(t.user_id || '')] = { sales: 0, count: 0, units: 0, gp: 0, discounts: 0, discountedSales: 0, approved: 0,
+      grossSales: 0, refunds: 0, refundCount: 0, revC: 0 });
 
     if (kind === 'sale') {
       var g1 = num_(t.grand_total);
@@ -3887,6 +3890,13 @@ function reports_(session, params) {
       summary.grossProfit += gp;
       d.sales += g1; d.count += 1; d.gp += gp;
       c.sales += g1; c.count += 1; c.gp += gp;
+      c.grossSales += g1;
+      c.revC += cents_(saleNetExTax_(t) || 0);
+      var hourKey = new Date(new Date(String(t.created_at)).getTime() + tzMin * 60000).getUTCHours();
+      if (!isNaN(hourKey)) {
+        var hb = byHour[hourKey] || (byHour[hourKey] = { sales: 0, count: 0 });
+        hb.sales += g1; hb.count += 1;
+      }
       c.units += items.reduce(function (s, it) { return s + (it.quantity || 1); }, 0);
       var saleDiscC = 0;
 
@@ -3948,6 +3958,8 @@ function reports_(session, params) {
       var refundGp = refundSplit_(t, saleByClient).netC / 100 - costTotal;
       summary.grossProfit -= refundGp;
       c.sales -= num_(t.grand_total); c.gp -= refundGp;
+      c.refunds += num_(t.grand_total); c.refundCount += 1;
+      c.revC -= refundSplit_(t, saleByClient).netC;
       for (var ri = 0; ri < tenders.length; ri++) {
         var re = byTender[String(tenders[ri].type || 'cash')] || (byTender[String(tenders[ri].type || 'cash')] = { amount: 0, count: 0 });
         re.amount -= num_(tenders[ri].amount);
@@ -4011,9 +4023,19 @@ function reports_(session, params) {
     return { category: k, units: byCat[k].units, sales: num_(byCat[k].sales), gp: num_(byCat[k].gp) };
   }).sort(function (a, b) { return b.sales - a.sales; });
   var byCashOut = Object.keys(byCash).map(function (k) {
-    return { userName: userName[k] || '—', sales: num_(byCash[k].sales), count: byCash[k].count, units: byCash[k].units, gp: num_(byCash[k].gp),
-      discounts: round2_(byCash[k].discounts), discountedSales: byCash[k].discountedSales, approvedDiscounts: byCash[k].approved };
+    var e = byCash[k];
+    return { userId: k, userName: userName[k] || '—', sales: num_(e.sales), count: e.count, units: e.units, gp: num_(e.gp),
+      discounts: round2_(e.discounts), discountedSales: e.discountedSales, approvedDiscounts: e.approved,
+      /* v1.47.0: the detail a manager asks about a person's till */
+      grossSales: round2_(e.grossSales), refunds: round2_(e.refunds), refundCount: e.refundCount,
+      avgSale: e.count ? round2_(e.grossSales / e.count) : 0,
+      itemsPerSale: e.count ? Math.round(e.units * 100 / e.count) / 100 : 0,
+      margin: e.revC ? Math.round(e.gp * 100 * 1000 / e.revC) / 10 : null };
   }).sort(function (a, b) { return b.sales - a.sales; });
+  var byHourOut = [];
+  for (var hk = 0; hk < 24; hk++) {
+    if (byHour[hk]) byHourOut.push({ hour: hk, sales: round2_(byHour[hk].sales), count: byHour[hk].count });
+  }
   var byTenderOut = Object.keys(byTender).map(function (k) {
     return { type: k, label: REPORT_DENOM_LABELS[k] || k, amount: num_(byTender[k].amount), count: byTender[k].count };
   }).sort(function (a, b) { return b.amount - a.amount; });
@@ -4053,6 +4075,7 @@ function reports_(session, params) {
     byDay: byDayOut,
     byCategory: byCatOut,
     byCashier: byCashOut,
+    byHour: byHourOut,
     byTender: byTenderOut,
     byChannel: Object.keys(byChannel).map(function (k) {
       return { channel: k, sales: num_(byChannel[k].sales), count: byChannel[k].count, units: byChannel[k].units };
@@ -4361,6 +4384,351 @@ function accounting_(session, params) {
     movements: movements,
     journal: journal,
     checks: { entries: journal.length, rounded: rounded, balanced: tdC === tcC },
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Sales report (v1.47.0)
+ *
+ *  Every sale and refund, broken into its lines, with each line's share of
+ *  the discount, the tax and the cost worked out in whole cents so the lines
+ *  of a transaction always add back to it exactly. Filters and groupings then
+ *  work on lines: "Phones in March" is the phones' own revenue, not the whole
+ *  of every basket that had a phone in it. The money rules are the ones
+ *  Reports and the books use (saleNetExTax_, refundSplit_, captured cost).
+ * ------------------------------------------------------------------ */
+
+var SALES_GROUP_BY = { day: 1, staff: 1, category: 1, product: 1, tender: 1, channel: 1, customer: 1, hour: 1 };
+var SALES_ROWS_MAX = 5000;
+
+/* Share whole cents out by weight so the parts add back to the total exactly
+   (largest remainder). No weight at all shares equally. */
+function splitCents_(totalC, weights) {
+  var n = weights.length;
+  if (!n) return [];
+  var w = [], sum = 0;
+  for (var i = 0; i < n; i++) { w.push(Math.max(0, Number(weights[i]) || 0)); sum += w[i]; }
+  if (sum <= 0) { for (var e = 0; e < n; e++) w[e] = 1; sum = n; }
+  var sign = totalC < 0 ? -1 : 1, abs = Math.abs(Math.round(totalC));
+  var out = [], rem = [], used = 0;
+  for (var j = 0; j < n; j++) {
+    var exact = abs * w[j] / sum;
+    var fl = Math.floor(exact);
+    out.push(fl); used += fl;
+    rem.push({ i: j, r: exact - fl });
+  }
+  rem.sort(function (a, b) { return b.r - a.r || a.i - b.i; });
+  for (var k = 0; k < abs - used; k++) out[rem[k % n].i] += 1;
+  return out.map(function (v) { return v * sign; });
+}
+
+/* The lines of one completed sale or refund, each with its own cents. */
+function salesLines_(t, kind, prodById, saleByClient) {
+  var items = itobjs_(t.items_json);
+  var grossC = cents_(t.grand_total);
+  if (!items.length) {
+    /* an amount-only refund (or a legacy row) still moved money: it is one line
+       holding the whole amount, so the report never quietly drops it */
+    var bareTaxC = kind === 'sale' ? cents_(t.tax_amount) : refundSplit_(t, saleByClient).taxC;
+    return [{ productId: '', name: kind === 'refund' ? 'Refund (no items)' : 'Sale (no items)', sku: '', category: 'Uncategorized',
+      serialNumber: '', qty: 0, unitPrice: 0, discountPct: 0,
+      listC: 0, discC: 0, netC: grossC - bareTaxC, taxC: bareTaxC, grossC: grossC, costC: 0 }];
+  }
+  var taxC, netTotalC;
+  var weights = [], taxWeights = [], listCs = [], discCs = [], costWeights = [], costFloat = 0;
+  var orderPct = kind === 'sale' ? num_(t.discount_pct) : 0;
+  var inclusive = String(t.tax_inclusive) === '1' && num_(t.tax_rate) > 0;
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i] || {};
+    var qty = it.quantity || 1;
+    var prod = prodById[String(it.productId || '')];
+    var listC = Math.round(num_(it.unitPrice) * 100 * qty);
+    var revC = listC;
+    if (kind === 'sale') {
+      var lineNetC = Math.round(num_(it.unitPrice) * 100 * qty * (1 - clampPct_(num_(it.discountPct)) / 100));
+      revC = lineNetC * (100 - orderPct) / 100;
+      if (inclusive && it.taxable !== false) revC = revC * 100 / (100 + num_(t.tax_rate));
+    }
+    weights.push(revC);
+    taxWeights.push(it.taxable === false ? 0 : revC);
+    listCs.push(listC);
+    discCs.push(kind === 'sale' ? Math.max(0, listC - Math.round(revC)) : 0);
+    var costPer = (typeof it.unitCost === 'number' && it.unitCost > 0) ? it.unitCost : (prod ? num_(prod.cost_price) : 0);
+    costWeights.push(qty * costPer);
+    costFloat += qty * costPer;
+  }
+  if (kind === 'sale') {
+    taxC = cents_(t.tax_amount);
+  } else {
+    taxC = refundSplit_(t, saleByClient).taxC;
+  }
+  netTotalC = grossC - taxC;
+  var sumTaxW = 0;
+  for (var s = 0; s < taxWeights.length; s++) sumTaxW += taxWeights[s];
+  var netCs = splitCents_(netTotalC, weights);
+  var taxCs = splitCents_(taxC, sumTaxW > 0 ? taxWeights : weights);
+  var costCs = splitCents_(Math.round(costFloat * 100), costWeights);
+  var out = [];
+  for (var l = 0; l < items.length; l++) {
+    var li = items[l] || {};
+    var pr = prodById[String(li.productId || '')];
+    out.push({
+      productId: String(li.productId || ''),
+      name: String(li.name || (pr && pr.name) || 'Item'),
+      sku: pr ? String(pr.sku || '') : '',
+      category: pr ? (String(pr.category || '').trim() || 'Uncategorized') : (String(li.productId) === 'repair-labour' ? 'Services' : 'Uncategorized'),
+      serialNumber: li.serialNumber ? String(li.serialNumber) : '',
+      qty: li.quantity || 1,
+      unitPrice: num_(li.unitPrice),
+      discountPct: clampPct_(num_(li.discountPct)),
+      listC: listCs[l], discC: discCs[l], netC: netCs[l], taxC: taxCs[l], grossC: netCs[l] + taxCs[l], costC: costCs[l],
+    });
+  }
+  return out;
+}
+
+/* Money in by tender for a transaction, change taken off cash. */
+function tenderAmountsC_(t) {
+  var list = [];
+  try { list = JSON.parse(t.tenders_json || '[]'); } catch (_) {}
+  var grossC = cents_(t.grand_total);
+  if (!Array.isArray(list) || !list.length) return [{ type: 'cash', c: grossC }];
+  var out = [], sum = 0;
+  for (var i = 0; i < list.length; i++) {
+    var c = cents_((list[i] || {}).amount);
+    out.push({ type: String((list[i] || {}).type || 'cash'), c: c });
+    sum += c;
+  }
+  var change = sum - grossC;
+  for (var j = 0; j < out.length && change > 0; j++) {
+    if (out[j].type !== 'cash') continue;
+    var take = Math.min(change, out[j].c);
+    out[j].c -= take; change -= take;
+  }
+  return out.filter(function (x) { return x.c !== 0; });
+}
+
+function salesReport_(session, params) {
+  requireRole_(session, ['admin', 'manager', 'cashier']);
+  params = params || {};
+  var role = String(session.role || '');
+  var isStore = role === 'admin' || role === 'manager';
+  var period = reportPeriod_(params);
+  var tzMin = period.tzMin;
+  var groupBy = SALES_GROUP_BY[String(params.groupBy || '')] ? String(params.groupBy) : 'day';
+  var f = {
+    userId: isStore ? String(params.userId || '') : String(session.uid || ''),
+    customerId: String(params.customerId || ''),
+    channel: String(params.channel || ''),
+    tender: String(params.tender || ''),
+    kind: params.kind === 'sale' || params.kind === 'refund' ? String(params.kind) : '',
+    category: String(params.category || ''),
+    productId: String(params.productId || ''),
+  };
+  var offset = Math.max(0, parseInt(params.offset, 10) || 0);
+  var limit = Math.min(SALES_ROWS_MAX, Math.max(1, parseInt(params.limit, 10) || 100));
+
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var prodById = Object.create(null);
+  for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
+  var custName = Object.create(null);
+  var custRows = readRows_('Customers', CUSTOMERS_HEADERS);
+  for (var c = 0; c < custRows.length; c++) custName[String(custRows[c].id)] = String(custRows[c].name || '');
+  var allTx = readRows_('Transactions', TX_HEADERS);
+  var saleByClient = saleIndex_(allTx);
+
+  var inPeriod = allTx.filter(function (t) {
+    var k = String(t.kind || 'sale');
+    return String(t.status) === 'COMPLETED' && (k === 'sale' || k === 'refund')
+      && String(t.created_at || '') >= period.fromIso && String(t.created_at || '') <= period.toIso;
+  });
+
+  /* filter choices come from the period before the filters, so picking one never empties the others */
+  var opt = { staff: Object.create(null), categories: Object.create(null), tenders: Object.create(null), channels: Object.create(null), customers: Object.create(null), products: Object.create(null) };
+
+  var lineMatch = function (ln) {
+    if (f.category && ln.category !== f.category) return false;
+    if (f.productId && ln.productId !== f.productId) return false;
+    return true;
+  };
+
+  var sum = { salesCount: 0, refundCount: 0, grossC: 0, refundsC: 0, taxInC: 0, taxOutC: 0, netExC: 0, discC: 0, costC: 0, unitsSold: 0, unitsReturned: 0 };
+  var groups = Object.create(null);
+  var rows = [];
+
+  function groupOf(key, label) {
+    var g = groups[key] || (groups[key] = { key: key, label: label, sales: Object.create(null), refunds: Object.create(null), units: 0, grossC: 0, refundsC: 0, taxC: 0, netExC: 0, discC: 0, costC: 0 });
+    return g;
+  }
+
+  for (var r = 0; r < inPeriod.length; r++) {
+    var t = inPeriod[r];
+    var kind = String(t.kind || 'sale');
+    var uid = String(t.user_id || '');
+    var ch = normaliseChannel_(t.channel);
+    var cid = String(t.customer_id || '');
+    var tenders = tenderAmountsC_(t);
+    var lines = salesLines_(t, kind, prodById, saleByClient);
+
+    opt.staff[uid] = 1; opt.channels[ch] = 1;
+    if (cid) opt.customers[cid] = 1;
+    for (var ot = 0; ot < tenders.length; ot++) opt.tenders[tenders[ot].type] = 1;
+    for (var ol = 0; ol < lines.length; ol++) { opt.categories[lines[ol].category] = 1; if (lines[ol].productId) opt.products[lines[ol].productId] = lines[ol].name; }
+
+    if (f.userId && uid !== f.userId) continue;
+    if (f.customerId && cid !== f.customerId) continue;
+    if (f.channel && ch !== f.channel) continue;
+    if (f.kind && kind !== f.kind) continue;
+    if (f.tender && !tenders.some(function (x) { return x.type === f.tender; })) continue;
+    var kept = lines.filter(lineMatch);
+    if (!kept.length) continue;
+
+    var sign = kind === 'refund' ? -1 : 1;
+    var txGrossC = 0, txTaxC = 0, txNetC = 0, txDiscC = 0, txCostC = 0, txUnits = 0;
+    for (var k = 0; k < kept.length; k++) {
+      var ln = kept[k];
+      txGrossC += ln.grossC; txTaxC += ln.taxC; txNetC += ln.netC; txDiscC += ln.discC; txCostC += ln.costC; txUnits += ln.qty;
+    }
+    if (kind === 'sale') {
+      sum.salesCount++; sum.grossC += txGrossC; sum.taxInC += txTaxC; sum.netExC += txNetC; sum.discC += txDiscC; sum.costC += txCostC; sum.unitsSold += txUnits;
+    } else {
+      sum.refundCount++; sum.refundsC += txGrossC; sum.taxOutC += txTaxC; sum.netExC -= txNetC; sum.costC -= txCostC; sum.unitsReturned += txUnits;
+    }
+
+    var staffName = auditName_(uid) || '—';
+    var custLabel = cid ? (custName[cid] || 'Customer') : '';
+    if (groupBy === 'tender') {
+      /* a basket paid two ways counts in both, in proportion to what was kept */
+      var fullC = 0;
+      for (var fl = 0; fl < lines.length; fl++) fullC += lines[fl].grossC;
+      var shares = splitCents_(txGrossC, tenders.map(function (x) { return x.c; }));
+      for (var ti = 0; ti < tenders.length; ti++) {
+        var tg = groupOf('t:' + tenders[ti].type, tenders[ti].type);
+        if (kind === 'sale') { tg.sales[t.id] = 1; tg.grossC += shares[ti]; }
+        else { tg.refunds[t.id] = 1; tg.refundsC += shares[ti]; }
+        void fullC;
+      }
+    } else {
+      for (var g2 = 0; g2 < kept.length; g2++) {
+        var L = kept[g2];
+        var key, label;
+        if (groupBy === 'day') { key = localDayKey_(t.created_at, tzMin); label = key; }
+        else if (groupBy === 'hour') {
+          var ms = new Date(String(t.created_at)).getTime() + tzMin * 60000;
+          var hh = isNaN(ms) ? 0 : new Date(ms).getUTCHours();
+          key = (hh < 10 ? '0' : '') + hh; label = key + ':00';
+        }
+        else if (groupBy === 'staff') { key = uid; label = staffName; }
+        else if (groupBy === 'category') { key = L.category; label = L.category; }
+        else if (groupBy === 'product') { key = L.productId || ('name:' + L.name); label = L.name; }
+        else if (groupBy === 'channel') { key = ch; label = ch; }
+        else { key = cid || 'walk-in'; label = cid ? custLabel : ''; }
+        var gg = groupOf(key, label);
+        if (kind === 'sale') {
+          gg.sales[t.id] = 1; gg.units += L.qty; gg.grossC += L.grossC; gg.taxC += L.taxC; gg.netExC += L.netC; gg.discC += L.discC; gg.costC += L.costC;
+        } else {
+          gg.refunds[t.id] = 1; gg.units -= L.qty; gg.refundsC += L.grossC; gg.taxC -= L.taxC; gg.netExC -= L.netC; gg.costC -= L.costC;
+        }
+      }
+    }
+
+    var orig = kind === 'refund' ? saleByClient[String(t.original_client_tx || '')] : null;
+    rows.push({
+      id: String(t.id),
+      kind: kind,
+      receiptNo: String(t.receipt_no || ''),
+      originalReceiptNo: orig ? String(orig.receipt_no || '') : '',
+      createdAt: String(t.created_at || ''),
+      staff: staffName,
+      userId: uid,
+      customer: custLabel,
+      customerId: cid,
+      channel: ch,
+      externalRef: String(t.external_ref || ''),
+      units: txUnits,
+      discount: txDiscC / 100,
+      tax: sign * txTaxC / 100,
+      total: sign * txGrossC / 100,
+      partial: kept.length < lines.length,
+      tenders: tenders.map(function (x) { return { type: x.type, amount: sign * x.c / 100 }; }),
+      grossProfit: isStore ? sign * (txNetC - txCostC) / 100 : undefined,
+      lines: kept.map(function (x) {
+        var o = { name: x.name, sku: x.sku, category: x.category, serialNumber: x.serialNumber, qty: x.qty, unitPrice: x.unitPrice,
+          discountPct: x.discountPct, discount: x.discC / 100, tax: sign * x.taxC / 100, total: sign * x.grossC / 100 };
+        if (isStore) { o.cost = sign * x.costC / 100; o.grossProfit = sign * (x.netC - x.costC) / 100; }
+        return o;
+      }),
+    });
+  }
+
+  rows.sort(function (a, b) { return b.createdAt.localeCompare(a.createdAt); });
+
+  var totalNetC = sum.grossC - sum.refundsC;
+  var groupList = Object.keys(groups).map(function (key) {
+    var g = groups[key];
+    var netC = g.grossC - g.refundsC;
+    var out = {
+      key: g.key, label: g.label,
+      sales: Object.keys(g.sales).length, refunds: Object.keys(g.refunds).length,
+      units: g.units, gross: g.grossC / 100, refundsAmount: g.refundsC / 100, net: netC / 100,
+      tax: g.taxC / 100, netExTax: g.netExC / 100, discounts: g.discC / 100,
+      share: totalNetC ? Math.round(netC * 10000 / totalNetC) / 100 : 0,
+    };
+    if (groupBy === 'tender') { out.tax = null; out.netExTax = null; out.discounts = null; out.units = null; }
+    if (isStore && groupBy !== 'tender') {
+      out.cost = g.costC / 100;
+      out.grossProfit = (g.netExC - g.costC) / 100;
+      out.margin = g.netExC ? Math.round((g.netExC - g.costC) * 1000 / g.netExC) / 10 : null;
+    }
+    return out;
+  });
+  if (groupBy === 'day' || groupBy === 'hour') groupList.sort(function (a, b) { return String(a.key).localeCompare(String(b.key)); });
+  else groupList.sort(function (a, b) { return b.net - a.net; });
+
+  var summary = {
+    salesCount: sum.salesCount,
+    refundCount: sum.refundCount,
+    grossSales: sum.grossC / 100,
+    refunds: sum.refundsC / 100,
+    netSales: totalNetC / 100,
+    taxCollected: sum.taxInC / 100,
+    taxRefunded: sum.taxOutC / 100,
+    tax: (sum.taxInC - sum.taxOutC) / 100,
+    netExTax: sum.netExC / 100,
+    discounts: sum.discC / 100,
+    unitsSold: sum.unitsSold,
+    unitsReturned: sum.unitsReturned,
+    avgSale: sum.salesCount ? Math.round(sum.grossC / sum.salesCount) / 100 : 0,
+    itemsPerSale: sum.salesCount ? Math.round(sum.unitsSold * 100 / sum.salesCount) / 100 : 0,
+  };
+  if (isStore) {
+    summary.cost = sum.costC / 100;
+    summary.grossProfit = (sum.netExC - sum.costC) / 100;
+    summary.margin = sum.netExC ? Math.round((sum.netExC - sum.costC) * 1000 / sum.netExC) / 10 : null;
+  }
+
+  var nameList = function (map, label) {
+    return Object.keys(map).map(function (id) { return { id: id, name: label(id) }; })
+      .sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+  };
+  return {
+    period: { from: period.fromIso, to: period.toIso },
+    filters: f,
+    groupBy: groupBy,
+    canSeeCost: isStore,
+    summary: summary,
+    groups: groupList,
+    rows: rows.slice(offset, offset + limit),
+    rowsTotal: rows.length,
+    offset: offset,
+    options: {
+      staff: isStore ? nameList(opt.staff, function (id) { return auditName_(id) || '—'; }) : [],
+      categories: Object.keys(opt.categories).sort(),
+      tenders: Object.keys(opt.tenders).sort(),
+      channels: Object.keys(opt.channels).sort(),
+      customers: nameList(opt.customers, function (id) { return custName[id] || 'Customer'; }),
+      products: nameList(opt.products, function (id) { return opt.products[id]; }).slice(0, 500),
+    },
   };
 }
 

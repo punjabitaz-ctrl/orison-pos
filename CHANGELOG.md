@@ -5,6 +5,67 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.47.0] — 2026-09-16
+
+Sprint B of team feedback on the demo: "reports should be more detailed and
+have a dedicated sales report function".
+
+### Added
+
+- **Sales report** (Menu → Insights → *Sales Report*; `/api/reports/sales`).
+  - **Filters:** period, staff member, category, product, payment method,
+    channel, customer, and sales/refunds. The choices come from the period, so
+    picking one never empties the others. A "Clear n filters" button resets
+    them.
+  - **Headline figures:**
+    - net sales, sold and refunded
+    - sales and refund counts, average sale, items per sale
+    - units sold and returned, tax (with tax refunded), discounts given
+    - gross profit and margin (managers and admins)
+  - **Breakdown by** day, hour of the day, staff member, category, product,
+    payment method, channel or customer. Each row shows sales and refund
+    counts, units, sold, refunded, net, gross profit, margin and share.
+    Tapping a staff member, category, product, payment method, channel or
+    customer applies that filter.
+  - **The sales themselves:** every sale and refund (newest first, 100 at a
+    time) with time, receipt, staff member, customer, items, payment, total
+    and gross profit.
+    - Opening one shows its lines: quantity, price, discount, tax, total, cost
+      and profit, with how it was paid, the channel, and for a refund the
+      receipt it reverses.
+  - **Exports:**
+    - *Summary CSV*: the headline figures and the breakdown.
+    - *Sales CSV*: one row per sold or returned line, in the till's local date
+      and time, up to 5,000 sales. Text is formula-safe; money stays numeric,
+      refunds included.
+    - *Print*: a clean page without the navigation.
+  - **Cashiers** can open it for **their own sales only**. The server forces
+    the staff filter, and cost, profit and margin are never sent.
+- **Line-level money.** A sale's discount, tax and cost are shared across its
+  lines in whole cents (largest remainder), so the lines always add back to
+  the sale exactly. A category or product filter shows only that part of a
+  mixed basket, and marks the row *part*. An item-less refund is kept as one
+  line.
+  - The simulator reconciles gross sales, refunds, tax, discounts and gross
+    profit with Reports, and net sales before tax with the books, over the
+    whole day's ledger. It checks that every transaction's lines add back to
+    the cent, and that every grouping adds up to net sales.
+- **Reports, in more detail.**
+  - *By staff member* (was *By cashier*) adds each person's sales count,
+    average sale, items per sale, refunds and margin (`byCashier` gains
+    `grossSales`, `refunds`, `refundCount`, `avgSale`, `itemsPerSale`,
+    `margin`, `userId`).
+  - A new *Sales by hour of the day* chart (`byHour`).
+  - Every breakdown has a *Details* link to the Sales report for the same
+    period and grouping, and the header has a *Sales report* button.
+  - The Reports CSV gains those columns and a `BY_HOUR` block.
+
+### Fixed
+
+- **A new screen now opens at its top.** The screen scroll area kept the
+  previous screen's position, so opening a screen from a long one could land
+  halfway down it.
+
 ## [1.46.1] — 2026-09-16
 
 ### Added

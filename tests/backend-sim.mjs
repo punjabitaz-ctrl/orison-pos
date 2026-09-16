@@ -4719,6 +4719,113 @@ check('statement carries the changer/cashier',
   })());
 }
 {
+  section('sales report (v1.47.0)');
+
+  const sAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const sMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const sCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const sUsers = req('/api/admin/users/list', {}, { session: sAdm }).data.users;
+  const amaraId = sUsers.find((u) => u.email === 'amara@example.com').id;
+  const sarahId = sUsers.find((u) => u.email === 'sarah@example.com').id;
+  req('/api/admin/store', { taxRate: 8 }, { session: sAdm });
+  const day = new Date().toISOString().slice(0, 10);
+  const near = (a, b) => Math.abs(a - b) < 0.005;
+  const sales = (params, session) => req('/api/reports/sales', {}, { session: session || sAdm, params: Object.assign({ from: day, to: day }, params || {}) });
+
+  const phone = req('/api/admin/products', { name: 'SR Phone', sku: 'SR-PH', category: 'SR-Phones', costPrice: 10, retailPrice: 50, onHand: 20 }, { session: sAdm }).data.id;
+  const cable = req('/api/admin/products', { name: 'SR Cable', sku: 'SR-CB', category: 'SR-Cables', costPrice: 2, retailPrice: 10, onHand: 50 }, { session: sAdm }).data.id;
+  const buyer = req('/api/admin/customers', { name: 'SR Buyer' }, { session: sAdm }).data.customer.id;
+  const push = (session, tx) => req('/api/sync/push', { deviceId: 'till-sr', batch: [Object.assign({ grandTotal: 1, discountPct: 0, createdAt: new Date().toISOString() }, tx)] }, { session }).data.results[0];
+
+  /* Amara: a phone and two cables with 10% off the cables, 8% tax on top.
+     50 + 18 = 68 net, 5.44 tax, 73.44 total, paid by card, for a customer. */
+  const s1 = push(sCash, { clientTxId: 'sr-s1', userId: amaraId, customerId: buyer, tenders: [{ type: 'card', amount: 73.44 }],
+    items: [{ productId: phone, quantity: 1, unitPrice: 50 }, { productId: cable, quantity: 2, unitPrice: 10, discountPct: 10 }] });
+  /* Sarah: three cables in cash, change given. 30 + 2.40 = 32.40 */
+  const s2 = push(sMgr, { clientTxId: 'sr-s2', userId: sarahId, tenders: [{ type: 'cash', amount: 40 }],
+    items: [{ productId: cable, quantity: 3, unitPrice: 10 }] });
+  /* the phone comes back: 50 + 4.00 tax = 54 */
+  const r1 = push(sMgr, { clientTxId: 'sr-r1', kind: 'refund', originalClientTx: 'sr-s1', userId: sarahId, grandTotal: 54,
+    tenders: [{ type: 'card', amount: 54 }], items: [{ productId: phone, quantity: 1, unitPrice: 50 }] });
+  check('the report’s sample sales and refund went through', s1.accepted && s2.accepted && r1.accepted, JSON.stringify([s1, s2, r1]));
+
+  /* ---- whole-day totals agree with Reports ---- */
+  const all = sales();
+  check('an admin opens the sales report', all.ok === true, JSON.stringify(all).slice(0, 200));
+  const rep = req('/api/reports', {}, { session: sAdm, params: { from: day, to: day } }).data.summary;
+  const S = all.data.summary;
+  check('gross sales and the sales count agree with Reports', near(S.grossSales, rep.grossSales) && S.salesCount === rep.salesCount, JSON.stringify([S.grossSales, rep.grossSales, S.salesCount, rep.salesCount]));
+  check('refunds agree with Reports', near(S.refunds, rep.refunds), JSON.stringify([S.refunds, rep.refunds]));
+  check('tax collected agrees with Reports', near(S.taxCollected, rep.tax), JSON.stringify([S.taxCollected, rep.tax]));
+  check('discounts agree with Reports', near(S.discounts, rep.discounts), JSON.stringify([S.discounts, rep.discounts]));
+  check('gross profit agrees with Reports', near(S.grossProfit, rep.grossProfit), JSON.stringify([S.grossProfit, rep.grossProfit]));
+  const books = req('/api/accounting', {}, { session: sAdm, params: { from: day, to: day } }).data.pnl;
+  check('net sales before tax agree with the books', near(S.netExTax, books.netSales), JSON.stringify([S.netExTax, books.netSales]));
+
+  const everyRow = sales({ limit: 5000 }).data.rows;
+  check('every transaction’s lines add back to its total to the cent',
+    everyRow.length > 20 && everyRow.every((r) => Math.round(r.lines.reduce((n, l) => n + l.total * 100, 0)) === Math.round(r.total * 100)),
+    JSON.stringify(everyRow.find((r) => Math.round(r.lines.reduce((n, l) => n + l.total * 100, 0)) !== Math.round(r.total * 100))));
+  for (const g of ['day', 'staff', 'category', 'product', 'tender', 'channel', 'customer', 'hour']) {
+    const d = sales({ groupBy: g }).data;
+    check(`grouped by ${g}, the groups add up to net sales`, d.groupBy === g && near(d.groups.reduce((n, x) => n + x.net, 0), d.summary.netSales),
+      JSON.stringify([d.groups.reduce((n, x) => n + x.net, 0), d.summary.netSales]));
+  }
+  check('an unknown grouping falls back to days', sales({ groupBy: 'nonsense' }).data.groupBy === 'day');
+
+  /* ---- line-level filters take a basket apart ---- */
+  const cables = sales({ category: 'SR-Cables' }).data;
+  const cRow = cables.rows.find((r) => r.receiptNo && r.lines.every((l) => l.category === 'SR-Cables') && r.staff.indexOf('Amara') === 0);
+  check('filtered to a category, a mixed basket shows only that category’s part: 18 + 1.44 tax', cRow && cRow.total === 19.44 && cRow.tax === 1.44 && cRow.partial === true, JSON.stringify(cRow));
+  check('and its profit is that part’s profit (18 − 4)', cRow && cRow.grossProfit === 14, JSON.stringify(cRow && cRow.grossProfit));
+  check('the category’s totals: two sales, 5 units, 51.84 gross, no refunds',
+    cables.summary.salesCount === 2 && cables.summary.unitsSold === 5 && cables.summary.grossSales === 51.84 && cables.summary.refundCount === 0, JSON.stringify(cables.summary));
+  check('its discount is the cables’ 10%', cables.summary.discounts === 2, String(cables.summary.discounts));
+  const phones = sales({ productId: phone }).data;
+  check('the phone was sold and returned, so it nets to nothing', phones.summary.salesCount === 1 && phones.summary.refundCount === 1 && phones.summary.netSales === 0 && phones.summary.unitsSold - phones.summary.unitsReturned === 0, JSON.stringify(phones.summary));
+  check('a refund row is negative and names the receipt it reverses', phones.rows.some((r) => r.kind === 'refund' && r.total === -54 && r.originalReceiptNo && r.grossProfit === -40), JSON.stringify(phones.rows.find((r) => r.kind === 'refund')));
+
+  /* ---- transaction-level filters ---- */
+  check('filtered to a staff member, only their sales', sales({ userId: amaraId, category: 'SR-Cables' }).data.rows.every((r) => r.userId === amaraId));
+  check('filtered to a customer', sales({ customerId: buyer }).data.rows.every((r) => r.customerId === buyer) && sales({ customerId: buyer }).data.summary.salesCount === 1);
+  check('filtered to card payments', sales({ tender: 'card', category: 'SR-Cables' }).data.rows.every((r) => r.tenders.some((t) => t.type === 'card')));
+  check('refunds only', sales({ kind: 'refund' }).data.rows.every((r) => r.kind === 'refund') && sales({ kind: 'refund' }).data.summary.salesCount === 0);
+  const byTender = sales({ groupBy: 'tender', category: 'SR-Cables' }).data.groups;
+  check('cash counts what stayed in the drawer, not what was handed over (32.40, not 40)', byTender.some((g) => g.key === 't:cash' && g.net === 32.4), JSON.stringify(byTender));
+  const cashRow = sales({ userId: sarahId, category: 'SR-Cables' }).data.rows.find((r) => r.kind === 'sale' && r.total === 32.4);
+  check('a sale’s payment shows the cash kept, change taken off', cashRow && cashRow.tenders.length === 1 && cashRow.tenders[0].amount === 32.4, JSON.stringify(cashRow && cashRow.tenders));
+  const byStaff = sales({ groupBy: 'staff', category: 'SR-Cables' }).data.groups;
+  check('grouped by staff, with margins', byStaff.length === 2 && byStaff.every((g) => g.margin != null && g.label), JSON.stringify(byStaff));
+
+  /* ---- Reports: more detail per person, and by hour ---- */
+  const repFull = req('/api/reports', {}, { session: sAdm, params: { from: day, to: day } }).data;
+  const sarahRow = repFull.byCashier.find((c) => c.userId === sarahId);
+  const amaraRow = repFull.byCashier.find((c) => c.userId === amaraId);
+  check('Reports names each person\u2019s refunds, average sale and items per sale',
+    sarahRow && sarahRow.refundCount >= 1 && sarahRow.refunds >= 54 && sarahRow.avgSale > 0 && sarahRow.itemsPerSale > 0, JSON.stringify(sarahRow));
+  const perAmara = sales({ userId: amaraId }).data.summary;
+  check('a person\u2019s figures in Reports agree with the sales report filtered to them',
+    amaraRow && near(amaraRow.grossSales, perAmara.grossSales) && amaraRow.count === perAmara.salesCount && near(amaraRow.refunds, perAmara.refunds)
+    && near(amaraRow.avgSale, perAmara.avgSale) && amaraRow.margin === perAmara.margin,
+    JSON.stringify([amaraRow, perAmara]));
+  const hourSum = repFull.byHour.reduce((n, h) => n + h.count, 0);
+  check('Reports shows sales by hour of the day, adding up to the sales count',
+    repFull.byHour.length > 0 && hourSum === repFull.summary.salesCount && repFull.byHour.every((h) => h.hour >= 0 && h.hour < 24), JSON.stringify([hourSum, repFull.summary.salesCount]));
+
+  /* ---- paging and choices ---- */
+  const page = sales({ limit: 2, offset: 1 }).data;
+  check('the sale list pages', page.rows.length === 2 && page.rowsTotal === everyRow.length && page.offset === 1);
+  check('filter choices come from the period', all.data.options.categories.includes('SR-Cables') && all.data.options.staff.some((s) => s.id === amaraId) && all.data.options.customers.some((c) => c.id === buyer));
+
+  /* ---- a cashier sees their own sales, without cost ---- */
+  const mine = sales({ userId: sarahId }, sCash);
+  check('a cashier can open the report', mine.ok === true);
+  check('but only ever their own sales, whatever filter they send', mine.data.rows.every((r) => r.userId === amaraId) && mine.data.filters.userId === amaraId);
+  check('and never cost, profit or margin', mine.data.canSeeCost === false && mine.data.summary.grossProfit === undefined
+    && mine.data.rows.every((r) => r.grossProfit === undefined && r.lines.every((l) => l.cost === undefined)) && mine.data.options.staff.length === 0);
+  req('/api/admin/store', { taxRate: 0 }, { session: sAdm });
+}
+{
   section('marketplace sync from a Google Sheet (v1.42.0)');
 
   const kAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
