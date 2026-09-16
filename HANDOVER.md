@@ -13,7 +13,7 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.45.0** — team demo on GitHub Pages (in-browser backend) + sync pull fix (`2026-09-16`) |
+| Current version | **v1.45.1** — floating, content-sized cart on the Sell screen (`2026-09-16`) |
 | Validation bar | `backend-sim` **PASS 983 / FAIL 0** · client units **PASS 493 / FAIL 0** · demo **PASS 28 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
@@ -126,6 +126,14 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.45.1** Floating cart.
+  - `.reg-cart` is `position: fixed` at 1024px and up, sized by `--cart-w`
+    and positioned by `--cart-top` / `--cart-max` / `--cart-edge`, which
+    `placeCart()` in register.js sets from `#screen`'s rect on load and
+    resize.
+  - `.reg-catalog` reserves the gutter.
+  - The line layout inside the card uses a grid with `.cl-main { display:
+    contents }`.
 - **v1.45.0** Team demo.
   - `demo/gas-emulator.js` runs Code.gs in the page on emulated Google
     services, persisted to localStorage.

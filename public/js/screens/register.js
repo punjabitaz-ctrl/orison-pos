@@ -411,12 +411,33 @@ export const screen = {
 
     const handleSync = () => { if (document.getElementById('searchInput')) { this.refreshProducts().then(renderGrid); } };
     window.addEventListener(SYNC_EVENT, handleSync);
-    const handleViewport = () => renderCart();
+    const handleViewport = () => { renderCart(); placeCart(); };
     window.addEventListener('orison:viewport', handleViewport);
+
+    /* The floating cart sits inside the visible part of the screen: below the
+       header, above the footer, clear of the screen's scrollbar. Measured, not
+       assumed, so a taller header or a collapsed sidebar cannot push the
+       Charge button out of view. */
+    const placeCart = () => {
+      const panel = document.getElementById('regCartPanel');
+      const scr = document.getElementById('screen');
+      if (!panel || !scr) return;
+      const r = scr.getBoundingClientRect();
+      const gap = 12;
+      const scrollbar = scr.offsetWidth - scr.clientWidth;
+      const rtl = document.documentElement.dir === 'rtl';
+      const edge = rtl ? r.left + scrollbar + gap : window.innerWidth - r.right + scrollbar + gap;
+      panel.style.setProperty('--cart-top', `${Math.round(r.top + gap)}px`);
+      panel.style.setProperty('--cart-max', `${Math.max(200, Math.round(r.height - gap * 2))}px`);
+      panel.style.setProperty('--cart-edge', `${Math.round(edge)}px`);
+    };
+    placeCart();
+    window.addEventListener('resize', placeCart);
 
     return () => {
       window.removeEventListener(SYNC_EVENT, handleSync);
       window.removeEventListener('orison:viewport', handleViewport);
+      window.removeEventListener('resize', placeCart);
       const bar = document.getElementById('cartbar');
       if (bar) { bar.innerHTML = ''; bar.classList.add('hidden'); }
     };

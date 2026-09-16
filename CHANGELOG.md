@@ -5,6 +5,32 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.1] — 2026-09-16
+
+### Changed
+
+- **The register's cart floats at the right of the screen** on wide screens
+  (1024px and up).
+  - It is a card pinned between the header and the footer, and only as tall as
+    its lines need. An empty cart is a small card.
+  - Past the space available, the lines scroll inside it, and **Total and
+    Charge never leave view**.
+  - Its width follows the screen: `--cart-w: clamp(320px, 30vw, 420px)`.
+  - The catalog keeps a gutter of that width, so the cart never covers a
+    product, a category chip or the search box.
+  - `register.js` measures the visible screen on load and on resize, so a
+    taller header or the scrollbar cannot push it out of place.
+  - In Arabic and Urdu it mirrors to the left, with the sidebar on the right.
+- In the floating card, each cart line puts the name beside its price and
+  remove button, the quantity under the name, and the discount buttons on one
+  row across the line.
+
+### Fixed
+
+- **The Charge button could not be reached on a full cart.** The old sticky
+  cart could be taller than the visible screen, which put its total and Charge
+  button below the fold.
+
 ## [1.45.0] — 2026-09-16
 
 A demo the Orison team can test without a deployment.

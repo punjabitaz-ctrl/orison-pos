@@ -7,7 +7,29 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.45.0 — a demo the team can test
+## Latest: v1.45.1 — the cart floats at the right
+
+**2026-09-16.**
+
+- On a computer or large tablet, the cart is now a floating card at the right
+  of the Sell screen.
+- **It grows as you add items**, up to the height of the screen. After that
+  the items scroll inside the card.
+- **The total and Charge button are always visible**, and the card never covers
+  the products, categories or search.
+- In Arabic and Urdu it sits on the left.
+
+**Validation:** client units **PASS 493 / FAIL 0** · demo **PASS 28 / FAIL 0**.
+Checked in the browser at 1024×700, 1280×800 and 1920×1080, with an empty cart
+and a six-line cart, in both directions.
+
+### Deploying
+
+Frontend only: redeploy `public/`. The demo updates on its own.
+
+---
+
+## v1.45.0 — a demo the team can test
 
 **2026-09-16.**
 

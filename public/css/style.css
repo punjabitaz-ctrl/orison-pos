@@ -24,6 +24,7 @@
   --ease: cubic-bezier(.22, .61, .36, 1);
   --dur: .18s;
   --reg-pane: 440px;
+  --cart-w: clamp(320px, 30vw, 420px);
   --tab-h: 62px;
   --head-h: 64px;
   --sb-w: 240px;
@@ -992,24 +993,46 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; in
   .screen { padding-bottom: 0; max-width: none; margin: 0; }
 }
 
-/* ---- Register: catalog left, sticky cart panel right ---- */
-.reg-wrap { display: flex; align-items: flex-start; gap: 0; min-height: 100%; }
-.reg-catalog { flex: 1; min-width: 0; }
+/* ---- Register: catalog, with the cart floating at the right ----
+   The cart is a card pinned to the right edge of the visible screen, between
+   the header and the footer. It is as tall as its lines need and no taller;
+   past the space available the lines scroll inside it, and the total and
+   Charge button never leave view. The catalog keeps a gutter the width of the
+   card, so the cart never covers a product, a chip or the search box.
+   register.js measures the screen and sets --cart-top / --cart-max /
+   --cart-edge; the fallbacks cover the first frame. */
+.reg-wrap { min-height: 100%; }
 .reg-cart { display: none; }
 @media (min-width: 1024px) {
+  .reg-catalog { padding-inline-end: calc(var(--cart-w) + 16px); }
   .reg-cart {
-    display: flex; flex-direction: column; flex: none;
-    width: var(--reg-pane);
-    position: sticky; top: 12px;
-    max-height: calc(100dvh - 24px);
+    display: flex; flex-direction: column;
+    position: fixed; z-index: 30;
+    top: var(--cart-top, calc(var(--head-h) + 12px));
+    inset-inline-end: var(--cart-edge, 16px);
+    width: var(--cart-w);
+    max-height: var(--cart-max, calc(100dvh - var(--head-h) - 72px));
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 18px;
-    box-shadow: -8px 0 24px -12px rgba(15, 42, 66, .10);
+    box-shadow: var(--shadow-lg);
     padding: 16px 18px;
   }
-  .reg-cart .cart-lines { max-height: none; flex: 1 1 auto; }
+  .reg-cart .cart-lines { max-height: none; flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .reg-cart .cart-head, .reg-cart .cart-foot { flex: none; }
   .reg-cart .cart-head { margin-bottom: 4px; }
+  /* a narrower card: name, then price and remove beside it; the quantity under
+     the name; the discounts on one row across the whole line */
+  .reg-cart .cart-line {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start; column-gap: 8px;
+  }
+  .reg-cart .cl-main { display: contents; }
+  .reg-cart .cl-name { grid-column: 1; grid-row: 1; align-self: center; }
+  .reg-cart .cl-serial, .reg-cart .cl-qty { grid-column: 1; grid-row: 2; }
+  .reg-cart .cl-disc { grid-column: 1 / -1; grid-row: 3; flex-wrap: nowrap; }
+  .reg-cart .cl-right { grid-column: 2; grid-row: 1 / span 2; flex-wrap: wrap; justify-content: flex-end; }
+  .reg-cart .cl-price-was { flex-basis: 100%; text-align: end; }
 }
 
 /* ---- Checkout: right-hand sheet column on desktop ---- */
@@ -1515,7 +1538,6 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; in
    the document direction on their own. What remains is what logical
    properties cannot express: shadows, motion and arrows that point a way. */
 [dir="rtl"] .sidebar { box-shadow: -2px 0 12px rgba(15, 42, 66, .04); }
-[dir="rtl"] .reg-cart { box-shadow: 8px 0 24px -12px rgba(15, 42, 66, .10); }
 [dir="rtl"] .screen-checkout .checkout { box-shadow: 8px 0 24px -12px rgba(15, 42, 66, .12); }
 @media (min-width: 1024px) {
   [dir="rtl"] .sheet { animation-name: slideInLeft; }
