@@ -71,7 +71,7 @@ export async function pull() {
   const data = await api.get('/api/sync/pull');
   if (!data || !data.products) throw new Error('Empty sync response');
 
-  await idb.bulkPut('products', mergeProducts(data.products), (p) => p.id);
+  await idb.bulkPut('products', await mergeProducts(data.products), (p) => p.id);
   await idb.bulkPut('users', data.users, (u) => u.id);
   await idb.put('meta', {
     ...(await meta()),

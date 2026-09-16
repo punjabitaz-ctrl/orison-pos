@@ -5,4 +5,4 @@ tests/shots/
 tests/e2e-run.log
 tests/console-dump.txt
 .clasp.json
-.clasprc.json
+.clasprc.jsondist/

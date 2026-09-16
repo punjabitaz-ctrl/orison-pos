@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.44.0.** Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.45.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -160,7 +160,9 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 
 ```bash
 npm test              # backend logic vs an in-memory Apps Script mock (983 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (482 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (493 checks)
+npm run test:demo     # the demo: emulator, sample shop, site build (28 checks)
+npm run build:demo    # build the demo site into dist/demo-site
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
 npm run test:pdf      # receipt PDF/share smoke test in a headless browser
 npm run test:all      # all four

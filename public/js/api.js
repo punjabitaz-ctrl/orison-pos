@@ -15,7 +15,12 @@ async function getConfig() {
   return (await idb.get('meta', 'config')) || {};
 }
 
+/* The demo build (demo/boot.js) runs the backend inside the page and names it
+   here, so a demo never needs a server configured. Unset in a real install. */
+const DEMO = globalThis.ORISON_DEMO || null;
+
 async function getBaseUrl() {
+  if (DEMO) return DEMO.serverUrl;
   const m = await getConfig();
   return m.serverUrl || '';
 }
@@ -26,6 +31,7 @@ async function getToken() {
 }
 
 async function getAppToken() {
+  if (DEMO) return DEMO.appToken;
   const m = await getConfig();
   return m.appToken || '';
 }

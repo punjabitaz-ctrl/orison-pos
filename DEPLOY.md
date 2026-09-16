@@ -75,6 +75,18 @@ that terminal (see the security checklist below).
 
 ---
 
+## The demo site (for testing, not the store)
+
+`.github/workflows/demo-pages.yml` publishes the demo to GitHub Pages
+(https://punjabitaz-ctrl.github.io/orison-pos/) on every push to `main`. It
+has no server and holds no store data: see `docs/DEMO.md`.
+
+- **Pages setting:** repository **Settings → Pages → Source: GitHub Actions**.
+  This is already set.
+- **To take the demo down:** set that source to *None*, or disable the
+  workflow.
+- **Keep it separate.** Do not host the demo on the store's own domain.
+
 ## Pointing the PWA at the backend
 
 On first launch (behind the Google shield) tap **Backend** on the login

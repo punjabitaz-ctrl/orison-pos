@@ -79,9 +79,16 @@ node tests/backend-sim.mjs        # backend logic (expect PASS n FAIL 0)
 node --check <touched public js>  # syntax on every touched client file
 node tests/pdf-send-smoke.mjs     # receipt PDF/share — unrunnable on the current dev machine (Edge headless); report it as NOT RUN, never as a pass
 npm run test:client               # client unit tests, incl. the translation-catalogue check
+node tests/demo-build.mjs         # the demo: Code.gs on the in-browser emulator, sample shop, site build
 ```
 
-Baseline at v1.44.0: backend-sim **983 / 0**, client **492 / 0**.
+Baseline at v1.45.0: backend-sim **983 / 0**, client **493 / 0**, demo **28 / 0**.
+
+- The demo (`demo/`, published by `.github/workflows/demo-pages.yml`) runs the
+  current `backend/Code.gs` in the browser. A Code.gs change that uses a Google
+  service or method the emulator lacks (see `demo/gas-emulator.js`) breaks the
+  demo: extend the emulator in the same commit. New demo files must be tracked
+  by git, because the build only copies tracked files.
 
 - `npm test` == backend sim only. `npm run test:client` runs the pure-Node
   client unit suites via `node:test` + `fake-indexeddb`. `npm run test:all`

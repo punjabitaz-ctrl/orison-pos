@@ -1,0 +1,59 @@
+/* Orison POS demo: the guide and its ribbon. Namespaced .odemo- so nothing
+   here reaches the app's own styles. Colours follow the app's navy. */
+
+.odemo-on #serverCfg { display: none; }
+
+.odemo-pill {
+  position: fixed; z-index: 9000; top: 0; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  padding: 3px 12px 4px; border: 0; border-radius: 0 0 10px 10px;
+  background: #f5b400; color: #1d1600; font: 600 11px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  box-shadow: 0 2px 8px rgba(15, 42, 66, .18); cursor: pointer;
+}
+.odemo-pill b { letter-spacing: .12em; }
+.odemo-pill span { font-weight: 500; opacity: .85; }
+@media (max-width: 520px) { .odemo-pill span { display: none; } }
+.odemo-pill:focus-visible { outline: 2px solid #0f2a42; outline-offset: 2px; }
+
+#odemo-panel[hidden] { display: none !important; }
+.odemo-backdrop {
+  position: fixed; inset: 0; z-index: 9500; background: rgba(8, 20, 33, .55);
+  display: flex; align-items: flex-start; justify-content: center; padding: 4vh 12px; overflow-y: auto;
+}
+.odemo-card {
+  width: min(760px, 100%); background: #fff; color: #17293b; border-radius: 16px;
+  padding: 20px 22px 18px; box-shadow: 0 18px 60px rgba(8, 20, 33, .35);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.odemo-card p { margin: 0 0 10px; max-width: 68ch; }
+.odemo-card h3 {
+  margin: 16px 0 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #5b6b7c;
+}
+.odemo-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.odemo-head h2 { margin: 0; font-size: 19px; color: #0f2a42; }
+.odemo-x { border: 0; background: none; font-size: 26px; line-height: 1; color: #5b6b7c; cursor: pointer; padding: 0 4px; }
+.odemo-muted { color: #5b6b7c; font-size: 13px; }
+.odemo-scroll { overflow-x: auto; border: 1px solid #e3e8ee; border-radius: 10px; }
+.odemo-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.odemo-table th, .odemo-table td { padding: 7px 10px; text-align: start; white-space: nowrap; }
+.odemo-table th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #5b6b7c; border-bottom: 1px solid #e3e8ee; }
+.odemo-table tbody tr + tr td { border-top: 1px solid #eef2f6; }
+.odemo-table code { font: 13px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+.odemo-role { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: capitalize; }
+.odemo-admin { background: #0f2a42; color: #fff; }
+.odemo-manager { background: #dbe8f5; color: #0f3d66; }
+.odemo-cashier { background: #eef2f6; color: #3a4b5e; }
+.odemo-try { margin: 0; padding-inline-start: 18px; display: grid; gap: 5px; }
+.odemo-tag { display: inline-block; min-width: 62px; font-size: 11px; font-weight: 700; color: #0f3d66; }
+.odemo-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+.odemo-btn {
+  border: 1px solid #0f2a42; background: #0f2a42; color: #fff; border-radius: 9px;
+  padding: 6px 12px; font: 600 13px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif; cursor: pointer;
+}
+.odemo-btn:hover { background: #1c4a72; }
+.odemo-ghost { background: #fff; color: #0f2a42; }
+.odemo-ghost:hover { background: #eef2f6; }
+.odemo-danger { background: #fff; color: #b42318; border-color: #e4a39c; margin-inline-end: auto; }
+.odemo-danger:hover { background: #fdecea; }
+.odemo-link { border: 0; background: none; padding: 0; color: #1c5d99; text-decoration: underline; font: inherit; cursor: pointer; }
+.odemo-btn:focus-visible, .odemo-link:focus-visible, .odemo-x:focus-visible { outline: 2px solid #f5b400; outline-offset: 2px; }

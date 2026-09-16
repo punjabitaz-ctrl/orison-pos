@@ -7,7 +7,38 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.44.0 — trade-ins
+## Latest: v1.45.0 — a demo the team can test
+
+**2026-09-16.**
+
+- **Try Orison POS without installing anything:**
+  https://punjabitaz-ctrl.github.io/orison-pos/
+- **It is the real app and the real backend logic** with a sample shop:
+  - two weeks of sales, customers, repairs, a trade-in and purchase orders
+  - marketplace orders waiting to import
+- **Everything runs in the tester's browser.** Nothing is sent anywhere, and
+  each browser has its own shop until **Reset demo data**.
+- **The yellow DEMO tab** signs you in as the admin, the manager or a cashier
+  in one tap, and lists what to try.
+- The test guide for the team is `docs/DEMO.md`.
+- **Fixed:** terminals did not store the product list on sign-in (a bug since
+  v1.1.0). The demo caught it.
+
+**Validation:** backend-sim **PASS 983 / FAIL 0** · client units **PASS 493 /
+FAIL 0** · demo **PASS 28 / FAIL 0**.
+- Checked in the browser: sign-in from the guide, a card sale with a receipt,
+  switching to admin, the marketplace import and its sheet, Accounts, and
+  reset.
+- The new pull test failed before the fix.
+
+### Deploying
+
+- **The live store's backend is unchanged.** Code.gs did not change.
+- **The frontend fix matters for any live terminal.** Redeploy `public/`.
+
+---
+
+## v1.44.0 — trade-ins
 
 **2026-09-13.**
 

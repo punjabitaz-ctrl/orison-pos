@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.44.0** — trade-ins: buy used devices at cost per IMEI (`2026-09-13`) |
-| Validation bar | `backend-sim` **PASS 983 / FAIL 0** · client units **PASS 492 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.45.0** — team demo on GitHub Pages (in-browser backend) + sync pull fix (`2026-09-16`) |
+| Validation bar | `backend-sim` **PASS 983 / FAIL 0** · client units **PASS 493 / FAIL 0** · demo **PASS 28 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,17 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.45.0** Team demo.
+  - `demo/gas-emulator.js` runs Code.gs in the page on emulated Google
+    services, persisted to localStorage.
+  - `demo/seed-demo.js` builds the sample shop through the API.
+  - `demo/boot.js` provides the `ORISON_DEMO` hook, a fetch shim and the guide
+    panel (sign-in as a role, demo sheet viewer, reset).
+  - `scripts/build-demo.mjs` builds from git-tracked files; the Pages workflow
+    publishes it. Test guide: `docs/DEMO.md`.
+  - **Fixed:** `sync.pull()` never stored products or users (unawaited async
+    `mergeProducts`, since v1.1.0). The login screen swallowed the error.
+    There is now a client test.
 - **v1.44.0** Trade-ins.
   - `tradeIn_` / `tradeIns_`, with `TradeIns` tab and `TRADEIN_HEADERS`.
   - A new server-only ledger kind `tradein` is threaded through:

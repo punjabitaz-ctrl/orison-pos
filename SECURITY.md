@@ -302,6 +302,21 @@ Three consequences worth planning around:
 3. Because it is shared, it cannot identify a device. If that matters, a
    per-device credential is the next step.
 
+## The demo build (v1.45.0)
+
+`https://punjabitaz-ctrl.github.io/orison-pos/` is a public demo with **no real
+data and no server**. The backend runs in the visitor's browser and keeps its
+state in that browser's localStorage. Its four accounts have **fixed, published
+PINs**, which is acceptable only because there is nothing behind them.
+
+- `api.js` routes requests to the in-page backend only when
+  `globalThis.ORISON_DEMO` is set, and only `demo/boot.js` sets it. A
+  production build never loads that file, so a page that could set the global
+  would already be running injected script.
+- The demo site ships **without `_headers`**. Its backend is built with
+  `new Function`, which the production CSP (`script-src 'self'`, no eval)
+  correctly forbids. Never serve the demo from the production origin.
+
 ## Content-Security-Policy
 
 `public/_headers` sets `nosniff`, `Referrer-Policy`, `X-Frame-Options`, a

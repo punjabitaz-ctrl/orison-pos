@@ -5,6 +5,49 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.0] — 2026-09-16
+
+A demo the Orison team can test without a deployment.
+
+### Added
+
+- **Demo build** (`demo/`, `npm run build:demo`, published to GitHub Pages at
+  https://punjabitaz-ctrl.github.io/orison-pos/).
+  - **Backend:** the unchanged `backend/Code.gs` runs in the browser on an
+    emulator of the Google services it uses (`demo/gas-emulator.js`).
+    - Sheets, Script Properties, Cache, Lock, Utilities (SHA-256 and HMAC
+      implemented synchronously, checked against Node crypto), Drive, Mail
+      and triggers.
+    - State is saved to the browser's localStorage.
+  - **App:** the app from `public/`, with one hook in `api.js`. When
+    `globalThis.ORISON_DEMO` is set, requests go to the in-page backend.
+  - **Sample shop** (`demo/seed-demo.js`), built through the real API routes
+    as the staff who would do it:
+    - four accounts with fixed demo PINs (admin, manager, two cashiers)
+    - about 50 products, six customers (one buying on account), two weeks of
+      sales, a refund, cash out and a payment on account
+    - a received and an open purchase order, an open till shift
+    - three repairs, a trade-in, and a built-in marketplace sheet with three
+      orders waiting
+  - **Demo guide** (the yellow DEMO tab): one-tap sign-in as each role, things
+    to try, a viewer for the demo marketplace sheet, and **Reset demo data**.
+  - `docs/DEMO.md` is the team's test guide.
+  - `.github/workflows/demo-pages.yml` runs the demo checks and publishes the
+    site on every push to `main`.
+- `tests/demo-build.mjs` (`npm run test:demo`, 28 checks): the emulator's
+  crypto, all four sign-ins, a session surviving a reload, the sample data
+  (the books balance with no rounding and agree with Reports), the marketplace
+  import, and the built site.
+
+### Fixed
+
+- **Sync pull never stored products or staff on a terminal.** This dates from
+  v1.1.0. `pull()` passed the unresolved Promise from the async
+  `mergeProducts()` to `bulkPut`, which threw "values is not iterable". The
+  sign-in screen swallows pull errors, so a real terminal would have shown an
+  empty register. Browser tests had hidden it by seeding IndexedDB directly;
+  the demo found it. A new client test covers it.
+
 ## [1.44.0] — 2026-09-13
 
 Owner decisions: **trade-ins yes, layaway no.** The cost basis is the standard

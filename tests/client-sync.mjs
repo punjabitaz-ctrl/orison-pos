@@ -34,6 +34,38 @@ describe('getDeviceId()', async () => {
   });
 });
 
+/* ── pull() ──────────────────────────────────────────────────── */
+
+describe('pull()', async () => {
+  const { pull } = await import('../public/js/sync.js');
+
+  it('stores the products and users the server sends, keeping a newer local lastSoldAt', async () => {
+    await idb.clear('products');
+    await idb.put('products', { id: 'p-old', name: 'Cable', lastSoldAt: '2026-09-10T10:00:00.000Z' }, 'p-old');
+    mockFetch(async (url, opts) => {
+      const env = readEnvelope(opts);
+      if (env.action === '/api/sync/pull') {
+        return jsonResponse({ ok: true, status: 200, data: {
+          store: { id: 's1', name: 'Main Street', locale: 'en-US', currency: 'USD' },
+          users: [{ id: 'u1', firstName: 'Amara' }],
+          products: [
+            { id: 'p-old', name: 'Cable', lastSoldAt: '2026-09-01T10:00:00.000Z' },
+            { id: 'p-new', name: 'Phone', lastSoldAt: '' },
+          ],
+          watermark: '2026-09-16T00:00:00.000Z',
+        } });
+      }
+      return jsonResponse({ ok: true, status: 200, data: {} });
+    });
+    await pull();
+    clearFetchMock();
+    const products = await idb.getAll('products');
+    assert.equal(products.length, 2, 'both products reached the terminal');
+    assert.equal(products.find((p) => p.id === 'p-old').lastSoldAt, '2026-09-10T10:00:00.000Z');
+    assert.equal((await idb.get('meta', 'config')).store.name, 'Main Street');
+  });
+});
+
 /* ── getSyncState() ──────────────────────────────────────────── */
 
 describe('getSyncState()', async () => {
