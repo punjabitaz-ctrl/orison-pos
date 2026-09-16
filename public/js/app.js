@@ -24,7 +24,7 @@ import { screen as audit } from './screens/audit.js';
 import { screen as accounts } from './screens/accounts.js';
 import { screen as tradein } from './screens/tradein.js';
 import { screen as repairs } from './screens/repairs.js';
-import { primaryTabs, menuTiles, isRestricted } from './nav.js';
+import { primaryTabs, menuTiles, navGroups, isRestricted } from './nav.js';
 import { navButton, appHeaderHtml } from './components.js';
 import { $t, $tn, setLanguage, resolveLanguage, loadChoice, setStoreLanguage, dateLocale } from './lang.js';
 
@@ -78,6 +78,11 @@ const router = {
     current = def;
     const root = document.getElementById('screen');
     cleanup = (await def.render(ctx, root)) || null;
+    /* The nav is built for one role. Signing in (or switching user) changes the
+       role, and hiding tabs cannot add the ones a manager or admin gains, so
+       rebuild it - and the header, which names who is signed in - whenever
+       the user it was built for is not the one signed in now. */
+    if (whoKey() !== navFor) { renderNav(); renderHeader(); }
     /* a launcher destination lights the Menu tab, because that is the button
        that got you there. */
     const barIds = primaryTabs().map((t) => t.id);
@@ -105,17 +110,24 @@ function applyRoleTabs() {
 
 /* Both navs are renderings of the same model, so a destination is added in
    nav.js and appears in both - never a button pasted into index.html twice. */
+let navFor = null;
+const whoKey = () => `${(state.user || {}).id || ''}|${(state.user || {}).role || 'cashier'}`;
+
 function renderNav() {
   const role = (state.user || {}).role || 'cashier';
+  navFor = whoKey();
   const tiles = menuTiles(role);
   const bar = document.getElementById('tabbar');
   if (bar) bar.innerHTML = primaryTabs(role).map((t) => navButton(t)).join('');
   const side = document.getElementById('sbNav');
   if (side) {
-    side.innerHTML = [
-      ...primaryTabs(role).filter((t) => t.id !== 'menu'),
-      ...tiles,
-    ].map((d) => navButton({ id: d.id, label: d.label, primary: false })).join('');
+    const button = (d) => navButton({ id: d.id, label: d.label, primary: false });
+    side.innerHTML = primaryTabs(role).filter((t) => t.id !== 'menu').map(button).join('')
+      + navGroups(role).map((g) => `
+        <div class="sb-group"${g.label ? ` role="group" aria-label="${esc($t(g.label))}"` : ''}>
+          ${g.label ? `<p class="sb-head">${esc($t(g.label))}</p>` : ''}
+          ${g.items.map(button).join('')}
+        </div>`).join('');
   }
   document.querySelectorAll('[data-tab]').forEach((tab) => {
     tab.addEventListener('click', () => {

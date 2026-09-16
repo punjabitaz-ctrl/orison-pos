@@ -1,11 +1,11 @@
 'use strict';
 
-/* The launcher: every job this account can do, as one flat grid of labelled
-   tiles. No groups, no submenus - the whole point is that nothing here has to
-   be learned or remembered. */
+/* The launcher: every job this account can do, as labelled tiles under a few
+   short headings - Counter, Cash, Stock & customers, Insights, Team - so a long
+   list reads as small groups. No submenus: every tile is one tap. */
 
 import { esc } from '../ui.js';
-import { menuTiles } from '../nav.js';
+import { menuTiles, navGroups } from '../nav.js';
 import { tileGrid, screenHead, roleLabel } from '../components.js';
 import { $t } from '../lang.js';
 import { openCashOutDialog } from '../money-dialogs.js';
@@ -25,7 +25,11 @@ export const screen = {
 
     root.innerHTML = `
       ${screenHead({ title: $t('Menu'), sub: $t(roleLabel(role)) })}
-      ${tileGrid(tiles)}`;
+      ${navGroups(role).map((g) => `
+        <section class="menu-group">
+          ${g.label ? `<h3 class="menu-head">${esc($t(g.label))}</h3>` : ''}
+          ${tileGrid(g.items)}
+        </section>`).join('')}`;
 
     const onTap = (e) => {
       const btn = e.target.closest('[data-go]');

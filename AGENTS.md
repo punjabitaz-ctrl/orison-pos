@@ -82,7 +82,7 @@ npm run test:client               # client unit tests, incl. the translation-cat
 node tests/demo-build.mjs         # the demo: Code.gs on the in-browser emulator, sample shop, site build
 ```
 
-Baseline at v1.45.0: backend-sim **983 / 0**, client **493 / 0**, demo **28 / 0**.
+Baseline at v1.46.0: backend-sim **983 / 0**, client **510 / 0**, demo **28 / 0**.
 
 - The demo (`demo/`, published by `.github/workflows/demo-pages.yml`) runs the
   current `backend/Code.gs` in the browser. A Code.gs change that uses a Google

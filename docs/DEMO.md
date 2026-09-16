@@ -40,7 +40,7 @@ The guide's **Sign in** buttons switch account in one tap. When a cashier needs 
 ## Things to try
 
 **As a cashier (Amara or Diego)**
-1. Sell a phone with a case and a screen protector. Take card or cash, then print or send the receipt.
+1. Sell a phone with a case and a screen protector. Start from the categories (Phones, then Accessories), or search. Take card or cash, then print or send the receipt.
 2. Give a 20% discount. Cashiers are limited to 10%, so a manager approves it on your screen.
 3. Collect James Okafor's battery repair (Repairs), and book a new repair in with a deposit.
 4. Take a trade-in (Menu → Trade-In): pick the seller, the ID checked, the IMEI and the condition. A manager approves the amount.

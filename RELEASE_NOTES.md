@@ -7,7 +7,35 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.45.1 — the cart floats at the right
+## Latest: v1.46.0 — a calmer Sell screen
+
+**2026-09-16.** From the team's feedback on the demo.
+
+- **Sell starts with the categories.** Tap *Phones* to see the phones, and
+  *All categories* to go back. Search or scan still finds anything straight
+  away.
+- **Less on screen.**
+  - Product tiles show name, price and stock.
+  - Cart lines show a small *Discount* button instead of six, and a chosen
+    discount shows as *15% off*.
+- **The menu is in groups:** Counter, Cash, Stock & customers, Insights and
+  Team. Cashiers, with fewer options, keep one short list.
+- **Fixed:** a manager or admin signing in after a cashier now sees their full
+  menu straight away.
+
+**Validation:** client units **PASS 510 / FAIL 0** · backend-sim **PASS 983 /
+FAIL 0** · demo **PASS 28 / FAIL 0**.
+- Checked in the browser at desktop and phone sizes: categories, a category
+  view, search, the discount toggle in both the floating cart and the phone
+  cart sheet, and the grouped menu for cashier, manager and admin.
+
+### Deploying
+
+Frontend only: redeploy `public/`. The demo updates on its own.
+
+---
+
+## v1.45.1 — the cart floats at the right
 
 **2026-09-16.**
 

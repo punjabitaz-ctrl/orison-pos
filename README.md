@@ -2,13 +2,13 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.45.1.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.46.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
 ### Selling
 
-- **Register**: search by name, SKU or barcode, scan with a handheld reader or the camera, or tap a tile. The running total is pinned above the tab bar, and a cart survives a crash or refresh and is offered back on the next start.
+- **Sell**: opens on the product categories; tap one to see its products. Search by name, SKU or barcode, or scan with a handheld reader or the camera, from any view. The running total is pinned above the tab bar, and a cart survives a crash or refresh and is offered back on the next start.
 - **Serialized (IMEI) stock**: one unit at a time, captured at sale and bound to it through history, refunds and receipts.
 - **Split tender**: Cash, **Card** (recorded; kept out of the expected drawer), Store Credit and On-account (Net-30), with change and a quick-round keypad.
 - **Discounts and tax**: line and order discounts, and tax on the taxable portion only. The store picks its **tax jurisdiction**: **United States** (sales tax added to prices) or **United Arab Emirates** (5 % VAT included in prices, receipts printed as a **Tax Invoice** with the shop's TRN and the customer's TRN). Discounts have per-role limits (cashier 10 %, manager 50 % by default); going over one needs a manager's approval.
@@ -160,7 +160,7 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 
 ```bash
 npm test              # backend logic vs an in-memory Apps Script mock (983 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (493 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (510 checks)
 npm run test:demo     # the demo: emulator, sample shop, site build (28 checks)
 npm run build:demo    # build the demo site into dist/demo-site
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)

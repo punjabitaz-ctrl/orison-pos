@@ -5,6 +5,44 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.46.0] — 2026-09-16
+
+Sprint A of team feedback on the demo: "the main interface is too cluttered;
+the products should show under the category" (plan:
+`docs/superpowers/plans/2026-09-16-declutter-and-sales-report.md`).
+
+### Changed
+
+- **The Sell screen opens on the categories.**
+  - Each category is a large tile in its colour, with how many products it
+    holds and, when some are sold out, how many are available.
+  - Tapping a category shows its products, with an *All categories* back
+    link.
+  - Search and barcode scans still find any product from any view, labelled
+    with its category.
+  - The category chip row is gone. `public/js/catalog.js` holds the pure view
+    logic, with a new client test.
+- **Quieter Sell screen.**
+  - The title is *Sell*; the terminal ID and cashier line is dropped.
+  - Product tiles inside a category no longer repeat the category label.
+- **Discounts fold away.** A cart line shows a small *Discount* control
+  instead of six buttons. Picking a discount folds the choices back into a
+  chip such as *15% off*.
+- **Grouped navigation.** The sidebar and the Menu screen group destinations
+  under *Counter*, *Cash*, *Stock & customers*, *Insights* and *Team*, with
+  Settings last, instead of one list of twenty.
+  - A role with eight destinations or fewer (a cashier) keeps one short list
+    without headings.
+  - `navGroups()` in `nav.js` drives both, and is tested.
+
+### Fixed
+
+- **The navigation and header now rebuild when a different user signs in.**
+  Before, the sidebar was built for whoever was signed in when the app
+  started. A manager or admin signing in after a cashier (or on a fresh
+  start) did not get their extra entries in the sidebar, and the header's
+  initial stayed blank.
+
 ## [1.45.1] — 2026-09-16
 
 ### Changed

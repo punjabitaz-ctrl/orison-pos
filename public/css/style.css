@@ -976,6 +976,21 @@ html[data-nav="rail"] .sb-word { display: none; }
 html[data-nav="rail"] .sb-nav .tab { justify-content: center; padding: 12px 0; }
 html[data-nav="rail"] .sb-nav .tab span:not(.tab-badge) { display: none; }
 html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; inset-inline-start: 30px; }
+/* grouped navigation (v1.46.0): short headed lists instead of one long one */
+.sb-nav .tab { padding-top: 8px; padding-bottom: 8px; }
+.sb-group { display: flex; flex-direction: column; gap: 1px; margin-top: 10px; }
+.sb-head {
+  margin: 0; padding: 6px 12px 3px;
+  font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted);
+}
+html[data-nav="rail"] .sb-head { font-size: 0; padding: 0; margin: 6px 14px 2px; border-top: 1px solid var(--line); }
+.menu-head {
+  margin: 0; padding: 14px 16px 6px;
+  font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted);
+}
+.menu-group .menu-grid { padding-bottom: 6px; }
 
 /* ---- Wide layout: sidebar in, bottom tabbar out, screen full-width ---- */
 @media (min-width: 1024px) {
@@ -1399,6 +1414,47 @@ html[data-nav="rail"] .sb-nav .tab .tab-badge { position: absolute; top: 9px; in
   padding: 3px 6px; border-radius: 6px;
 }
 .pt-badge.pt-lock { background: var(--danger); top: auto; bottom: 10px; }
+
+/* Sell screen, first view: the categories (v1.46.0). Big, calm tiles with the
+   category colour as a band - the products are one tap further in. */
+.grid.cat-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.cat-tile {
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 4px;
+  min-height: 104px; padding: 18px 16px 14px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+  text-align: start; box-shadow: var(--shadow-sm);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.cat-tile::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 6px; background: var(--cat); }
+.cat-tile:hover { box-shadow: var(--shadow); }
+.cat-tile:active { transform: scale(.98); }
+.cat-tile:focus-visible { outline: 3px solid var(--navy-3); outline-offset: 2px; }
+.ct-name { font-size: 17px; font-weight: 750; color: var(--text); line-height: 1.2; }
+.ct-meta { font-size: 12px; font-weight: 600; color: var(--muted); }
+@media (max-width: 719px) { .grid.cat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cat-tile { min-height: 88px; } }
+
+.cat-bar { display: flex; align-items: center; gap: 10px; padding: 2px 16px 10px; min-height: 44px; }
+.cat-bar[hidden] { display: none; }
+.cat-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 40px; padding: 8px 14px; border-radius: 999px;
+  background: var(--card); border: 1px solid var(--line);
+  font-size: 13px; font-weight: 700; color: var(--navy);
+}
+.cat-back:hover { background: var(--bg); }
+.cat-title { font-size: 17px; font-weight: 750; color: var(--text); }
+@media (min-width: 1024px) { .cat-bar { padding-inline-start: 24px; padding-inline-end: 24px; } }
+
+/* A cart line's discount choices stay folded until asked for. */
+.cl-disc-toggle {
+  margin-top: 8px; padding: 4px 10px; min-height: 30px; border-radius: 999px;
+  border: 1px dashed var(--line-2); background: transparent;
+  font-size: 12px; font-weight: 700; color: var(--muted);
+}
+.cl-disc-toggle:hover { color: var(--navy); border-color: var(--navy-3); }
+.cl-disc-toggle.has { border-style: solid; border-color: var(--ok); color: var(--ok); background: rgba(5, 150, 105, .08); }
+@media (min-width: 1024px) { .reg-cart .cl-disc-toggle { grid-column: 1; grid-row: 3; justify-self: start; } }
 
 /* The running total, pinned above the tab bar. */
 .cartbar {

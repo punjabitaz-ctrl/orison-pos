@@ -1,6 +1,6 @@
 'use strict';
 
-import { $t } from '../lang.js';
+import { $t, arrow } from '../lang.js';
 
 /* Register screen: product catalog + search + barcode scan + cart sheet.
    Serialized (IMEI) items go through a capture dialog, one serial per unit. */
@@ -10,9 +10,10 @@ import {
   fmt, esc, toast, beep, debounce, scanFromCamera, hasBarcodeDetector,
   openModal, closeModal, openSheet,
 } from '../ui.js';
-import { SYNC_EVENT, getSyncState } from '../sync.js';
+import { SYNC_EVENT } from '../sync.js';
 import { saleTotals } from '../money.js';
-import { productTile, categoryChip, cartBar, screenHead } from '../components.js';
+import { productTile, categoryTile, cartBar, screenHead } from '../components.js';
+import { categorySummaries, productsInView } from '../catalog.js';
 import {
   lineKey, availableFor, freeSerials, isSerialFree, persist, persistNow,
   loadSaved, clearSaved, fromRecords, savedSummary,
@@ -42,15 +43,11 @@ export const screen = {
     const { state, router } = ctx;
 
     await this.refreshProducts();
-    const syncState = await getSyncState();
 
     root.innerHTML = `
       <div class="reg-wrap">
         <div class="reg-catalog">
-      ${screenHead({
-        title: $t('Register'),
-        sub: `${syncState.deviceId ? $t('Terminal {id}', { id: syncState.deviceId.slice(0, 8).toUpperCase() }) : ''} · ${(state.user && state.user.firstName) || ''}`,
-      })}
+      ${screenHead({ title: $t('Sell') })}
       <div class="search-row">
         <div class="search-box">
           <svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -59,7 +56,7 @@ export const screen = {
         </div>
         ${hasBarcodeDetector() ? `<button id="camBtn" class="icon-btn" title="${$t('Scan with camera')}">◉</button>` : ''}
       </div>
-      <div class="chips" id="chips"></div>
+      <div class="cat-bar" id="catBar" hidden></div>
       <main class="grid" id="grid" tabindex="-1"></main>
         </div>
         <aside class="reg-cart" id="regCartPanel" aria-label="${$t('Cart')}"></aside>
@@ -67,41 +64,53 @@ export const screen = {
 
     const searchInput = root.querySelector('#searchInput');
     const grid = root.querySelector('#grid');
-    const chips = root.querySelector('#chips');
+    const catBar = root.querySelector('#catBar');
     const camBtn = root.querySelector('#camBtn');
 
+    /* cart lines whose discount choices are showing; closed by default, so a
+       line is its name, quantity and price until someone asks for a discount */
+    const discOpen = new Set();
     let term = '';
-    let category = 'All';
+    /* null is the first view: the categories. Products show under the one
+       picked; a search looks across all of them. */
+    let category = null;
     const debouncedSearch = debounce(() => renderGrid(), 120);
 
-    // ---- Category chips ----
-    function renderChips() {
-      const cats = ['All', ...new Set(screen._products.map((p) => p.category))];
-      cats.sort((a, b) => a === 'All' ? -1 : (b === 'All' ? 1 : a.localeCompare(b)));
-      chips.innerHTML = cats.map((c) => categoryChip({ label: c, active: c === category })).join('');
-      chips.querySelectorAll('[data-cat]').forEach((b) => b.addEventListener('click', () => {
-        category = b.getAttribute('data-cat');
-        renderChips();
-        renderGrid();
-        if (!('ontouchstart' in window)) searchInput.focus();
-      }));
+    function openCategory(name) {
+      category = name;
+      renderGrid();
+      const scr = document.getElementById('screen');
+      if (scr && scr.scrollTo) scr.scrollTo({ top: 0 });
+    }
+
+    function renderBar() {
+      const q = term.trim();
+      if (!q && !category) { catBar.hidden = true; catBar.innerHTML = ''; return; }
+      catBar.hidden = false;
+      const back = `<button class="cat-back" id="catBack" type="button"><span aria-hidden="true">${arrow() === '→' ? '←' : '→'}</span> ${esc($t('All categories'))}</button>`;
+      catBar.innerHTML = q
+        ? `<span class="cat-title">${esc($t('Results for “{term}”', { term: q }))}</span><button class="cat-back" id="catClear" type="button">${esc($t('Clear search'))}</button>`
+        : `${back}<span class="cat-title">${esc(category === 'Uncategorized' ? $t('Uncategorized') : category)}</span>`;
+      catBar.querySelector('#catBack')?.addEventListener('click', () => openCategory(null));
+      catBar.querySelector('#catClear')?.addEventListener('click', () => { term = ''; searchInput.value = ''; renderGrid(); searchInput.focus(); });
     }
 
     // ---- Grid ----
     function renderGrid() {
-      const q = term.trim().toLowerCase();
-      const list = screen._products.filter((p) => {
-        if (category !== 'All' && p.category !== category) return false;
-        if (!q) return true;
-        return p.name.toLowerCase().includes(q)
-          || (p.sku || '').toLowerCase().includes(q)
-          || (p.upc || '').toLowerCase().includes(q)
-          || (p.serials || []).join(',').includes(q);
-      });
-      grid.innerHTML = list.map((p) => productTile(p, { fmt, available: availableFor(p, state.cart) })).join('')
-        + (list.length ? '' : `<div class="empty"><p>${esc($t('No products match “{term}”.', { term }))}</p><button class="btn btn-ghost" id="resetSearch">${$t('Clear search')}</button></div>`);
-      const reset = grid.querySelector('#resetSearch');
-      if (reset) reset.addEventListener('click', () => { term = ''; searchInput.value = ''; renderGrid(); });
+      renderBar();
+      const q = term.trim();
+      if (!q && !category) {
+        const cats = categorySummaries(screen._products, (p) => availableFor(p, state.cart));
+        grid.classList.add('cat-grid');
+        grid.innerHTML = cats.map((c) => categoryTile(c)).join('')
+          || `<div class="empty"><p>${esc($t('No products yet.'))}</p></div>`;
+        grid.querySelectorAll('[data-open-cat]').forEach((b) => b.addEventListener('click', () => openCategory(b.getAttribute('data-open-cat'))));
+        return;
+      }
+      grid.classList.remove('cat-grid');
+      const list = productsInView(screen._products, { category, term: q });
+      grid.innerHTML = list.map((p) => productTile(p, { fmt, available: availableFor(p, state.cart), showCategory: !!q })).join('')
+        + (list.length ? '' : `<div class="empty"><p>${esc(q ? $t('No products match “{term}”.', { term: q }) : $t('Nothing in this category.'))}</p></div>`);
       grid.querySelectorAll('[data-add]').forEach((b) => b.addEventListener('click', () => {
         addToCart(screen._products.find((p) => p.id === b.getAttribute('data-add')));
       }));
@@ -270,10 +279,12 @@ export const screen = {
                        <span class="qty">${line.qty}</span>
                        <button class="qty-btn" data-plus data-key="${key}">+</button>
                      </div>`}
+                ${discOpen.has(lineKeyOf(line)) ? `
                 <div class="cl-disc">
                   ${[0, 10, 15, 20, 25, 50].map((p) =>
                     `<button class="disc-btn ${line.discountPct === p ? 'on' : ''}" data-disc data-key="${key}" data-p="${p}">${p ? p + '%' : $t('Off')}</button>`).join('')}
-                </div>
+                </div>` : `
+                <button class="cl-disc-toggle${line.discountPct ? ' has' : ''}" data-disc-open data-key="${key}" type="button">${line.discountPct ? esc($t('{pct}% off', { pct: line.discountPct })) : esc($t('Discount'))}</button>`}
               </div>
               <div class="cl-right">
                 <div class="cl-price">${fmt(lineDiscPrice(line))}</div>
@@ -324,6 +335,10 @@ export const screen = {
     }
 
     function bindCart(rootEl) {
+      rootEl.querySelectorAll('[data-disc-open]').forEach((b) => b.addEventListener('click', () => {
+        discOpen.add(b.dataset.key);
+        renderCart();
+      }));
       rootEl.querySelectorAll('[data-min], [data-plus], [data-remove], [data-disc]').forEach((b) => {
         b.addEventListener('click', () => {
           /* the remove button carries its key in data-remove, the rest in
@@ -334,7 +349,9 @@ export const screen = {
           if (b.hasAttribute('data-min') && line.qty > 1) line.qty--;
           if (b.hasAttribute('data-plus') && availableFor(line.product, state.cart) > 0) line.qty++;
           if (b.hasAttribute('data-remove')) state.cart.delete(key);
-          if (b.hasAttribute('data-disc')) line.discountPct = Number(b.dataset.p) || 0;
+          /* picking a discount closes the choices again; the line shows it as a chip */
+          if (b.hasAttribute('data-disc')) { line.discountPct = Number(b.dataset.p) || 0; discOpen.delete(key); }
+          if (b.hasAttribute('data-remove')) discOpen.delete(key);
           state.cartVersion++;
           persist(state.cart);
           refreshView();
@@ -372,7 +389,6 @@ export const screen = {
       searchInput.focus();
     }
 
-    renderChips();
     renderGrid();
     renderCart();
     offerRecovery();

@@ -54,7 +54,7 @@ test('menuTiles()', async (t) => {
     // v1.37.0 because a manager approves them on the cashier's screen; money
     // out and management stay off it. Trade-In is on it since v1.44.0: the
     // cashier takes the device in and a manager approves the amount.
-    assert.deepEqual(menuTiles('cashier').map((x) => x.id), ['refund', 'drawer', 'tradein', 'staff', 'repairs', 'dashboard', 'settings']);
+    assert.deepEqual(menuTiles('cashier').map((x) => x.id), ['refund', 'tradein', 'repairs', 'drawer', 'dashboard', 'staff', 'settings']);
   });
   await t.test('an unknown role is treated as a cashier, not as an admin', () => {
     assert.deepEqual(menuTiles('nonsense').map((x) => x.id), menuTiles('cashier').map((x) => x.id));
@@ -69,6 +69,34 @@ test('menuTiles()', async (t) => {
       assert.ok(tile.screen, `${tile.id} has no screen`);
       assert.ok(tile.label && tile.label.length <= 16, `${tile.id} label is missing or too long to fit a tile`);
     }
+  });
+});
+
+test('navGroups()', async (t) => {
+  const { navGroups, GROUPS } = await import('../public/js/nav.js');
+  await t.test('every destination belongs to a known group', () => {
+    const ids = GROUPS.map((g) => g.id);
+    for (const d of DESTINATIONS) assert.ok(ids.includes(d.group), `${d.id} has no group`);
+  });
+  await t.test('groups hold exactly the tiles the role may open, in order', () => {
+    for (const role of ['admin', 'manager', 'cashier']) {
+      const flat = navGroups(role).flatMap((g) => g.items.map((i) => i.id));
+      assert.deepEqual(flat, menuTiles(role).map((x) => x.id), role);
+    }
+  });
+  await t.test('a group with nothing in it for the role is left out', () => {
+    assert.ok(navGroups('manager').some((g) => g.id === 'cash'));
+    assert.ok(navGroups('manager').every((g) => g.items.length > 0));
+    assert.ok(!navGroups('manager').some((g) => g.id === 'nothing'));
+  });
+  await t.test('a short list, like a cashier’s, is one group with no headings', () => {
+    const cashier = navGroups('cashier');
+    assert.equal(cashier.length, 1);
+    assert.equal(cashier[0].label, '');
+  });
+  await t.test('a manager and an admin get headed groups', () => {
+    assert.ok(navGroups('manager').length > 1 && navGroups('manager')[0].label);
+    assert.ok(navGroups('admin').length > 1);
   });
 });
 

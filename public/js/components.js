@@ -105,7 +105,18 @@ function lockedFlag(p) {
   return p && (p.locked === true || p.locked === 1 || String(p.locked) === '1');
 }
 
-export function productTile(product, { fmt, available } = {}) {
+/* A category on the Sell screen's first view: its colour, its name, and how
+   many of its products can be sold now. */
+export function categoryTile({ name, count, sellable } = {}) {
+  const label = String(name == null ? '' : name);
+  return `
+    <button class="cat-tile" data-open-cat="${esc(label)}" type="button" style="--cat:${catColor(label)}">
+      <span class="ct-name">${esc(label === 'Uncategorized' ? $t('Uncategorized') : label)}</span>
+      <span class="ct-meta">${esc($tn('{n} product', '{n} products', Number(count) || 0))}${sellable < count ? ` · ${esc($t('{n} available', { n: Number(sellable) || 0 }))}` : ''}</span>
+    </button>`;
+}
+
+export function productTile(product, { fmt, available, showCategory = true } = {}) {
   const p = product || {};
   const money = fmt || ((v) => String(v));
   const isService = p.itemType === 'service';
@@ -120,7 +131,7 @@ export function productTile(product, { fmt, available } = {}) {
     : `<span class="pt-stock${out ? ' pt-out' : ''}">${out ? $t('Out of stock') : (p.isSerialized ? $tn('{n} unit', '{n} units', avail) : $t('{n} in stock', { n: avail }))}</span>`;
   return `
     <button class="prod-card${out ? ' out' : ''}" data-add="${esc(p.id)}" type="button">
-      <span class="pt-cat" style="background:${catColor(p.category)}">${esc(p.category)}</span>
+      ${showCategory ? `<span class="pt-cat" style="background:${catColor(p.category)}">${esc(p.category)}</span>` : ''}
       <span class="pt-name">${esc(p.name)}</span>
       <span class="pt-foot">
         <span class="pt-price">${esc(money(p.retailPrice))}</span>
