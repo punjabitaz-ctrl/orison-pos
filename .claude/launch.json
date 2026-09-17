@@ -6,6 +6,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["--yes", "local-web-server", "--port", "8080", "--directory", "public", "--spa", "index.html"],
       "port": 8080
+    },
+    {
+      "name": "orison-pos-demo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "local-web-server", "--port", "8090", "--directory", "dist/demo-site"],
+      "port": 8090
     }
   ]
 }

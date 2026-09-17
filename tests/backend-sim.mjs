@@ -1897,29 +1897,30 @@ check('statement carries the changer/cashier',
   check('detail of unknown order 404s', req('/api/purchase-orders/detail', {}, { params: { id: 'nope' }, session: poMgr }).status === 404);
 
   const recv1 = req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: mouseId, quantity: 4 }] }, { session: poAdm });
-  check('partial receipt posts stock', recv1.data.status === 'PARTIAL' && recv1.data.receivedValue === 44);
+  check('partial receipt posts stock, owed after the order’s 5% discount (44 → 41.80)',
+    recv1.data.status === 'PARTIAL' && recv1.data.receivedValue === 41.8 && recv1.data.goodsValue === 41.8, JSON.stringify(recv1.data));
   check('over-receipt rejected', req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: mouseId, quantity: 99 }] }, { session: poAdm }).status === 400);
 
   const lapRecv = req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: lapId, quantity: 1, serialNumbers: ['PO-SN-0001'] }] }, { session: poAdm });
-  check('serialized stock intake registers a serial', lapRecv.data.status === 'PARTIAL' && lapRecv.data.receivedValue === 390);
+  check('serialized stock intake registers a serial', lapRecv.data.status === 'PARTIAL' && lapRecv.data.receivedValue === 370.5);
   check('duplicate serial rejected', req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: lapId, quantity: 1, serialNumbers: ['PO-SN-0001'] }] }, { session: poAdm }).status === 409);
   check('serial count mismatch rejected', req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: lapId, quantity: 1, serialNumbers: [] }] }, { session: poAdm }).status === 400);
 
   const fin = req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: mouseId, quantity: 6 }, { productId: lapId, quantity: 1, serialNumbers: ['PO-SN-0002'] }] }, { session: poAdm });
-  check('full receipt advances order to RECEIVED', fin.data.status === 'RECEIVED' && Math.abs(fin.data.receivedValue - 456) < 0.01);
+  check('full receipt advances order to RECEIVED', fin.data.status === 'RECEIVED' && Math.abs(fin.data.receivedValue - 433.2) < 0.01, JSON.stringify(fin.data));
   check('receiving a received order rejected', req('/api/purchase-orders/receive', { id: poId, lines: [{ productId: mouseId, quantity: 1 }] }, { session: poAdm }).status === 409);
 
   const prods = req('/api/products', {}, { session: poMgr }).data;
   const mouseAfter = prods.find((p) => p.id === mouseId);
   const lapAfter = prods.find((p) => p.id === lapId);
-  check('received stock bumped on_hand + weighted cost', mouseAfter.onHand === 10 && Math.abs(mouseAfter.costPrice - 11) < 0.01, JSON.stringify(mouseAfter));
+  check('received stock bumped on_hand + weighted cost, net of the discount', mouseAfter.onHand === 10 && Math.abs(mouseAfter.costPrice - 10.45) < 0.01, JSON.stringify(mouseAfter));
   check('serialized product on_hand = received serials', lapAfter.onHand === 2 && lapAfter.serials.length === 2 && lapAfter.serials.includes('PO-SN-0002'));
 
   const ledger = req('/api/transactions', {}, { params: { limit: '500' }, session: poMgr }).data.transactions;
   const purTxs = ledger.filter((t) => t.kind === 'purchase' && t.counterparty === 'Acme Wholesale');
   check('each receipt leaves a purchase trail in the ledger', purTxs.length === 3 && purTxs.every((t) => t.note.includes(poRow.poNumber)), purTxs.map((t) => t.grandTotal).join(','));
   const purTotal = purTxs.reduce((s, t) => s + t.grandTotal, 0);
-  check('purchase trail sums to received value', Math.abs(purTotal - 890) < 0.01);
+  check('purchase trail sums to the order’s own total, not its line costs', Math.abs(purTotal - 845.5) < 0.01, String(purTotal));
 
   const todayStart = new Date().toISOString().slice(0, 10);
   const poLedger = req('/api/transactions', {}, { params: { limit: '500' }, session: poMgr }).data.transactions;
@@ -1967,8 +1968,8 @@ check('statement carries the changer/cashier',
   check('create records a cost baseline', mouseHist.some((r) => r.field === 'cost_price' && r.source === 'create' && Math.abs(r.newValue - 12) < 0.001));
   check('create records a retail baseline', mouseHist.some((r) => r.field === 'retail_price' && r.source === 'create' && Math.abs(r.newValue - 29) < 0.001));
   const poCostChg = mouseHist.find((r) => r.source === 'po' && r.field === 'cost_price');
-  check('receiving records the weighted-cost change (12 → 11)',
-    !!poCostChg && Math.abs(poCostChg.oldValue - 12) < 0.001 && Math.abs(poCostChg.newValue - 11) < 0.001, JSON.stringify(poCostChg));
+  check('receiving records the weighted-cost change (12 → 10.45)',
+    !!poCostChg && Math.abs(poCostChg.oldValue - 12) < 0.001 && Math.abs(poCostChg.newValue - 10.45) < 0.001, JSON.stringify(poCostChg));
   check('receiving history names the purchase order', !!poCostChg && !!poCostChg.poNumber);
   check('history carries the changer’s full name', mouseHist.filter((r) => r.source === 'create').every((r) => r.changedBy === phAdmName));
 
@@ -2620,6 +2621,10 @@ check('statement carries the changer/cashier',
   check('changing one setting does not reset the others',
     afterTz.taxRate === 7.5 && afterTz.tzOffsetMin === 60,
     JSON.stringify({ tax: afterTz.taxRate, tz: afterTz.tzOffsetMin }));
+  /* put the clock back: later sections ask for "today" as a UTC date while the
+     server buckets by the store's local day, so a store left an hour ahead
+     makes every one of them fail for the hour before midnight UTC. */
+  req('/api/admin/store', { tzOffsetMin: 0 }, { session: locAdm });
 
   /* --- currency switch adopts that currency's notes --- */
   const toUsd = req('/api/admin/store', { locale: 'en-US', country: 'US', currency: 'USD' }, { session: locAdm }).data;
@@ -4935,6 +4940,132 @@ check('statement carries the changer/cashier',
 
   check('terms are read from the words: Net 30, 45 days, nothing',
     sandbox.termsDays_('Net 30') === 30 && sandbox.termsDays_('45 days') === 45 && sandbox.termsDays_('') === 0 && sandbox.termsDays_('COD') === 0);
+}
+{
+  section('what a delivery is owed: the order’s discount and tax (v1.49.0)');
+
+  const dAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const dMgrLogin = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data;
+  const dMgr = dMgrLogin.token;
+  const day = new Date().toISOString().slice(0, 10);
+  const near = (a, b) => Math.abs(a - b) < 0.005;
+  req('/api/admin/store', { taxRate: 0 }, { session: dAdm });
+
+  const sup = req('/api/suppliers', { name: 'Discount Distribution', paymentTerms: 'Net 30' }, { session: dAdm }).data.id;
+  const mk = (name, sku, o) => req('/api/admin/products', {
+    name, sku, category: 'DD', costPrice: o.cost || 0, retailPrice: o.retail || 0,
+    isSerialized: !!o.serialized, onHand: 0,
+  }, { session: dAdm }).data.id;
+  const ddCase = mk('DD Case', 'DD-CASE', { cost: 0, retail: 25 });
+  const ddPhone = mk('DD Phone', 'DD-PHONE', { cost: 0, retail: 300, serialized: true });
+  const order = (body) => req('/api/purchase-orders', Object.assign({ supplierId: sup, status: 'ORDERED' }, body), { session: dMgr }).data;
+  const receive = (id, lines) => req('/api/purchase-orders/receive', { id, lines }, { session: dMgr });
+
+  /* 10 cases at 10 and 2 phones at 200: 500 of stock, 10% off, 25 of tax */
+  const po = order({ lines: [{ productId: ddCase, quantity: 10, unitCost: 10 }, { productId: ddPhone, quantity: 2, unitCost: 200 }], discountPct: 10, taxAmount: 25 });
+  check('the order totals 500 less 10%, plus its tax', near(po.total, 475), JSON.stringify(po));
+  const det = req('/api/purchase-orders/detail', {}, { params: { id: po.id }, session: dMgr }).data.order;
+  check('the detail shows what a line costs after the discount', det.lines.every((l) => near(l.netUnitCost, l.unitCost * 0.9)), JSON.stringify(det.lines.map((l) => [l.unitCost, l.netUnitCost])));
+
+  const r1 = receive(po.id, [{ productId: ddCase, quantity: 10 }]);
+  check('a delivery is owed its goods after the discount, plus its share of the tax',
+    near(r1.data.goodsValue, 90) && near(r1.data.taxValue, 5) && near(r1.data.receivedValue, 95), JSON.stringify(r1.data));
+  const caseRow = req('/api/products', {}, { session: dMgr }).data.find((p) => p.id === ddCase);
+  check('and the stock is costed net of the discount (10 → 9), never at the tax', near(caseRow.costPrice, 9), JSON.stringify(caseRow));
+
+  const r2 = receive(po.id, [{ productId: ddPhone, quantity: 2, serialNumbers: ['DD-IMEI-1', 'DD-IMEI-2'] }]);
+  check('a line finished by an earlier delivery still closes the order', r2.data.status === 'RECEIVED', JSON.stringify(r2.data));
+  check('the last delivery carries the rest of the discount and the tax',
+    near(r2.data.goodsValue, 360) && near(r2.data.taxValue, 20), JSON.stringify(r2.data));
+  check('so the deliveries add up to exactly what the order will be invoiced at',
+    near(r1.data.receivedValue + r2.data.receivedValue, po.total));
+  const ddSerials = sandbox.readRows_('Serials', sandbox.SERIAL_HEADERS).filter((s) => String(s.serial_number).indexOf('DD-IMEI-') === 0);
+  check('each unit carries what it cost, so its profit is its own',
+    ddSerials.length === 2 && ddSerials.every((s) => near(Number(s.cost), 180) && String(s.source) === 'po'), JSON.stringify(ddSerials.map((s) => [s.cost, s.source])));
+
+  const owed = req('/api/suppliers/payables', {}, { session: dMgr }).data.suppliers.find((s) => s.id === sup);
+  check('what the supplier is owed is what they will invoice, not the line costs', near(owed.balance, 475), JSON.stringify(owed));
+
+  /* ---- the books: stock at its cost, tax reclaimed, the whole lot owed ---- */
+  const bk = req('/api/accounting', {}, { session: dAdm, params: { from: day, to: day } }).data;
+  const jl = (j, code) => j.lines.find((l) => l.code === code) || { debit: 0, credit: 0 };
+  const ddJournal = bk.journal.filter((j) => j.kind === 'purchase' && j.memo.indexOf('PO-') >= 0 && j.lines.some((l) => l.code === '2000'));
+  check('a receipt debits the stock at cost and the tax to reclaim, and owes the supplier the total',
+    ddJournal.length === 2
+    && near(ddJournal.reduce((s, j) => s + jl(j, '1200').debit, 0), 450)
+    && near(ddJournal.reduce((s, j) => s + jl(j, '2000').debit, 0), 25)
+    && near(ddJournal.reduce((s, j) => s + jl(j, '2300').credit, 0), 475), JSON.stringify(ddJournal));
+  check('and the books still balance', bk.trialBalance.balanced === true);
+
+  /* ---- selling one proves the discount reached the margin ---- */
+  const rep0 = req('/api/reports', {}, { session: dAdm, params: { from: day, to: day } }).data.summary;
+  req('/api/sync/push', { deviceId: 'till-dd', batch: [{
+    clientTxId: 'dd-sale-1', userId: dMgrLogin.user.id, grandTotal: 300,
+    subtotal: 300, discountPct: 0, tenders: [{ type: 'cash', amount: 300 }], createdAt: new Date().toISOString(),
+    items: [{ productId: ddPhone, name: 'DD Phone', quantity: 1, unitPrice: 300, serialNumber: 'DD-IMEI-1' }],
+  }] }, { session: dMgr });
+  const rep1 = req('/api/reports', {}, { session: dAdm, params: { from: day, to: day } }).data.summary;
+  check('the unit is sold at what it really cost: 300 − 180', near(rep1.grossProfit - rep0.grossProfit, 120), JSON.stringify([rep0.grossProfit, rep1.grossProfit]));
+
+  /* ---- odd money: the shares still add up, delivery by delivery ---- */
+  const oddId = mk('DD Odd', 'DD-ODD', { cost: 0, retail: 9 });
+  const odd = order({ lines: [{ productId: oddId, quantity: 7, unitCost: 3.33 }], discountPct: 6, taxAmount: 0.77 });
+  const o1 = receive(odd.id, [{ productId: oddId, quantity: 3 }]).data;
+  const o2 = receive(odd.id, [{ productId: oddId, quantity: 2 }]).data;
+  const o3 = receive(odd.id, [{ productId: oddId, quantity: 2 }]).data;
+  check('three deliveries of an order that does not divide still add up to its total',
+    near(o1.receivedValue + o2.receivedValue + o3.receivedValue, odd.total) && o3.status === 'RECEIVED',
+    JSON.stringify([o1.receivedValue, o2.receivedValue, o3.receivedValue, odd.total]));
+  check('and the tax shares add up to the order’s tax',
+    near(o1.taxValue + o2.taxValue + o3.taxValue, 0.77), JSON.stringify([o1.taxValue, o2.taxValue, o3.taxValue]));
+
+  /* half of 0.99 three times over: rounding each delivery on its own would
+     owe 1.50, a cent more than the order will ever be invoiced at */
+  const halfId = mk('DD Half', 'DD-HALF', { cost: 0, retail: 3 });
+  const half = order({ lines: [{ productId: halfId, quantity: 3, unitCost: 0.99 }], discountPct: 50 });
+  const h = [1, 1, 1].map(() => receive(half.id, [{ productId: halfId, quantity: 1 }]).data);
+  check('a delivery is owed what the order owes after it, less what it owed before',
+    near(h[0].receivedValue + h[1].receivedValue + h[2].receivedValue, 1.49) && near(half.total, 1.49),
+    JSON.stringify([h.map((x) => x.receivedValue), half.total]));
+
+  /* ---- an order with neither is owed exactly what arrived ---- */
+  const plain = order({ lines: [{ productId: ddCase, quantity: 4, unitCost: 10 }] });
+  const pr = receive(plain.id, [{ productId: ddCase, quantity: 4 }]).data;
+  check('an order with no discount and no tax is owed its line costs', near(pr.receivedValue, 40) && pr.taxValue === 0);
+
+  /* ---- a delivery of one line only lands on that line ---- */
+  const two = order({ lines: [{ productId: ddCase, quantity: 3, unitCost: 10 }, { productId: oddId, quantity: 5, unitCost: 2 }] });
+  receive(two.id, [{ productId: oddId, quantity: 5 }]);
+  const twoDet = req('/api/purchase-orders/detail', {}, { params: { id: two.id }, session: dMgr }).data.order;
+  const lineOfProduct = (id) => twoDet.lines.find((l) => l.productId === id) || {};
+  check('a delivery of only the second line is counted against that line, not the first',
+    lineOfProduct(ddCase).receivedQty === 0 && lineOfProduct(oddId).receivedQty === 5 && twoDet.status === 'PARTIAL',
+    JSON.stringify(twoDet.lines.map((l) => [l.name, l.receivedQty])));
+  const twoRow = req('/api/purchase-orders', {}, { session: dMgr }).data.orders.find((o) => o.id === two.id);
+  check('and the order list counts what arrived the same way', twoRow.receivedQty === 5 && twoRow.orderedQty === 8, JSON.stringify(twoRow));
+  receive(two.id, [{ productId: ddCase, quantity: 3 }]);
+  check('finishing the other line closes the order',
+    req('/api/purchase-orders/detail', {}, { params: { id: two.id }, session: dMgr }).data.order.status === 'RECEIVED');
+
+  /* ---- the day export: stock bought is neither a sale nor cost of sales ---- */
+  const exportLine = (label) => {
+    req('/api/drive/export', { date: day }, { session: dAdm });
+    const csv = driveFiles[driveFiles.length - 1].content;
+    const row = csv.split(String.fromCharCode(10)).find((l) => l.indexOf(',,' + label + ',,') === 0);
+    return row ? Number(row.split(',')[4]) : null;
+  };
+  const taxBefore = exportLine('TAX COLLECTED');
+  const costBefore = exportLine('TOTAL COST');
+  const taxed = order({ lines: [{ productId: ddCase, quantity: 5, unitCost: 10 }], taxAmount: 4 });
+  const tr = receive(taxed.id, [{ productId: ddCase, quantity: 5 }]).data;
+  check('a receipt with tax on it is owed the tax too', near(tr.receivedValue, 54) && near(tr.taxValue, 4));
+  check('but its tax is not tax the shop collected', near(exportLine('TAX COLLECTED'), taxBefore), JSON.stringify([taxBefore, exportLine('TAX COLLECTED')]));
+  check('and stock bought is not cost of goods sold', near(exportLine('TOTAL COST'), costBefore), JSON.stringify([costBefore, exportLine('TOTAL COST')]));
+
+  check('the shares of an order are worked out cumulatively, so they never drift',
+    sandbox.poNetGoodsC_({ discount_pct: 7, subtotal: 100, tax_amount: 0 }, 10000) === 9300
+    && sandbox.poTaxShareC_({ discount_pct: 0, subtotal: 100, tax_amount: 9 }, 5000) === 450
+    && sandbox.poTaxShareC_({ discount_pct: 0, subtotal: 100, tax_amount: 9 }, 12000) === 900);
 }
 {
   section('marketplace sync from a Google Sheet (v1.42.0)');

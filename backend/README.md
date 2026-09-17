@@ -121,6 +121,7 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 - `/api/products` and the pull snapshot. Cost prices go to managers and admins only.
 - `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` (admin, manager): create, edit, add serials, adjust counted stock (`reason` is recorded in the audit log).
 - **Suppliers** `/api/suppliers` (list: admin, manager; add: admin). **Purchase orders** `/api/purchase-orders`, `/detail`, `/receive` (admin, manager): receiving posts weighted-average cost, serials unit by unit, and a `purchase` ledger row. `/cancel` is admin only. Receipts record `supplier_id` and `po_id` (v1.48.0).
+- **What a delivery is owed** (v1.49.0): `poNetGoodsC_(po, subtotalC)` applies the order's discount, `poTaxShareC_(po, subtotalC)` its tax pro rata on the ordered cost. Receiving works both out cumulatively (the order's owing after this delivery less its owing before), so the deliveries of an order always add up to `po.total` and the last one carries the rounding. The discount is inside the cost blended into the product and written on a serial (`Serials.cost`, `source: po`); the tax is not — it goes on the receipt as `tax_amount` and the books debit it to 2000. `/receive` returns `goodsValue`, `taxValue` and `receivedValue` (their sum); `/detail` adds `netUnitCost` per line.
 - **Supplier payments** (v1.48.0):
   - `/api/suppliers/payables` (admin, manager): per supplier, `received`, `paid`, `balance` and `overdue` (deliveries past `termsDays_(payment_terms)` less payments, oldest first), plus `orders[]` with payment state; `totalOwed`, `totalOverdue`.
   - `/api/suppliers/statement?supplierId` (admin, manager): the same, plus `lines[]` with a running balance.
@@ -226,7 +227,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 1066 checks
+npm run test:backend   # 1089 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.

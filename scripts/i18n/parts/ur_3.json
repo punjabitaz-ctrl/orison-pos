@@ -71,7 +71,6 @@
 "Receipt failed": "رسید ناکام",
 "Receipt no., customer, item, IMEI or amount…": "رسید نمبر، گاہک، آئٹم، IMEI یا رقم…",
 "Receipt number pending sync": "رسید نمبر سنک کا منتظر",
-"Receipt posted — {amount}": "وصولی درج ہو گئی — {amount}",
 "Receipt printer": "رسید پرنٹر",
 "Receipts and the customer display are printed in this language when the till has a translation for it: English, Arabic or Urdu. Any other language prints receipts in English.": "رسیدیں اور گاہک کا ڈسپلے اسی زبان میں ہوتے ہیں اگر اس کا ترجمہ موجود ہو: انگریزی، عربی یا اردو۔ کسی اور زبان میں رسیدیں انگریزی میں پرنٹ ہوتی ہیں۔",
 "Receive stock": "اسٹاک وصول کریں",

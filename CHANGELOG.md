@@ -5,6 +5,50 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.0] — 2026-09-17
+
+### Fixed
+
+- **A delivery is owed what the supplier will invoice.** An order's discount
+  and its tax were ignored when stock was received, so an order on 5% trade
+  terms showed about 5% more owed than the invoice would say, and the tax on it
+  was never owed at all.
+  - **The discount is now in the cost of the stock.** A line ordered at 10 on a
+    10%-discount order comes in at 9: that is what it cost, so that is the
+    weighted-average cost, the cost written on a serial, and the cost the
+    margin is worked out against.
+  - **The order's tax is owed, but is not stock cost.** It is treated as input
+    tax the store reclaims, posted to *Sales tax / VAT payable* (2000) rather
+    than to Inventory. A store that cannot reclaim its purchase tax should
+    leave the order's tax at zero and carry the tax in the line costs.
+  - **A part delivery carries its share of both**, worked out as what the order
+    owes once the delivery has arrived less what it owed before. However many
+    deliveries an order arrives in, the amounts add up to exactly the order's
+    own total, and the last delivery carries the rounding.
+  - Receiving shows what the delivery will be owed before it is posted, and
+    splits stock from tax when the order has tax on it. A purchase order's
+    lines show their cost after the discount.
+- **A fully delivered order stayed on PARTIAL** when its lines arrived in
+  separate deliveries: a line finished by an earlier delivery was not counted,
+  so the order never reached *Received*.
+- **A delivery of only some of an order's lines went against the wrong lines.**
+  What had arrived was read off by position, so receiving the second line of an
+  order showed the quantity against the first. Receiving now matches a delivery
+  to its line by product.
+- **The receive dialog would not take a line at zero**, so a delivery of only
+  part of an order could not be entered at all. A line left at zero is now a
+  line that did not arrive; at least one has to have.
+- **The daily export counted stock bought as cost of goods sold**, and counted
+  the tax on a receipt as tax the shop had collected. *TOTAL COST* is now what
+  was sold (stock received and trade-ins bought are not), and *TAX COLLECTED*
+  is tax on sales only.
+- **Serials received on a purchase order now carry what they cost** (`cost`,
+  `source: po`), so an IMEI's profit is its own rather than the product's
+  current cost price.
+- **The test suite left the store an hour ahead of UTC**, which failed every
+  "today" section of the backend sim for the hour before midnight UTC. The
+  clock is put back after the check that needed it.
+
 ## [1.48.0] — 2026-09-17
 
 ### Added

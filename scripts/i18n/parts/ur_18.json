@@ -1,0 +1,8 @@
+{
+"net {cost}": "خالص {cost}",
+"stock {goods} + tax {tax}": "اسٹاک {goods} + ٹیکس {tax}",
+"at the order cost, less any discount on it": "آرڈر کی لاگت پر، اس پر کسی رعایت کے بعد",
+"{amount} owed": "{amount} واجب الادا",
+"Receipt posted — {amount} owed": "رسید درج ہو گئی — {amount} واجب الادا",
+"Leave a line at zero if it did not arrive — but something has to have": "جو لائن نہیں آئی اسے صفر پر چھوڑ دیں — لیکن کچھ تو آیا ہونا چاہیے"
+}

@@ -7,7 +7,52 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.48.0 — paying suppliers
+## Latest: v1.49.0 — a delivery is owed what the invoice will say
+
+**2026-09-17.**
+
+- **An order's discount and tax now follow the stock in.** Before this, a
+  delivery was owed its plain line costs: an order on 5% trade terms looked
+  about 5% more expensive than the supplier's invoice, and any tax on the order
+  was never owed at all.
+- **The discount is part of what the stock cost.** Ordered at 10 with 10% off,
+  it comes in at 9 — that is the cost on the shelf, on the serial, and in the
+  profit on the sale.
+- **The tax is owed to the supplier but is not stock cost.** It goes to
+  *Sales tax / VAT payable* as tax to reclaim. (If the shop cannot reclaim
+  purchase tax, leave the order's tax at zero and put it in the line costs.)
+- **A part delivery carries its share of both**, and the deliveries always add
+  up to the order's own total — the last one carries the odd cent.
+- **Receiving tells you what it will be owed** before you post it, and a
+  purchase order's lines show their cost after the discount.
+- **Fixed:** an order delivered line by line stayed on *Partial* for ever, and
+  what had arrived was counted against the wrong line. Receiving now takes a
+  line at zero, so part of an order can actually be entered.
+- **Fixed:** the daily export counted stock bought as cost of goods sold, and
+  the tax on a delivery as tax collected from customers.
+- **Fixed:** serials received on an order now carry what they cost, so an
+  IMEI's profit is its own.
+
+**Validation:** backend-sim **PASS 1089 / FAIL 0** · client units **PASS 545 /
+FAIL 0** · demo **PASS 30 / FAIL 0**.
+- Nine mutations confirm the tests bite: the discount dropped from the goods,
+  the tax never allocated, each delivery rounded on its own, a line closed by
+  an earlier delivery ignored, a serial taking the ordered cost, the input tax
+  capitalised into stock, stock bought counted as cost of sales, purchase tax
+  counted as tax collected, and a delivery read off by position again.
+- Checked in the browser: the manager receives the demo's 5%/35-tax order one
+  line at a time — the dialog splits stock from tax, the two deliveries come to
+  exactly the order's $1,853.30, and the admin's journal shows Dr Inventory,
+  Dr VAT to reclaim, Cr Accounts payable on each.
+
+### Deploying
+
+**Backend redeploy required.** Nothing to run: existing orders and receipts are
+untouched, and the ledger columns are already there. The demo updates itself.
+
+---
+
+## v1.48.0 — paying suppliers
 
 **2026-09-17.**
 

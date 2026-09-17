@@ -71,7 +71,6 @@
 "Receipt failed": "فشل الاستلام",
 "Receipt no., customer, item, IMEI or amount…": "رقم الإيصال أو العميل أو المنتج أو IMEI أو المبلغ…",
 "Receipt number pending sync": "رقم الإيصال بانتظار المزامنة",
-"Receipt posted — {amount}": "تم تسجيل الاستلام — {amount}",
 "Receipt printer": "طابعة إيصالات",
 "Receipts and the customer display are printed in this language when the till has a translation for it: English, Arabic or Urdu. Any other language prints receipts in English.": "تُطبع الإيصالات وتظهر شاشة العميل بهذه اللغة إذا توفرت لها ترجمة: الإنجليزية أو العربية أو الأردية. أي لغة أخرى تُطبع إيصالاتها بالإنجليزية.",
 "Receive stock": "استلام المخزون",

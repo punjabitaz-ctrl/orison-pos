@@ -244,7 +244,7 @@ target, a summary and the terminal.
 **Recorded (v1.36.0, approvals v1.37.0):**
 
 - **Money:** refunds, paid out, cash pick-ups, staff expenses and payments on account, written as they sync; no-sale drawer opens; Drive exports.
-- **Stock:** stock adjustments with a reason; stock takes; product create and edit, field by field; bulk repricing; serials added; suppliers; purchase orders created, received and cancelled.
+- **Stock:** stock adjustments with a reason; stock takes; product create and edit, field by field; bulk repricing; serials added; suppliers; purchase orders created, received and cancelled (a receipt is audited with the stock, the tax and the amount owed).
 - **Repairs:** every repair action.
 - **People and access:** manager approvals; punches corrected; shifts closed by a manager; customer changes (credit limits); sign-ins; the attempt that trips a lockout; lockout releases; new staff; staff edits; PIN resets; revoke-all; terminal revocations; customer creation; conflict reviews.
 - **The business:** store settings, scheduled reports and backups.

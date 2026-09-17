@@ -13,9 +13,9 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.48.0** — paying suppliers: payables, statements, payments (`2026-09-17`) |
+| Current version | **v1.49.0** — a delivery is owed what the invoice will say: order discount and tax (`2026-09-17`) |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
-| Validation bar | `backend-sim` **PASS 1066 / FAIL 0** · client units **PASS 538 / FAIL 0** · demo **PASS 29 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Validation bar | `backend-sim` **PASS 1089 / FAIL 0** · client units **PASS 545 / FAIL 0** · demo **PASS 30 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -127,6 +127,27 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.49.0** What a delivery is owed: the order's discount and tax.
+  - `poDiscountPct_` / `poNetGoodsC_` / `poTaxShareC_`; receiving allocates both
+    **cumulatively** (owing after this delivery − owing before), so deliveries of
+    an order add up to `po.total` and the last carries the rounding.
+  - The discount is stock cost: blended weighted average, `Serials.cost` +
+    `source: 'po'` on PO intake, and therefore the margin. The tax is not: the
+    receipt carries it as `tax_amount` and the books post it to 2000 (input tax
+    to reclaim), Inventory taking only the goods. Documented assumption — a shop
+    that cannot reclaim purchase tax leaves the order's tax at zero.
+  - `/receive` returns `goodsValue` / `taxValue` / `receivedValue`; `/detail`
+    lines carry `netUnitCost`. Client `receiptOwed()` previews it in the dialog.
+  - **Fixed:** an order delivered line by line never reached RECEIVED (a line
+    closed earlier was read as a number, not its row).
+  - **Fixed:** `received_json` was read by position (`receivedByProduct_`), so a
+    delivery of one line of an order counted against another line. Only reachable
+    now that the receive dialog takes a line at zero.
+  - **Fixed:** day export counted stock bought (and trade-ins) as cost of goods
+    sold, and a receipt's tax as tax collected.
+  - **Fixed (tests):** the sim left the store an hour ahead of UTC, failing
+    every "today" section for the hour before midnight UTC.
+  - 29 sim checks + 6 client checks, 9 mutations caught.
 - **v1.48.0** Supplier payments.
   - `payablesBook_` / `supplierAccount_` / `payableLinks_` / `termsDays_`; routes
     `/api/suppliers/payables|statement|payment|payment/void`.
@@ -201,7 +222,9 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   - Admin *Accounts* screen `public/js/screens/accounts.js` with
     journal / trial-balance CSV.
   - 31 sim checks, including whole-day reconciliation with Reports.
-  - Accounts payable now clears through supplier payments (v1.48.0).
+  - Accounts payable now clears through supplier payments (v1.48.0), and a
+    delivery is owed the order's discounted cost plus its share of the order's
+    tax, which is posted as input tax to reclaim (v1.49.0).
 - **v1.42.0** Marketplace sync (Sprint 2).
   - `marketplaceSettings_` (Script Property `MARKETPLACE_SHEET_ID`,
     `Meta.marketplace_user`).
@@ -589,7 +612,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **1066 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **1089 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -721,7 +744,8 @@ is below, in the order it should be picked up.
 3. **Program in flight** — `docs/superpowers/plans/2026-09-13-warranty-marketplace-accounting-program.md`:
    warranty ✅ v1.41.0; marketplace sync ✅ v1.42.0 (*run
    `installMarketplaceTrigger()` on deploy*); in-app GAAP accounting ✅
-   v1.43.0. **Program complete.** Supplier payments ✅ v1.48.0. Owner closed gift cards,
+   v1.43.0. **Program complete.** Supplier payments ✅ v1.48.0; purchase
+   discounts and tax into payables ✅ v1.49.0. Owner closed gift cards,
    permission switches and layaway (not wanted). Trade-ins ✅ v1.44.0.
    *Have a tax adviser check the UAE invoice wording.*
 4. ~~**Warranty per serial**~~ — **done v1.41.0**. Cheap now that fitted serials point at

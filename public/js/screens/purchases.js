@@ -35,6 +35,34 @@ const PAYMENT_META = {
   nothing_received: { label: N_('Nothing received'), cls: 'draft' },
 };
 
+const centsOf = (n) => Math.round((Number(n) || 0) * 100 + 0.000000001);
+
+export function receiptOwed(order, taking) {
+  const pct = Math.min(100, Math.max(0, Number(order && order.discountPct) || 0));
+  const orderSubC = centsOf(order && order.subtotal);
+  const taxC = centsOf(order && order.taxAmount);
+  const net = (subC) => Math.round((subC * (100 - pct)) / 100);
+  const taxOf = (subC) => {
+    if (!taxC || !(orderSubC > 0)) return 0;
+    return subC >= orderSubC ? taxC : Math.round((taxC * subC) / orderSubC);
+  };
+  let prevC = 0;
+  let takenC = 0;
+  let closes = true;
+  for (const line of (order && order.lines) || []) {
+    const ordered = Number(line.quantity) || 0;
+    const had = Math.min(Number(line.receivedQty) || 0, ordered);
+    const now = Math.max(0, Math.min(Number((taking || {})[line.productId]) || 0, ordered - had));
+    prevC += centsOf(had * (Number(line.unitCost) || 0));
+    takenC += centsOf(now * (Number(line.unitCost) || 0));
+    if (had + now < ordered) closes = false;
+  }
+  const cumC = closes ? Math.max(prevC + takenC, orderSubC) : prevC + takenC;
+  const goodsC = net(cumC) - net(prevC);
+  const taxShareC = taxOf(cumC) - taxOf(prevC);
+  return { goods: goodsC / 100, tax: taxShareC / 100, owed: (goodsC + taxShareC) / 100, closes };
+}
+
 export function paymentLabel(state) {
   const m = PAYMENT_META[state] || PAYMENT_META.unpaid;
   return { label: $t(m.label), cls: m.cls };
@@ -490,7 +518,7 @@ export const screen = {
             <div class="po-detail-line">
               <div class="po-detail-main">
                 <strong>${esc(l.name)}</strong>
-                <span class="muted">${esc(l.sku)} · ${l.quantity} × ${fmt(l.unitCost)}</span>
+                <span class="muted">${esc(l.sku)} · ${l.quantity} × ${fmt(l.unitCost)}${l.netUnitCost != null && l.netUnitCost !== l.unitCost ? ` · ${esc($t('net {cost}', { cost: fmt(l.netUnitCost) }))}` : ''}</span>
               </div>
               <div class="po-detail-right">
                 <span class="muted">${esc($t('received {got}/{ordered}', { got: l.receivedQty, ordered: l.quantity }))}</span>
@@ -564,11 +592,26 @@ export const screen = {
               </div>
             </div>`).join('')}
         </div>
+        <div class="po-lines-subtotal po-recv-owed" id="poRecvOwed"></div>
         <div class="modal-actions">
           <button class="btn btn-ghost" data-close>${$t('Close')}</button>
           <button class="btn btn-primary" id="poRecvGo">${$t('Post receipt')}</button>
         </div>
       `);
+
+      const owedBox = m.querySelector('#poRecvOwed');
+      const showOwed = () => {
+        const taking = {};
+        m.querySelectorAll('.po-recv-line').forEach((el) => {
+          taking[el.dataset.line] = Number(el.querySelector('.po-recv-qty').value) || 0;
+        });
+        const due = receiptOwed(ord, taking);
+        owedBox.innerHTML = `<span class="muted">${esc(due.tax
+          ? $t('stock {goods} + tax {tax}', { goods: fmt(due.goods), tax: fmt(due.tax) })
+          : $t('at the order cost, less any discount on it'))}</span>
+          <strong>${esc($t('{amount} owed', { amount: fmt(due.owed) }))}</strong>`;
+      };
+      showOwed();
 
       m.querySelector('#poRecvGo').addEventListener('click', async () => {
         const lines = [];
@@ -577,7 +620,8 @@ export const screen = {
           const productId = el.dataset.line;
           const line = openLines.find((l) => l.productId === productId);
           const qty = Number(el.querySelector('.po-recv-qty').value) || 0;
-          if (!(qty > 0) || qty > line.remaining) { invalid = line.name; return; }
+          if (qty === 0) return;
+          if (qty < 0 || qty > line.remaining) { invalid = line.name; return; }
           let serials = [];
           if (line.serialized) {
             serials = splitSerials(el.querySelector('.po-recv-serials').value);
@@ -586,12 +630,13 @@ export const screen = {
           lines.push({ productId, quantity: qty, serialNumbers: serials });
         });
         if (invalid) { toast($t('Fix {name}: quantity and serials must match', { name: invalid }), 'warn'); return; }
+        if (!lines.length) { toast($t('Leave a line at zero if it did not arrive — but something has to have'), 'warn'); return; }
         const go = m.querySelector('#poRecvGo');
         go.disabled = true;
         try {
           const res = await api.post('/api/purchase-orders/receive', { id: ord.id, lines });
           closeModal();
-          toast($t('Receipt posted — {amount}', { amount: fmt(res.receivedValue) }), 'ok');
+          toast($t('Receipt posted — {amount} owed', { amount: fmt(res.receivedValue) }), 'ok');
           beep('ok');
           await load();
         } catch (err) {
@@ -603,6 +648,7 @@ export const screen = {
         q.addEventListener('input', () => {
           const max = Number(q.dataset.max) || 0;
           if (Number(q.value) > max) q.value = max;
+          showOwed();
         });
       });
     }

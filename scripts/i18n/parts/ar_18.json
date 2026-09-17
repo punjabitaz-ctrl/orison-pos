@@ -1,0 +1,8 @@
+{
+"net {cost}": "الصافي {cost}",
+"stock {goods} + tax {tax}": "مخزون {goods} + ضريبة {tax}",
+"at the order cost, less any discount on it": "بسعر تكلفة الطلب، ناقصًا أي خصم عليه",
+"{amount} owed": "المستحق {amount}",
+"Receipt posted — {amount} owed": "تم تسجيل الاستلام — المستحق {amount}",
+"Leave a line at zero if it did not arrive — but something has to have": "اترك السطر على صفر إذا لم يصل — لكن يجب أن يكون شيء قد وصل"
+}

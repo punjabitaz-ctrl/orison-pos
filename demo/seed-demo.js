@@ -189,7 +189,10 @@ export function seedDemo(rt, { now = new Date() } = {}) {
   rt.call('applyPatches_', 'Transactions', rt.get('TX_HEADERS'), 'id', Object.fromEntries(received.map((r) => [r.id, { created_at: fiveWeeks }])));
   req(adm, '/api/suppliers/payment', { supplierId: supplier.id, poId: po1.id, amount: 100, method: 'bank', reference: 'TRF 44810', note: 'Part payment' });
   const expected = new Date(now.getTime() + 3 * 86400000).toISOString().slice(0, 10);
+  /* that one is on 5% trade terms with tax on the invoice, so receiving it
+     shows what a delivery is really owed */
   req(mgr, '/api/purchase-orders', { supplierId: supplier.id, status: 'ORDERED', expectedDate: expected, note: 'Phones for the weekend',
+    discountPct: 5, taxAmount: 35,
     lines: [{ productId: bySku(list, 'PH-G62-128').id, quantity: 2, unitCost: 399 }, { productId: bySku(list, 'AU-BOSEQC45').id, quantity: 4, unitCost: 279 }] });
 
   /* the counter today: a till shift open, repairs on the bench, a trade-in */

@@ -4316,7 +4316,11 @@ function accounting_(session, params) {
       tenders(e, t, -1, grossC);
     } else if (kind === 'purchase') {
       e = entry(t.created_at, 'purchase', ref, String(t.note || 'Stock received') + (t.counterparty ? ' · ' + String(t.counterparty) : ''));
-      post(e, '1200', grossC);
+      /* the order's tax is input tax the store reclaims, not stock cost */
+      var inputTaxC = cents_(t.tax_amount);
+      if (!(inputTaxC > 0) || inputTaxC > grossC) inputTaxC = 0;
+      post(e, '1200', grossC - inputTaxC);
+      if (inputTaxC) post(e, '2000', inputTaxC);
       post(e, '2300', -grossC);
     } else {
       continue;
@@ -5317,6 +5321,16 @@ function round2_(n) {
   return sign * Math.round((Math.abs(x) + Number.EPSILON) * 100) / 100;
 }
 
+/* What has been received, by product. received_json is a list, and a delivery
+   of some of an order's lines writes only those lines, so reading it by
+   position put one line's quantity against another's. */
+function receivedByProduct_(json) {
+  var rows = itobjs_(json);
+  var out = Object.create(null);
+  for (var i = 0; i < rows.length; i++) out[String(rows[i].productId)] = rows[i];
+  return out;
+}
+
 function poItemsFromPayload_(lines, createdBy) {
   if (!Array.isArray(lines) || !lines.length) throw statusError_(400, 'At least one line is required');
   var prodRows = readRows_('Products', PRODUCT_HEADERS);
@@ -5354,9 +5368,13 @@ function purchaseOrders_(session, payload) {
     return {
       orders: poRows.map(function (po) {
         var items = itobjs_(po.items_json);
-        var received = itobjs_(po.received_json);
+        var received = receivedByProduct_(po.received_json);
         var ordered = 0, got = 0;
-        for (var i = 0; i < items.length; i++) { ordered += items[i].quantity || 1; got += (received[i] && received[i].quantity) || 0; }
+        for (var i = 0; i < items.length; i++) {
+          ordered += items[i].quantity || 1;
+          var had = received[String(items[i].productId)];
+          got += Math.min(num_(had ? had.quantity : 0), num_(items[i].quantity || 1));
+        }
         return {
           id: String(po.id), poNumber: String(po.po_number || ''), supplierName: (suppliers[String(po.supplier_id)] || {}).name || '',
           supplierId: String(po.supplier_id || ''), status: String(po.status || 'DRAFT'),
@@ -5378,7 +5396,7 @@ function purchaseOrders_(session, payload) {
 
   var built = poItemsFromPayload_(payload.lines, session.uid);
   var discount = Math.min(100, Math.max(0, num_(payload.discountPct)));
-  var taxAmount = Math.max(0, num_(payload.taxAmount));
+  var taxAmount = round2_(Math.max(0, num_(payload.taxAmount)));
   var subtotal = 0;
   for (var b = 0; b < built.items.length; b++) subtotal += built.items[b].quantity * built.items[b].unitCost;
   subtotal = round2_(subtotal);
@@ -5422,16 +5440,18 @@ function purchaseOrderDetail_(session, params) {
   var suppliers = poSupplierMap_(readRows_('Suppliers', SUPPLIER_HEADERS));
   var supplier = suppliers[String(po.supplier_id)] || {};
   var items = itobjs_(po.items_json);
-  var received = itobjs_(po.received_json);
+  var received = receivedByProduct_(po.received_json);
   var prods = readRows_('Products', PRODUCT_HEADERS);
   var onHandById = {};
   for (var p = 0; p < prods.length; p++) onHandById[String(prods[p].id)] = num_(prods[p].on_hand);
 
   var outItems = items.map(function (it, idx) {
-    var got = (received[idx] && received[idx].quantity) || 0;
+    var hadRow = received[String(it.productId || '')];
+    var got = Math.min(num_(hadRow ? hadRow.quantity : 0), num_(it.quantity || 1));
     return {
       productId: String(it.productId || ''), name: String(it.name || ''), sku: String(it.sku || ''),
       quantity: num_(it.quantity || 1), unitCost: num_(it.unitCost),
+      netUnitCost: round2_(num_(it.unitCost) * (100 - poDiscountPct_(po)) / 100),
       receivedQty: got, remaining: num_(it.quantity || 1) - got,
       onHand: onHandById[String(it.productId || '')] == null ? null : onHandById[String(it.productId || '')],
       serialized: String((prods.find(function (pr) { return String(pr.id) === String(it.productId); }) || {}).is_serialized) === '1',
@@ -5448,6 +5468,42 @@ function purchaseOrderDetail_(session, params) {
       lines: outItems,
     },
   };
+}
+
+/* ------------------------------------------------------------------ *
+ *  What a delivery is owed (v1.49.0)
+ *
+ *  An order's discount and its tax belong to the whole order, not to a line,
+ *  so a part delivery carries its share of both. Both shares are worked out
+ *  cumulatively - what the order owes once this delivery has arrived, less
+ *  what it owed before - so however many deliveries an order arrives in, the
+ *  shares add up to the order's own total and the last one carries the
+ *  rounding.
+ *
+ *  The discount is a trade discount: it lowers what the stock actually cost,
+ *  so it is inside the cost blended into the product and written on a serial.
+ *  The tax is not: it is input tax the store reclaims (account 2000), never
+ *  part of the cost of the goods. A store that cannot reclaim its purchase
+ *  tax should leave the order's tax at zero and carry the tax in the line
+ *  costs, where it belongs in the cost of the stock.
+ * ------------------------------------------------------------------ */
+
+function poDiscountPct_(po) {
+  return Math.min(100, Math.max(0, num_(po.discount_pct)));
+}
+
+/* the goods in a run of deliveries worth subtotalC, after the order discount */
+function poNetGoodsC_(po, subtotalC) {
+  return Math.round(subtotalC * (100 - poDiscountPct_(po)) / 100);
+}
+
+/* their share of the order's tax, pro rata on the ordered cost */
+function poTaxShareC_(po, subtotalC) {
+  var taxC = cents_(po.tax_amount);
+  var orderSubC = cents_(po.subtotal);
+  if (!taxC || !(orderSubC > 0)) return 0;
+  if (subtotalC >= orderSubC) return taxC;
+  return Math.round(taxC * subtotalC / orderSubC);
 }
 
 function purchaseOrderReceive_(session, payload) {
@@ -5497,10 +5553,11 @@ function purchaseOrderReceive_(session, payload) {
     for (var sr = 0; sr < serialRows.length; sr++) serialSet[String(serialRows[sr].serial_number)] = true;
 
     var stamp = new Date().toISOString();
-    var receivedValue = 0;
     var txItems = [];
-
     var project = {};
+
+    /* first pass: what may be taken, and what it was ordered at */
+    var taking = [];
     for (var li = 0; li < lines.length; li++) {
       var ln = lines[li];
       var pid = String(ln.productId || '');
@@ -5513,38 +5570,67 @@ function purchaseOrderReceive_(session, payload) {
       var prevQty = num_(receivedById[pid] ? receivedById[pid].quantity : 0);
       var remaining = num_(ordered.quantity) - prevQty;
       if (qty > remaining) throw statusError_(400, 'Cannot receive more than the outstanding quantity');
-      var unitCost = num_(ordered.unitCost);
       var sn = Array.isArray(ln.serialNumbers) ? ln.serialNumbers.map(function (s) { return String(s).trim(); }).filter(Boolean) : [];
       if (String(prod.is_serialized) === '1') {
         if (sn.length !== qty) throw statusError_(400, 'Serials required for serialized stock');
         for (var s2 = 0; s2 < sn.length; s2++) {
           if (serialSet[sn[s2]]) throw statusError_(409, 'Serial already registered: ' + sn[s2]);
           serialSet[sn[s2]] = true;
-          serialNew.push({ id: Utilities.getUuid(), product_id: pid, serial_number: sn[s2], status: 'IN_STOCK', tx_id: '', updated_at: stamp });
         }
       }
+      taking.push({ pid: pid, prod: prod, ordered: ordered, qty: qty, serials: sn, grossC: cents_(qty * num_(ordered.unitCost)) });
       newReceived.push({ productId: pid, quantity: prevQty + qty, serials: sn });
-      receivedValue += qty * unitCost;
-      for (var tx = 0; tx < qty; tx++) {
-        txItems.push({ productId: pid, name: String(ordered.name || ''), quantity: 1, unitPrice: unitCost, unitCost: unitCost, taxable: !(String(prod.taxable) === '0') });
-      }
-      if (String(prod.is_serialized) !== '1') {
-        var onHand = num_(prod.on_hand);
-        var newOnHand = onHand + qty;
-        var newCost = (onHand * num_(prod.cost_price) + qty * unitCost) / newOnHand;
-        if (!(newCost > 0)) newCost = unitCost;
-        patches[pid] = { on_hand: newOnHand, cost_price: round2_(newCost), updated_at: stamp };
-        project[pid] = { onHand: newOnHand, unitCost: round2_(newCost) };
-      } else {
-        project[pid] = { onHand: num_(prod.on_hand) + qty, unitCost: num_(prod.cost_price) };
-      }
     }
 
-    /* all outstanding received? */
+    /* all outstanding received? a line finished by an earlier delivery counts:
+       reading its previous row as a number (it is an object) used to leave a
+       fully delivered order stuck on PARTIAL. */
     var allDone = items.every(function (it) {
       var post = newReceived.find(function (r) { return String(r.productId) === String(it.productId); });
-      return post ? num_(post.quantity) >= num_(it.quantity) : num_(receivedById[String(it.productId)] || 0) >= num_(it.quantity);
+      var was = receivedById[String(it.productId)];
+      return num_(post ? post.quantity : (was ? was.quantity : 0)) >= num_(it.quantity);
     });
+
+    /* what this delivery is owed: its goods after the order's discount, plus
+       its share of the order's tax, both cumulative so the shares always add
+       up to the order's total (poNetGoodsC_ / poTaxShareC_). */
+    var prevSubC = 0;
+    for (var pi = 0; pi < items.length; pi++) {
+      var wasRow = receivedById[String(items[pi].productId)];
+      var wasQty = Math.min(num_(wasRow ? wasRow.quantity : 0), num_(items[pi].quantity));
+      prevSubC += cents_(wasQty * num_(items[pi].unitCost));
+    }
+    var takenSubC = 0;
+    for (var ti = 0; ti < taking.length; ti++) takenSubC += taking[ti].grossC;
+    var cumSubC = allDone ? Math.max(prevSubC + takenSubC, cents_(po.subtotal)) : prevSubC + takenSubC;
+    var goodsC = poNetGoodsC_(po, cumSubC) - poNetGoodsC_(po, prevSubC);
+    var taxShareC = poTaxShareC_(po, cumSubC) - poTaxShareC_(po, prevSubC);
+    var owedC = goodsC + taxShareC;
+    var lineGoodsC = splitCents_(goodsC, taking.map(function (tk) { return tk.grossC; }));
+
+    /* second pass: stock in, at what it cost after the discount */
+    for (var ai = 0; ai < taking.length; ai++) {
+      var tk = taking[ai];
+      var lineC = num_(lineGoodsC[ai]);
+      var netUnit = round2_(lineC / 100 / tk.qty);
+      for (var sx = 0; sx < tk.serials.length; sx++) {
+        serialNew.push({ id: Utilities.getUuid(), product_id: tk.pid, serial_number: tk.serials[sx], status: 'IN_STOCK',
+          tx_id: '', updated_at: stamp, cost: netUnit, source: 'po' });
+      }
+      for (var tx = 0; tx < tk.qty; tx++) {
+        txItems.push({ productId: tk.pid, name: String(tk.ordered.name || ''), quantity: 1, unitPrice: netUnit, unitCost: netUnit, taxable: !(String(tk.prod.taxable) === '0') });
+      }
+      if (String(tk.prod.is_serialized) !== '1') {
+        var onHand = num_(tk.prod.on_hand);
+        var newOnHand = onHand + tk.qty;
+        var newCost = (onHand * num_(tk.prod.cost_price) + lineC / 100) / newOnHand;
+        if (!(newCost > 0)) newCost = netUnit;
+        patches[tk.pid] = { on_hand: newOnHand, cost_price: round2_(newCost), updated_at: stamp };
+        project[tk.pid] = { onHand: newOnHand, unitCost: round2_(newCost) };
+      } else {
+        project[tk.pid] = { onHand: num_(tk.prod.on_hand) + tk.qty, unitCost: netUnit };
+      }
+    }
 
     var merged = received.slice();
     for (var m = 0; m < newReceived.length; m++) {
@@ -5565,20 +5651,27 @@ function purchaseOrderReceive_(session, payload) {
       if (preCost !== postCost) recordPriceChange_(prodById[ph], 'cost_price', preCost, postCost, 'po', po, String(session.uid || ''));
     }
     appendRows_('Serials', SERIAL_HEADERS, serialNew);
-    if (receivedValue > 0) {
+    if (owedC > 0) {
+      /* tax_amount on a purchase row is the input tax inside its total, so the
+         books can debit the stock and the tax separately. subtotal stays empty:
+         a receipt earns nothing, and a stored subtotal would read as revenue. */
       appendRows_('Transactions', TX_HEADERS, [{
         id: Utilities.getUuid(), store_id: getStore_().id, user_id: String(session.uid || ''), device_id: 'server',
         client_tx_id: 'po-' + id.slice(0, 8) + '-' + stamp.slice(0, 10), kind: 'purchase',
-        original_client_tx: '', counterparty: supplierName, grand_total: round2_(receivedValue),
+        original_client_tx: '', counterparty: supplierName, grand_total: round2_(owedC / 100),
         status: 'COMPLETED', tenders_json: '[]', items_json: JSON.stringify(txItems),
-        note: 'Received against ' + String(po.po_number || ''), created_at: new Date().toISOString(), subtotal: '', tax_amount: '', discount_pct: '', customer_id: '',
+        note: 'Received against ' + String(po.po_number || ''), created_at: new Date().toISOString(),
+        subtotal: '', tax_amount: taxShareC ? round2_(taxShareC / 100) : '', discount_pct: '', customer_id: '',
         supplier_id: String(po.supplier_id || ''), po_id: id,
       }]);
     }
     logAudit_(session, 'po.receive', 'purchase_order', id,
-      String(po.po_number || '') + ': ' + txItems.length + ' unit(s) received, value ' + round2_(receivedValue) + ' (' + newStatus + ')', payload.deviceId);
+      String(po.po_number || '') + ': ' + txItems.length + ' unit(s) received, stock ' + round2_(goodsC / 100)
+      + (taxShareC ? ' + tax ' + round2_(taxShareC / 100) : '') + ', owed ' + round2_(owedC / 100) + ' (' + newStatus + ')', payload.deviceId);
     return {
-      id: id, status: newStatus, receivedValue: round2_(receivedValue), lines: newReceived.map(function (r) {
+      id: id, status: newStatus, receivedValue: round2_(owedC / 100),
+      goodsValue: round2_(goodsC / 100), taxValue: round2_(taxShareC / 100),
+      lines: newReceived.map(function (r) {
         return { productId: String(r.productId), quantity: num_(r.quantity), onHand: project[String(r.productId)] ? project[String(r.productId)].onHand : null, unitCost: project[String(r.productId)] ? project[String(r.productId)].unitCost : null };
       }),
     };
@@ -8084,7 +8177,8 @@ function driveExport_(session, payload, params) {
       else if (k === 'sale' || k === 'payment' || k === 'deposit') cashDrawer += dta;
     }
     if (isCashOutKind_(k)) cashDrawer -= v;
-    if (String(t.tax_amount || '') !== '') taxTotal += num_(t.tax_amount);
+    /* tax collected is tax on sales; the tax on a receipt is input tax */
+    if ((k === 'sale' || k === 'refund') && String(t.tax_amount || '') !== '') taxTotal += num_(t.tax_amount);
 
     var items = [];
     try { items = JSON.parse(t.items_json || '[]'); } catch (_) {}
@@ -8093,8 +8187,9 @@ function driveExport_(session, payload, params) {
       .join(' | ');
     var costTotal = 0;
     for (var itx = 0; itx < items.length; itx++) costTotal += num_(items[itx].unitCost) * (items[itx].quantity || 1);
+    /* stock bought is not cost of goods sold: only what was sold is */
     if (k === 'refund') costTotalDay -= costTotal;
-    else costTotalDay += costTotal;
+    else if (k !== 'purchase' && !SERVER_ONLY_KINDS[k]) costTotalDay += costTotal;
     var row = [
       csvCell_(t.created_at),
       csvCell_(t.client_tx_id),
