@@ -7,7 +7,39 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.47.0 — the Sales report
+## Latest: v1.48.0 — paying suppliers
+
+**2026-09-17.**
+
+- **Purchases shows what the shop owes its suppliers**, and how much is
+  overdue by each supplier's terms.
+- **Tap a supplier to see their account:**
+  - every delivery with its due date
+  - every payment with how it was paid and who paid it
+  - the balance after each
+  - which orders are paid, part paid or unpaid
+- **Record payment** by bank transfer, cheque or cash from the till, against
+  one order or the account. An admin can void a payment entered by mistake.
+- **The drawer count, Reports, the daily export and the books all account for
+  it.** Accounts payable now goes down when suppliers are paid.
+- **Fixed:** managers can open Purchases again. It failed to load for them
+  before.
+
+**Validation:** backend-sim **PASS 1066 / FAIL 0** · client units **PASS 538 /
+FAIL 0** · demo **PASS 29 / FAIL 0**.
+- Mutation checks confirm the tests catch broken tracing of older receipts,
+  broken drawer cash and a broken overdue rule.
+- Checked in the browser as the manager: a payment refused without its
+  reference, then recorded by cheque.
+
+### Deploying
+
+**Backend redeploy required.** The two new ledger columns are added on first
+use. The demo updates on its own.
+
+---
+
+## v1.47.0 — the Sales report
 
 **2026-09-16.** From the team's feedback on the demo.
 

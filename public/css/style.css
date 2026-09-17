@@ -1457,6 +1457,23 @@ html[data-nav="rail"] .sb-head { font-size: 0; padding: 0; margin: 6px 14px 2px;
 .cat-title { font-size: 17px; font-weight: 750; color: var(--text); }
 @media (min-width: 1024px) { .cat-bar { padding-inline-start: 24px; padding-inline-end: 24px; } }
 
+/* ---- Purchases: what is owed to suppliers (v1.48.0) ---- */
+.po-owed { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 520px; }
+.po-overdue-kpi strong { color: var(--danger); }
+button.po-supplier { text-align: start; cursor: pointer; width: 100%; font: inherit; color: inherit; }
+button.po-supplier:hover { background: var(--bg); }
+.po-sup-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; width: 100%; }
+.po-sup-owed { font-variant-numeric: tabular-nums; }
+.po-chip.overdue { background: #fdecea; color: #b42318; }
+.po-chip.received { background: #e7f6ee; color: #067647; }
+/* a supplier's account holds two tables: give it room */
+.modal:has(.po-account) { width: min(94vw, 760px); }
+.po-account h4 { margin: 14px 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.po-account-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 4px 0 6px; }
+@media (max-width: 560px) { .po-account-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.po-statement td:nth-child(2) { white-space: normal; }
+.po-paystate { align-items: center; }
+
 /* ---- Reports: section heads with a way into the sales report ---- */
 .rep-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .rep-head h3 { margin: 8px 0; }

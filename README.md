@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.47.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.48.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -40,6 +40,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 
 - **Catalog**: products and services, serialized or counted, with cost, retail, category, reorder point and a lock switch.
 - **Suppliers and purchase orders**: draft → ordered → partial/received, or cancelled. Receiving posts weighted-average cost and takes serials unit by unit.
+- **Paying suppliers**: what each supplier is owed and how much is overdue by their terms, a statement per supplier, and payments by bank transfer, cheque or cash from the till, per order or on account. Voidable by an admin, and booked to Accounts payable.
 - **Price history**: every cost and retail change, with who made it, when, and why.
 - **Inventory tools**:
   - bulk price update by rule, previewed before it writes
@@ -160,9 +161,9 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 ## Development
 
 ```bash
-npm test              # backend logic vs an in-memory Apps Script mock (1022 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (530 checks)
-npm run test:demo     # the demo: emulator, sample shop, site build (28 checks)
+npm test              # backend logic vs an in-memory Apps Script mock (1066 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (538 checks)
+npm run test:demo     # the demo: emulator, sample shop, site build (29 checks)
 npm run build:demo    # build the demo site into dist/demo-site
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
 npm run test:pdf      # receipt PDF/share smoke test in a headless browser

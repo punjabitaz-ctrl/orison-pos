@@ -46,6 +46,7 @@ const KIND_LABELS = {
   deposit_refund: N_('Deposit refunded'),
   purchase: N_('Stock received'),
   tradein: N_('Trade-in'),
+  supplier_payment: N_('Supplier payment'),
   stocktake: N_('Stock take'),
 };
 
@@ -136,7 +137,7 @@ export const screen = {
         <section class="dash-section">
           <h3>${$t('Trial balance')}</h3>
           ${trialTable(tb)}
-          <p class="muted acct-note">${$t('Supplier payments are made outside the POS, so Accounts payable shows stock received in the period.')}</p>
+          <p class="muted acct-note">${$t('Accounts payable rises with stock received and falls with supplier payments recorded in Purchases.')}</p>
         </section>
 
         <section class="dash-section">

@@ -207,7 +207,8 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/admin/pin` | admin for anyone; a manager for **cashiers only** |
 | `/api/timeclock/correct` | admin, manager; only an admin corrects their own punches |
 | `/api/shifts/force-close` | admin, manager; reason required |
-| `/api/suppliers`, `/api/purchase-orders/cancel` | admin |
+| `/api/suppliers` (add), `/api/purchase-orders/cancel`, `/api/suppliers/payment/void` | admin |
+| `/api/suppliers` (list), `/api/suppliers/payables`, `/api/suppliers/statement`, `/api/suppliers/payment` | admin, manager |
 | `/api/marketplace/settings` (set the sheet) | admin; managers read status only (no link) |
 | `/api/marketplace/import` | admin, manager (the hourly trigger runs as the admin who set the sheet) |
 | `/api/admin/products/bulk-price`, `/api/admin/stock-take` | admin |

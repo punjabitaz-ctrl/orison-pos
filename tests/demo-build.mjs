@@ -75,6 +75,9 @@ const repairs = call(rt2, '/api/repairs', {}, tokens.cashier).data;
 check('three repairs are on the bench', (repairs.tickets || repairs.repairs || repairs).length === 3, JSON.stringify(repairs).slice(0, 200));
 const pos = call(rt2, '/api/purchase-orders', {}, tokens.manager).data.orders;
 check('one purchase order received, one still on its way', pos.some((o) => o.status === 'RECEIVED') && pos.some((o) => o.status === 'ORDERED'));
+const owed = call(rt2, '/api/suppliers/payables', {}, tokens.manager).data;
+check('a supplier is owed money, part of it overdue, after a part payment',
+  owed.totalOwed === 110 && owed.totalOverdue === 110 && owed.suppliers[0].paid === 100, JSON.stringify([owed.totalOwed, owed.totalOverdue]));
 const shifts = call(rt2, '/api/shifts', {}, tokens.manager).data;
 check('a till shift is open for today', JSON.stringify(shifts).indexOf('OPEN') >= 0);
 

@@ -84,6 +84,8 @@
     ['Manager', 'Refund part of a sale from History. Services cannot be refunded.'],
     ['Manager', 'Record paid out, a cash pick-up or a staff expense, then close the till shift and count the drawer.'],
     ['Manager', 'Receive the purchase order that is on its way (Purchases).'],
+    ['Manager', 'Pay Swift Supplies what is overdue: Purchases → tap the supplier → Record payment.'],
+    ['Manager', 'Open the Sales Report, group by staff member and open a sale to see its lines.'],
     ['Manager', 'Take a payment from Liberty Phone Repair, who buy on account.'],
     ['Admin', 'Settings → Marketplace orders → Import now. Three orders wait in the demo sheet.'],
     ['Admin', 'Accounts: profit and loss, trial balance and journal for the month.'],

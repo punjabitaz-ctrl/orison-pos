@@ -5,6 +5,57 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.48.0] — 2026-09-17
+
+### Added
+
+- **Paying suppliers** (Purchases). Accounts payable used to only grow: stock
+  received was owed and nothing recorded paying for it.
+  - **What is owed.** Purchases opens with *Owed to suppliers* and *Overdue*.
+    Each supplier card shows their balance and any overdue amount.
+    - A supplier is owed what was delivered less what was paid.
+    - The overdue part is deliveries past the supplier's terms ("Net 30" is
+      30 days; no terms means due on delivery), less payments made, oldest
+      first.
+  - **Supplier account** (tap a supplier):
+    - received, paid, owed and overdue
+    - each order's received, paid and owed, marked *Paid*, *Part paid* or
+      *Unpaid*
+    - a statement of deliveries (with due dates) and payments (with method,
+      reference, order and who paid), with a running balance
+  - **Record payment** (`/api/suppliers/payment`, admin and manager): bank
+    transfer, cheque or cash from the till, for one order or on account.
+    - A transfer or cheque needs its reference.
+    - It cannot pay more than is owed on the order or to the supplier; the POS
+      holds no supplier credit.
+    - An order's detail shows its payment state and a *Pay* button.
+  - **Void a payment** (`/api/suppliers/payment/void`, admin, with a reason).
+    The row is marked VOIDED, so it leaves every total while staying on
+    record. It is audited as `supplier.payment` / `supplier.payment_void`.
+  - `/api/suppliers/payables` and `/api/suppliers/statement` (admin, manager).
+- **The new server-only ledger kind `supplier_payment` is counted everywhere
+  money is classified:**
+  - Shift drawer: cash payments come out.
+  - Day export: a *SUPPLIERS PAID* line; cash leaves the drawer.
+  - Reports: *Suppliers paid*, apart from sales and expenses; the cash tender
+    goes down.
+  - Books: Dr Accounts payable, Cr Cash or Bank transfers. Bank and cheque
+    tenders map to account 1020.
+  - Dashboard net and History label.
+- **Linking receipts to suppliers.** Purchase receipts now record their
+  supplier and order (new Transactions columns `supplier_id`, `po_id`).
+  Receipts from before are traced through their `po-<id>` client id, or the
+  supplier name.
+- **Demo:** Swift Supplies is owed $110, all overdue, after a $100 part
+  payment, so the flow can be tried straight away.
+
+### Fixed
+
+- **Managers could not open Purchases.** The supplier list was admin only and
+  the screen could not load without it, so a manager could not receive stock
+  from the screen. Reading suppliers is now open to managers; adding one stays
+  with the admin, whose *+ Supplier* button is the only one shown.
+
 ## [1.47.0] — 2026-09-16
 
 Sprint B of team feedback on the demo: "reports should be more detailed and

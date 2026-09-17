@@ -182,6 +182,12 @@ export function seedDemo(rt, { now = new Date() } = {}) {
   const po1 = req(mgr, '/api/purchase-orders', { supplierId: supplier.id, status: 'ORDERED', note: 'Weekly accessories restock',
     lines: [{ productId: bySku(list, 'AC-GLASS').id, quantity: 30, unitCost: 3 }, { productId: bySku(list, 'CB-USBC-1M').id, quantity: 20, unitCost: 6 }] });
   req(mgr, '/api/purchase-orders/receive', { id: po1.id, lines: [{ productId: bySku(list, 'AC-GLASS').id, quantity: 30 }, { productId: bySku(list, 'CB-USBC-1M').id, quantity: 20 }] });
+  /* that delivery came five weeks ago, so part of what Swift Supplies is owed is
+     past their terms; the shop has paid some of it by bank transfer */
+  const received = rt.call('readRows_', 'Transactions', rt.get('TX_HEADERS')).filter((r) => r.kind === 'purchase' && String(r.po_id) === po1.id);
+  const fiveWeeks = new Date(now.getTime() - 35 * 86400000).toISOString();
+  rt.call('applyPatches_', 'Transactions', rt.get('TX_HEADERS'), 'id', Object.fromEntries(received.map((r) => [r.id, { created_at: fiveWeeks }])));
+  req(adm, '/api/suppliers/payment', { supplierId: supplier.id, poId: po1.id, amount: 100, method: 'bank', reference: 'TRF 44810', note: 'Part payment' });
   const expected = new Date(now.getTime() + 3 * 86400000).toISOString().slice(0, 10);
   req(mgr, '/api/purchase-orders', { supplierId: supplier.id, status: 'ORDERED', expectedDate: expected, note: 'Phones for the weekend',
     lines: [{ productId: bySku(list, 'PH-G62-128').id, quantity: 2, unitCost: 399 }, { productId: bySku(list, 'AU-BOSEQC45').id, quantity: 4, unitCost: 279 }] });

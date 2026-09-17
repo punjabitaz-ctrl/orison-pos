@@ -4826,6 +4826,117 @@ check('statement carries the changer/cashier',
   req('/api/admin/store', { taxRate: 0 }, { session: sAdm });
 }
 {
+  section('supplier payments and accounts payable (v1.48.0)');
+
+  const pAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const pMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const pCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const day = new Date().toISOString().slice(0, 10);
+  const near = (a, b) => Math.abs(a - b) < 0.005;
+
+  /* managers could not open Purchases: the supplier list was admin only */
+  check('a manager can read the supplier list', req('/api/suppliers', {}, { session: pMgr }).ok === true);
+  check('but adding a supplier stays with the admin', req('/api/suppliers', { name: 'AP Sneaky' }, { session: pMgr }).status === 403);
+
+  const net30 = req('/api/suppliers', { name: 'AP Wholesale', paymentTerms: 'Net 30' }, { session: pAdm }).data.id;
+  const onDelivery = req('/api/suppliers', { name: 'AP Quick Parts' }, { session: pAdm }).data.id;
+  const caseId = req('/api/admin/products', { name: 'AP Case', sku: 'AP-CASE', category: 'AP', costPrice: 5, retailPrice: 15, onHand: 0 }, { session: pAdm }).data.id;
+  const glassId = req('/api/admin/products', { name: 'AP Glass', sku: 'AP-GLS', category: 'AP', costPrice: 25, retailPrice: 60, onHand: 0 }, { session: pAdm }).data.id;
+  const order = (supplierId, lines) => req('/api/purchase-orders', { supplierId, lines, status: 'ORDERED' }, { session: pMgr }).data;
+  const receive = (id, lines) => req('/api/purchase-orders/receive', { id, lines }, { session: pMgr });
+  const po1 = order(net30, [{ productId: caseId, quantity: 10, unitCost: 5 }]);
+  const po2 = order(net30, [{ productId: glassId, quantity: 4, unitCost: 25 }]);
+  const po3 = order(onDelivery, [{ productId: caseId, quantity: 6, unitCost: 5 }]);
+  check('three orders raised by the manager', !!(po1.id && po2.id && po3.id));
+  receive(po1.id, [{ productId: caseId, quantity: 10 }]);
+  receive(po2.id, [{ productId: glassId, quantity: 2 }]);
+  receive(po3.id, [{ productId: caseId, quantity: 6 }]);
+
+  /* a receipt written before v1.48.0 has no supplier or order on it */
+  const txRows = sandbox.readRows_('Transactions', sandbox.TX_HEADERS);
+  const po1Receipt = txRows.find((r) => r.kind === 'purchase' && String(r.po_id) === po1.id);
+  check('a receipt now records its supplier and order', po1Receipt && String(po1Receipt.supplier_id) === net30);
+  /* ...and was delivered 40 days ago, so on Net 30 it fell due ten days ago */
+  sandbox.applyPatches_('Transactions', sandbox.TX_HEADERS, 'id', { [po1Receipt.id]: { supplier_id: '', po_id: '', created_at: new Date(Date.now() - 40 * 86400000).toISOString() } });
+
+  const payables = () => req('/api/suppliers/payables', {}, { session: pMgr }).data;
+  const acct = (id) => payables().suppliers.find((s) => s.id === id);
+  let w = acct(net30);
+  check('what a supplier is owed is what was delivered (50 + 50)', w && w.received === 100 && w.paid === 0 && w.balance === 100, JSON.stringify(w));
+  check('an older receipt is still traced to its order', w.orders.some((o) => o.poId === po1.id && o.owed === 50 && o.payment === 'unpaid'), JSON.stringify(w.orders));
+  check('an order half delivered is owed only what arrived', w.orders.some((o) => o.poId === po2.id && o.received === 50 && o.orderTotal === 100));
+  check('on Net 30, only the delivery from 40 days ago is overdue', w.overdue === 50 && w.termsDays === 30 && !!w.oldestDue, JSON.stringify([w.overdue, w.oldestDue]));
+  const q = acct(onDelivery);
+  check('with no terms, a delivery is due at once', q && q.balance === 30 && q.overdue === 30 && q.termsDays === 0, JSON.stringify(q));
+  check('suppliers with something overdue are listed first', payables().suppliers[0].overdue > 0);
+  check('a cashier cannot see what suppliers are owed', req('/api/suppliers/payables', {}, { session: pCash }).status === 403);
+
+  /* ---- paying ---- */
+  const pay = (body, session) => req('/api/suppliers/payment', body, { session: session || pMgr });
+  check('a cashier cannot pay a supplier', pay({ supplierId: net30, amount: 10, method: 'cash' }, pCash).status === 403);
+  check('a payment method must be cash, bank transfer or cheque', pay({ supplierId: net30, amount: 10, method: 'card' }).status === 400);
+  check('a bank transfer needs its reference', pay({ supplierId: net30, amount: 10, method: 'bank' }).status === 400);
+  check('the amount must be something', pay({ supplierId: net30, amount: 0, method: 'cash' }).status === 400);
+  check('an order from another supplier is refused', pay({ supplierId: net30, amount: 10, method: 'cash', poId: po3.id }).status === 400);
+  check('no paying more than is owed on an order', pay({ supplierId: net30, amount: 60, method: 'bank', reference: 'X', poId: po1.id }).status === 409);
+  check('no paying more than the supplier is owed', pay({ supplierId: net30, amount: 150, method: 'bank', reference: 'X' }).status === 409);
+
+  const rep0 = req('/api/reports', {}, { session: pAdm, params: { from: day, to: day } }).data.summary;
+  const books0 = req('/api/accounting', {}, { session: pAdm, params: { from: day, to: day } }).data;
+  const bank = pay({ supplierId: net30, amount: 50, method: 'bank', reference: 'TRF-1001', poId: po1.id });
+  check('the manager pays an order by bank transfer', bank.ok && bank.data.balance === 50, JSON.stringify(bank));
+  w = acct(net30);
+  check('that order is now paid, and the supplier owed 50', w.balance === 50 && w.orders.some((o) => o.poId === po1.id && o.payment === 'paid'), JSON.stringify(w));
+  check('paying the overdue delivery clears what is overdue, though 50 is still owed', w.overdue === 0 && w.oldestDue === '', JSON.stringify([w.overdue, w.oldestDue]));
+
+  const shift = req('/api/shifts/open', { openingFloat: 300 }, { session: pMgr });
+  const cash = pay({ supplierId: net30, amount: 20, method: 'cash', note: 'Driver paid at the door' });
+  check('a supplier paid in cash from the till', cash.ok && cash.data.balance === 30, JSON.stringify(cash));
+  check('part of an order paid shows as part paid', acct(net30).orders.some((o) => o.poId === po2.id && o.payment === 'unpaid'));
+  const quick = pay({ supplierId: onDelivery, amount: 10, method: 'cheque', reference: 'CHQ 000217', poId: po3.id });
+  check('a cheque against an order', quick.ok && acct(onDelivery).overdue === 20 && acct(onDelivery).orders[0].payment === 'part_paid', JSON.stringify(acct(onDelivery)));
+
+  const st = req('/api/suppliers/statement', {}, { session: pMgr, params: { supplierId: net30 } }).data;
+  check('the statement runs receipts and payments in order to the balance',
+    st.lines.length === 4 && st.lines[st.lines.length - 1].balance === st.balance && st.balance === 30, JSON.stringify(st.lines));
+  check('it shows each payment’s method, reference and who paid', st.lines.some((l) => l.kind === 'supplier_payment' && l.method === 'bank' && l.reference === 'TRF-1001' && l.by));
+  check('and each delivery’s due date', st.lines.filter((l) => l.kind === 'purchase').every((l) => l.dueAt && l.poNumber));
+
+  /* ---- the money everywhere else ---- */
+  const closed = req('/api/shifts/close', { shiftId: shift.data.shift.id, denoms: {} }, { session: pMgr }).data.shift;
+  check('cash paid to a supplier comes out of the drawer the shift expects (300 − 20)', closed && closed.expectedCash === 280, JSON.stringify(closed));
+  const rep1 = req('/api/reports', {}, { session: pAdm, params: { from: day, to: day } }).data.summary;
+  check('Reports counts suppliers paid, apart from sales and expenses',
+    near(rep1.supplierPayments - rep0.supplierPayments, 80) && rep1.supplierPaymentCount - rep0.supplierPaymentCount === 3
+    && rep1.grossSales === rep0.grossSales && rep1.expenses === rep0.expenses, JSON.stringify([rep0.supplierPayments, rep1.supplierPayments]));
+  const books1 = req('/api/accounting', {}, { session: pAdm, params: { from: day, to: day } }).data;
+  const apMove = (b) => (b.movements.find((m) => m.code === '2300') || {}).change || 0;
+  check('the books: payables fall by what was paid', near(apMove(books1) - apMove(books0), -80), JSON.stringify([apMove(books0), apMove(books1)]));
+  const ln = (j, code) => j.lines.find((l) => l.code === code) || { debit: 0, credit: 0 };
+  check('a bank payment is Dr payables, Cr bank; a cash one Cr cash',
+    books1.journal.some((j) => j.kind === 'supplier_payment' && j.ref === 'TRF-1001' && ln(j, '2300').debit === 50 && ln(j, '1020').credit === 50)
+    && books1.journal.some((j) => j.kind === 'supplier_payment' && ln(j, '2300').debit === 20 && ln(j, '1000').credit === 20), JSON.stringify(books1.journal.filter((j) => j.kind === 'supplier_payment')));
+  check('and the books still balance', books1.trialBalance.balanced === true);
+  const exp = req('/api/drive/export', { date: day }, { session: pMgr });
+  check('the day export lists suppliers paid', exp.ok && driveFiles[driveFiles.length - 1].content.indexOf(',,SUPPLIERS PAID,,80') >= 0, driveFiles[driveFiles.length - 1].content.slice(-400));
+  check('a supplier payment cannot be pushed from a terminal', req('/api/sync/push', { deviceId: 'till-ap', batch: [{ clientTxId: 'ap-fake', kind: 'supplier_payment', grandTotal: 5, tenders: [{ type: 'cash', amount: 5 }], items: [], createdAt: new Date().toISOString() }] }, { session: pAdm }).data.results[0].accepted === false);
+  check('payments are audited', req('/api/audit', {}, { session: pAdm, params: { action: 'supplier.payment' } }).data.entries.length === 3);
+
+  /* ---- voiding a payment entered by mistake ---- */
+  const voidIt = (body, session) => req('/api/suppliers/payment/void', body, { session: session || pAdm });
+  check('only an admin voids a payment', voidIt({ id: cash.data.transactionId, reason: 'duplicate' }, pMgr).status === 403);
+  check('a void needs a reason', voidIt({ id: cash.data.transactionId }).status === 400);
+  check('the admin voids the cash payment', voidIt({ id: cash.data.transactionId, reason: 'entered twice' }).ok === true);
+  check('and the supplier is owed it again', acct(net30).balance === 50);
+  check('a voided payment cannot be voided again', voidIt({ id: cash.data.transactionId, reason: 'again' }).status === 409);
+  check('a sale is not a supplier payment to void', voidIt({ id: txRows.find((r) => r.kind === 'sale').id, reason: 'x' }).status === 404);
+  check('the books drop the voided payment', near(apMove(req('/api/accounting', {}, { session: pAdm, params: { from: day, to: day } }).data) - apMove(books0), -60));
+  check('the void is audited', req('/api/audit', {}, { session: pAdm, params: { action: 'supplier.payment_void' } }).data.entries.length === 1);
+
+  check('terms are read from the words: Net 30, 45 days, nothing',
+    sandbox.termsDays_('Net 30') === 30 && sandbox.termsDays_('45 days') === 45 && sandbox.termsDays_('') === 0 && sandbox.termsDays_('COD') === 0);
+}
+{
   section('marketplace sync from a Google Sheet (v1.42.0)');
 
   const kAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;

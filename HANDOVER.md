@@ -13,8 +13,8 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.47.0** — dedicated Sales report + more detailed Reports (`2026-09-16`) |
-| Validation bar | `backend-sim` **PASS 1022 / FAIL 0** · client units **PASS 530 / FAIL 0** · demo **PASS 28 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Current version | **v1.48.0** — paying suppliers: payables, statements, payments (`2026-09-17`) |
+| Validation bar | `backend-sim` **PASS 1066 / FAIL 0** · client units **PASS 538 / FAIL 0** · demo **PASS 29 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -126,6 +126,18 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.48.0** Supplier payments.
+  - `payablesBook_` / `supplierAccount_` / `payableLinks_` / `termsDays_`; routes
+    `/api/suppliers/payables|statement|payment|payment/void`.
+  - Ledger kind `supplier_payment`: server only, VOIDED on void.
+  - TX columns `supplier_id` and `po_id`; tender types `bank` and `cheque` map
+    to 1020.
+  - The kind is threaded through the shift drawer, the drive export, Reports,
+    the books and client stats.
+  - Purchases screen: owed KPIs, supplier account modal, payment modal, and a
+    Pay button on PO detail.
+  - **Fixed:** managers could not load Purchases (suppliers list was admin only).
+  - 44 sim checks, 3 mutations caught.
 - **v1.47.0** Sales report (Sprint B).
   - `salesReport_` (`/api/reports/sales`) is built on `salesLines_` /
     `splitCents_` / `tenderAmountsC_`. Cashiers are forced to their own
@@ -188,7 +200,7 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   - Admin *Accounts* screen `public/js/screens/accounts.js` with
     journal / trial-balance CSV.
   - 31 sim checks, including whole-day reconciliation with Reports.
-  - Accounts payable only accrues: no supplier-payment record exists yet.
+  - Accounts payable now clears through supplier payments (v1.48.0).
 - **v1.42.0** Marketplace sync (Sprint 2).
   - `marketplaceSettings_` (Script Property `MARKETPLACE_SHEET_ID`,
     `Meta.marketplace_user`).
@@ -576,7 +588,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **1022 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **1066 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -708,8 +720,7 @@ is below, in the order it should be picked up.
 3. **Program in flight** — `docs/superpowers/plans/2026-09-13-warranty-marketplace-accounting-program.md`:
    warranty ✅ v1.41.0; marketplace sync ✅ v1.42.0 (*run
    `installMarketplaceTrigger()` on deploy*); in-app GAAP accounting ✅
-   v1.43.0. **Program complete.** Natural next step: record supplier
-   payments so Accounts payable clears. Owner closed gift cards,
+   v1.43.0. **Program complete.** Supplier payments ✅ v1.48.0. Owner closed gift cards,
    permission switches and layaway (not wanted). Trade-ins ✅ v1.44.0.
    *Have a tax adviser check the UAE invoice wording.*
 4. ~~**Warranty per serial**~~ — **done v1.41.0**. Cheap now that fitted serials point at

@@ -30,7 +30,7 @@ The guide's **Sign in** buttons switch account in one tap. When a cashier needs 
 - **Stock:** about 50 products across phones, tablets, laptops, audio, gaming, cables and services, plus used phones for trade-ins.
 - **Two weeks of sales:** cash and card, a refund, paid out, a cash pick-up and a staff expense.
 - **Customers:** six, including **Liberty Phone Repair LLC**, who buy on account and have paid part of their balance.
-- **Purchase orders:** one received, and one **still on its way** to receive.
+- **Purchase orders:** one received five weeks ago and part paid (Swift Supplies are still owed $110, now overdue), and one **still on its way** to receive.
 - **Today at the counter:**
   - Amara's till shift is open with a $200 float.
   - Three repairs are on the bench: one waiting for a screen with a $50 deposit, a battery job **ready to collect**, and one just booked in.
@@ -49,7 +49,7 @@ The guide's **Sign in** buttons switch account in one tap. When a cashier needs 
 **As the manager (Sarah)**
 1. Record paid out, a cash pick-up or a staff expense.
 2. Close a till shift and count the drawer. Amara's shift is open.
-3. Receive the purchase order that is on its way (Purchases).
+3. Receive the purchase order that is on its way (Purchases). Then pay **Swift Supplies**, who are owed $110, all of it overdue: tap the supplier, see their statement, and **Record payment** by bank transfer or cheque.
 4. Take a payment from Liberty Phone Repair (Customers).
 5. Open the **Sales Report** for the last 30 days: group by staff member, tap one person, open a sale to see its lines, and export the Sales CSV. Then look at Reports, where every breakdown has a *Details* link, and the trade-in register.
 

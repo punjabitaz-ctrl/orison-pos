@@ -1,8 +1,8 @@
 'use strict';
 
-import { $t, $tn, N_ } from '../lang.js';
+import { $t, $tn, N_, dateLocale } from '../lang.js';
 
-/* Purchases: suppliers + purchase orders, manager/admin only.
+/* Purchases: suppliers, purchase orders and paying suppliers, manager/admin only.
    Create an order against a supplier, then receive stock against it — the
    receipt posts inventory in (weighted-average cost, serials registered) and
    leaves a purchase trail in the ledger. Everything here talks to the server:
@@ -20,6 +20,35 @@ const STATUS_META = {
   RECEIVED: { label: N_('Received'), cls: 'received' },
   CANCELLED: { label: N_('Cancelled'), cls: 'cancelled' },
 };
+
+export const PAY_METHODS = [
+  { id: 'bank', label: N_('Bank transfer') },
+  { id: 'cheque', label: N_('Cheque') },
+  { id: 'cash', label: N_('Cash from the till') },
+];
+
+const PAYMENT_META = {
+  paid: { label: N_('Paid'), cls: 'received' },
+  part_paid: { label: N_('Part paid'), cls: 'partial' },
+  unpaid: { label: N_('Unpaid'), cls: 'ordered' },
+  prepaid: { label: N_('Paid ahead'), cls: 'received' },
+  nothing_received: { label: N_('Nothing received'), cls: 'draft' },
+};
+
+export function paymentLabel(state) {
+  const m = PAYMENT_META[state] || PAYMENT_META.unpaid;
+  return { label: $t(m.label), cls: m.cls };
+}
+
+/* What a supplier payment needs before it goes to the server. Pure, so tested. */
+export function paymentProblem({ amount, method, reference, owed } = {}) {
+  const a = Math.round((Number(amount) || 0) * 100);
+  if (!(a > 0)) return N_('Enter the amount paid');
+  if (!PAY_METHODS.some((m) => m.id === method)) return N_('Pay by cash, bank transfer or cheque');
+  if (method !== 'cash' && !String(reference || '').trim()) return N_('A bank transfer or cheque needs its reference');
+  if (owed != null && a > Math.round(Number(owed) * 100)) return N_('That is more than is owed');
+  return '';
+}
 
 function statusLabel(s) {
   const m = STATUS_META[s] || {};
@@ -49,19 +78,31 @@ export const screen = {
     let suppliers = [];
     let orders = [];
     let products = [];
+    let payables = { suppliers: [], totalOwed: 0, totalOverdue: 0 };
     let loadErr = '';
+    const isAdmin = user.role === 'admin';
+    const accountOf = (id) => payables.suppliers.find((s) => s.id === id) || null;
+    const orderPay = (poId) => {
+      for (const s of payables.suppliers) {
+        const o = (s.orders || []).find((x) => x.poId === poId);
+        if (o) return { ...o, supplierId: s.id, supplierName: s.name };
+      }
+      return null;
+    };
 
     async function load() {
       loadErr = '';
       root.innerHTML = `<div class="empty"><p>${$t('Loading…')}</p></div>`;
       try {
-        const [sup, ord, prods] = await Promise.all([
+        const [sup, ord, prods, pay] = await Promise.all([
           api.get('/api/suppliers'),
           api.get('/api/purchase-orders'),
           api.get('/api/products'),
+          api.get('/api/suppliers/payables'),
         ]);
         suppliers = sup.suppliers || [];
         orders = ord.orders || [];
+        payables = pay || payables;
         products = (prods || []).filter((p) => p.itemType === 'product');
       } catch (err) {
         loadErr = (err && err.offline) ? $t('Offline — purchases need the server') : $t('Failed to load purchases');
@@ -75,22 +116,30 @@ export const screen = {
           title: $t('Purchases'),
           sub: $t('Suppliers and stock-in orders'),
           actions: `<div class="scr-actions">
-            <button class="btn btn-sm" id="poAddSupplier">${$t('+ Supplier')}</button>
+            ${isAdmin ? `<button class="btn btn-sm" id="poAddSupplier">${$t('+ Supplier')}</button>` : ''}
             <button class="btn btn-sm btn-primary" id="poNew">${$t('New PO')}</button>
           </div>`,
         })}
 
         ${loadErr ? `<div class="empty"><p>${esc(loadErr)}</p></div>` : `
+        <div class="dash-kpis po-owed">
+          <div class="dash-kpi"><span>${$t('Owed to suppliers')}</span><strong>${fmt(payables.totalOwed)}</strong></div>
+          <div class="dash-kpi${payables.totalOverdue > 0 ? ' po-overdue-kpi' : ''}"><span>${$t('Overdue')}</span><strong>${fmt(payables.totalOverdue)}</strong></div>
+        </div>
         <section class="po-block">
           <h3>${$t('Suppliers')}</h3>
           ${suppliers.length ? `
           <div class="po-plain po-suppliers">
-            ${suppliers.map((s) => `
-              <div class="po-supplier" data-sup="${esc(s.id)}">
-                <strong>${esc(s.name)}</strong>
+            ${suppliers.map((s) => {
+              const acc = accountOf(s.id);
+              return `
+              <button class="po-supplier" type="button" data-sup="${esc(s.id)}">
+                <span class="po-sup-top"><strong>${esc(s.name)}</strong>
+                  ${acc && acc.balance > 0 ? `<strong class="po-sup-owed">${esc($t('Owed {amount}', { amount: fmt(acc.balance) }))}</strong>` : `<span class="muted">${esc($t('Nothing owed'))}</span>`}</span>
                 <span class="muted">${esc(s.phone || '')}${s.email ? ` · ${esc(s.email)}` : ''}</span>
-                <span class="muted">${s.paymentTerms ? esc(s.paymentTerms) : $t('Open terms')}</span>
-              </div>`).join('')}
+                <span class="muted">${s.paymentTerms ? esc(s.paymentTerms) : $t('Open terms')}${acc && acc.overdue > 0 ? ` · <span class="po-chip overdue">${esc($t('{amount} overdue', { amount: fmt(acc.overdue) }))}</span>` : ''}</span>
+              </button>`;
+            }).join('')}
           </div>` : `<p class="muted">${$t('No suppliers yet — add one to place a purchase order.')}</p>`}
         </section>
 
@@ -100,6 +149,7 @@ export const screen = {
           <div class="po-plain">
             ${orders.map((o) => {
               const st = statusLabel(o.status);
+              const op = orderPay(o.id);
               return `
               <div class="po-row" data-po="${esc(o.id)}">
                 <div class="po-row-main">
@@ -109,6 +159,7 @@ export const screen = {
                 </div>
                 <div class="po-row-side">
                   <span class="po-chip ${st.cls}">${esc(st.label)}</span>
+                  ${op && op.received > 0 ? `<span class="po-chip ${paymentLabel(op.payment).cls}">${esc(paymentLabel(op.payment).label)}</span>` : ''}
                   <strong>${fmt(o.total)}</strong>
                 </div>
               </div>`;
@@ -123,6 +174,117 @@ export const screen = {
       if (addBtn) addBtn.addEventListener('click', addSupplierModal);
       root.querySelectorAll('[data-po]').forEach((el) => {
         el.addEventListener('click', () => viewPoModal(el.dataset.po));
+      });
+      root.querySelectorAll('[data-sup]').forEach((el) => {
+        el.addEventListener('click', () => supplierModal(el.dataset.sup));
+      });
+    }
+
+    /* A supplier's account: what arrived, what was paid, what is owed and overdue. */
+    async function supplierModal(id) {
+      let st = null;
+      try { st = await api.get(`/api/suppliers/statement?supplierId=${encodeURIComponent(id)}`); } catch (err) {
+        toast((err && err.message) || $t('Could not load the supplier'), 'err');
+        return;
+      }
+      const loc = dateLocale();
+      const m = openModal(`
+        <div class="po-account">
+          <h3>${esc(st.name)}</h3>
+          <p class="muted">${st.paymentTerms ? esc($t('Terms: {terms}', { terms: st.paymentTerms })) : esc($t('Due on delivery'))}</p>
+          <div class="dash-kpis po-account-kpis">
+            <div class="dash-kpi"><span>${$t('Received')}</span><strong>${fmt(st.received)}</strong></div>
+            <div class="dash-kpi"><span>${$t('Paid')}</span><strong>${fmt(st.paid)}</strong></div>
+            <div class="dash-kpi"><span>${$t('Owed')}</span><strong>${fmt(st.balance)}</strong></div>
+            <div class="dash-kpi${st.overdue > 0 ? ' po-overdue-kpi' : ''}"><span>${$t('Overdue')}</span><strong>${fmt(st.overdue)}</strong></div>
+          </div>
+          ${st.orders.length ? `
+          <h4>${$t('Orders')}</h4>
+          <div class="table-wrap"><table class="data-table">
+            <thead><tr><th>${$t('Order')}</th><th class="num">${$t('Received')}</th><th class="num">${$t('Paid')}</th><th class="num">${$t('Owed')}</th><th></th></tr></thead>
+            <tbody>${st.orders.map((o) => `<tr><td>${esc(o.poNumber)}</td><td class="num">${fmt(o.received)}</td><td class="num">${fmt(o.paid)}</td><td class="num"><b>${fmt(o.owed)}</b></td>
+              <td><span class="po-chip ${paymentLabel(o.payment).cls}">${esc(paymentLabel(o.payment).label)}</span></td></tr>`).join('')}</tbody>
+          </table></div>` : ''}
+          <h4>${$t('Statement')}</h4>
+          ${st.lines.length ? `<div class="table-wrap"><table class="data-table po-statement">
+            <thead><tr><th>${$t('Date')}</th><th>${$t('Details')}</th><th class="num">${$t('Received')}</th><th class="num">${$t('Paid')}</th><th class="num">${$t('Balance')}</th>${isAdmin ? '<th></th>' : ''}</tr></thead>
+            <tbody>${st.lines.map((l) => `<tr>
+              <td>${esc(new Date(l.at).toLocaleDateString(loc))}</td>
+              <td>${l.kind === 'purchase'
+                ? `${esc($t('Delivery {order}', { order: l.poNumber || '' }))}${l.dueAt ? `<br><span class="muted">${esc($t('due {date}', { date: new Date(l.dueAt).toLocaleDateString(loc) }))}</span>` : ''}`
+                : `${esc($t(PAY_METHODS.find((x) => x.id === l.method)?.label || l.method))}${l.reference ? ` · ${esc(l.reference)}` : ''}<br><span class="muted">${esc([l.poNumber, l.by].filter(Boolean).join(' · '))}</span>`}</td>
+              <td class="num">${l.received ? fmt(l.received) : ''}</td>
+              <td class="num">${l.paid ? fmt(l.paid) : ''}</td>
+              <td class="num"><b>${fmt(l.balance)}</b></td>
+              ${isAdmin ? `<td>${l.kind === 'supplier_payment' ? `<button class="btn btn-sm btn-danger-ghost" data-void="${esc(l.id)}" type="button">${$t('Void')}</button>` : ''}</td>` : ''}
+            </tr>`).join('')}</tbody></table></div>` : `<p class="muted">${$t('Nothing received from this supplier yet.')}</p>`}
+          <div class="modal-actions">
+            <button class="btn btn-ghost" data-close>${$t('Close')}</button>
+            ${st.balance > 0 ? `<button class="btn btn-primary" id="supPay">${$t('Record payment')}</button>` : ''}
+          </div>
+        </div>`);
+      m.querySelector('#supPay')?.addEventListener('click', () => paymentModal(st));
+      m.querySelectorAll('[data-void]').forEach((b) => b.addEventListener('click', async () => {
+        const reason = window.prompt($t('Why is this payment being voided?'));
+        if (!reason || !reason.trim()) return;
+        try {
+          await api.post('/api/suppliers/payment/void', { id: b.dataset.void, reason: reason.trim() });
+          toast($t('Payment voided'), 'ok');
+          closeModal();
+          await load();
+          supplierModal(id);
+        } catch (err) { toast((err && err.message) || $t('Could not void the payment'), 'err'); }
+      }));
+    }
+
+    function paymentModal(account, poId) {
+      const owedOrders = (account.orders || []).filter((o) => o.owed > 0);
+      let method = 'bank';
+      const owedFor = (id) => (id ? (owedOrders.find((o) => o.poId === id) || {}).owed || 0 : account.balance);
+      const m = openModal(`
+        <h3>${esc($t('Pay {supplier}', { supplier: account.name }))}</h3>
+        <p class="muted">${esc($t('Owed {amount}', { amount: fmt(account.balance) }))}${account.overdue > 0 ? ` · ${esc($t('{amount} overdue', { amount: fmt(account.overdue) }))}` : ''}</p>
+        ${owedOrders.length ? `<label class="field-label">${$t('For order')}</label>
+        <select class="field" id="payPo"><option value="">${esc($t('Not for one order'))}</option>${owedOrders.map((o) => `<option value="${esc(o.poId)}"${o.poId === poId ? ' selected' : ''}>${esc(o.poNumber)} · ${esc($t('owed {amount}', { amount: fmt(o.owed) }))}</option>`).join('')}</select>` : ''}
+        <label class="field-label">${$t('Amount')}</label>
+        <input class="field" id="payAmount" type="number" min="0" step="0.01" inputmode="decimal" value="${owedFor(poId).toFixed(2)}">
+        <label class="field-label">${$t('Paid by')}</label>
+        <div class="seg seg-sm" id="payMethod">${PAY_METHODS.map((p) => `<button type="button" class="seg-btn ${p.id === method ? 'on' : ''}" data-method="${p.id}">${esc($t(p.label))}</button>`).join('')}</div>
+        <label class="field-label" id="payRefLabel">${$t('Reference')}</label>
+        <input class="field" id="payRef" maxlength="60" placeholder="${esc($t('Transfer or cheque number'))}">
+        <label class="field-label">${$t('Note')}</label>
+        <input class="field" id="payNote" maxlength="200">
+        <p id="payErr" class="login-err" role="alert"></p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" data-close>${$t('Cancel')}</button>
+          <button class="btn btn-primary" id="payGo">${$t('Record payment')}</button>
+        </div>`);
+      const po = m.querySelector('#payPo');
+      po?.addEventListener('change', () => { m.querySelector('#payAmount').value = owedFor(po.value).toFixed(2); });
+      m.querySelectorAll('[data-method]').forEach((b) => b.addEventListener('click', () => {
+        method = b.dataset.method;
+        m.querySelectorAll('[data-method]').forEach((x) => x.classList.toggle('on', x.dataset.method === method));
+      }));
+      m.querySelector('#payGo').addEventListener('click', async () => {
+        const body = {
+          supplierId: account.id, poId: po ? po.value : '', method,
+          amount: Math.round(Number(m.querySelector('#payAmount').value) * 100) / 100,
+          reference: m.querySelector('#payRef').value.trim(), note: m.querySelector('#payNote').value.trim(),
+        };
+        const problem = paymentProblem({ ...body, owed: owedFor(body.poId) });
+        if (problem) { m.querySelector('#payErr').textContent = $t(problem); beep('err'); return; }
+        const go = m.querySelector('#payGo');
+        go.disabled = true;
+        try {
+          const res = await api.post('/api/suppliers/payment', body);
+          closeModal();
+          toast($t('Paid {supplier} {amount}', { supplier: account.name, amount: fmt(res.amount) }), 'ok');
+          beep('ok');
+          await load();
+        } catch (err) {
+          m.querySelector('#payErr').textContent = (err && err.message) || $t('Could not record the payment');
+          go.disabled = false;
+        }
       });
     }
 
@@ -341,8 +503,16 @@ export const screen = {
           <strong>${fmt(ord.total)}</strong>
         </div>
         ${ord.note ? `<p class="muted">${esc(ord.note)}</p>` : ''}
+        ${(() => {
+          const op = orderPay(ord.id);
+          if (!op || !(op.received > 0 || op.paid > 0)) return '';
+          return `<div class="po-lines-subtotal po-paystate">
+            <span class="muted">${esc($t('Received {received} · paid {paid}', { received: fmt(op.received), paid: fmt(op.paid) }))} <span class="po-chip ${paymentLabel(op.payment).cls}">${esc(paymentLabel(op.payment).label)}</span></span>
+            <strong>${esc($t('Owed {amount}', { amount: fmt(op.owed) }))}</strong></div>`;
+        })()}
         <div class="modal-actions">
           <button class="btn btn-ghost" data-close>${$t('Close')}</button>
+          ${(() => { const op = orderPay(ord.id); return op && op.owed > 0 ? `<button class="btn" id="poPay">${$t('Pay')}</button>` : ''; })()}
           ${(ord.status === 'ORDERED' || ord.status === 'PARTIAL') ? `
             <button class="btn btn-danger-ghost" id="poCancel">${$t('Cancel order')}</button>
             <button class="btn btn-primary" id="poReceive">${$t('Receive stock')}</button>` : ''}
@@ -363,6 +533,11 @@ export const screen = {
           toast((err && err.message) || $t('Could not cancel'), 'err');
           cancelBtn.disabled = false;
         }
+      });
+      m.querySelector('#poPay')?.addEventListener('click', () => {
+        const op = orderPay(ord.id);
+        const acc = op && accountOf(op.supplierId);
+        if (acc) paymentModal(acc, ord.id);
       });
       const recvBtn = m.querySelector('#poReceive');
       if (recvBtn) recvBtn.addEventListener('click', () => receiveModal(ord));

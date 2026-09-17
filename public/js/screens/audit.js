@@ -25,6 +25,8 @@ export const ACTION_GROUPS = [
     { id: 'export.drive', label: N_('Drive exports') },
     { id: 'marketplace.import', label: N_('Marketplace imports') },
     { id: 'tradein.create', label: N_('Trade-ins bought') },
+    { id: 'supplier.payment', label: N_('Suppliers paid') },
+    { id: 'supplier.payment_void', label: N_('Supplier payments voided') },
     { id: 'marketplace.settings', label: N_('Marketplace sheet changes') },
   ] },
   { label: N_('Stock'), actions: [

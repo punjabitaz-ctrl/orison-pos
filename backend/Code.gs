@@ -105,6 +105,10 @@ function dispatch_(action, session, payload, params) {
     case '/api/purchase-orders/detail': return purchaseOrderDetail_(session, params);
     case '/api/purchase-orders/receive': return purchaseOrderReceive_(session, payload);
     case '/api/purchase-orders/cancel': return purchaseOrderCancel_(session, payload);
+    case '/api/suppliers/payables': return supplierPayables_(session);
+    case '/api/suppliers/statement': return supplierStatement_(session, params);
+    case '/api/suppliers/payment': return supplierPayment_(session, payload);
+    case '/api/suppliers/payment/void': return supplierPaymentVoid_(session, payload);
     case '/api/repairs':         return repairs_(session, payload, params);
     case '/api/repairs/detail':  return repairDetail_(session, params);
     case '/api/repairs/parts':   return repairParts_(session, payload);
@@ -354,7 +358,7 @@ var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pi
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable', 'warranty_days'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at', 'cost', 'source'];
-var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by', 'tax_inclusive', 'tax_rate'];
+var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by', 'tax_inclusive', 'tax_rate', 'supplier_id', 'po_id'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at', 'credit_limit', 'trn'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status', 'closed_by'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
@@ -2557,7 +2561,7 @@ function indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows) {
 var CASH_OUT_KINDS = { payout: 'Paid out', pickup: 'Cash pick-up', expense: 'Staff expense' };
 
 /* Ledger kinds that only the server writes. Never accepted from a device. */
-var SERVER_ONLY_KINDS = { deposit: 1, deposit_refund: 1, tradein: 1 };
+var SERVER_ONLY_KINDS = { deposit: 1, deposit_refund: 1, tradein: 1, supplier_payment: 1 };
 
 function hasDepositTender_(tenders) {
   if (!Array.isArray(tenders)) return false;
@@ -3837,7 +3841,7 @@ function reports_(session, params) {
   var byCustomerTx = Object.create(null);
   var byChannel = Object.create(null);
   var byHour = Object.create(null);
-  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0, discounts: 0, approvedDiscounts: 0, tradeIns: 0, tradeInCount: 0 };
+  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0, discounts: 0, approvedDiscounts: 0, tradeIns: 0, tradeInCount: 0, supplierPayments: 0, supplierPaymentCount: 0 };
 
   function costOf_(t) {
     var items = itobjs_(t.items_json);
@@ -3988,6 +3992,15 @@ function reports_(session, params) {
         dje.amount -= num_(tenders[dj].amount);
         dje.count += 1;
       }
+    } else if (kind === 'supplier_payment') {
+      /* settling what the shop owes a supplier: money out, never an expense or a sale */
+      summary.supplierPayments += num_(t.grand_total);
+      summary.supplierPaymentCount += 1;
+      for (var sp = 0; sp < tenders.length; sp++) {
+        if (String(tenders[sp].type || '') !== 'cash') continue;
+        var spe = byTender.cash || (byTender.cash = { amount: 0, count: 0 });
+        spe.amount -= num_(tenders[sp].amount);
+      }
     } else if (kind === 'tradein') {
       /* stock bought from a customer: money out, never a sale or a cost of one */
       summary.tradeIns += num_(t.grand_total);
@@ -4063,6 +4076,8 @@ function reports_(session, params) {
       depositsHeld: depositsHeld_(),
       tradeIns: round2_(summary.tradeIns),
       tradeInCount: summary.tradeInCount,
+      supplierPayments: round2_(summary.supplierPayments),
+      supplierPaymentCount: summary.supplierPaymentCount,
       netRevenue: summary.grossSales - summary.refunds - summary.payouts - summary.pickups - summary.expenses,
       salesCount: summary.salesCount,
       units: summary.units,
@@ -4122,7 +4137,7 @@ var CHART_OF_ACCOUNTS = [
 
 /* Where each way of paying lands. A tender the books do not know is cash,
  * the same default the drawer and Reports use. */
-var TENDER_ACCOUNTS = { cash: '1000', card: '1010', transfer: '1020', net30: '1100', account: '1100', marketplace: '1150', deposit: '2100', store_credit: '2200' };
+var TENDER_ACCOUNTS = { cash: '1000', card: '1010', transfer: '1020', net30: '1100', account: '1100', marketplace: '1150', deposit: '2100', store_credit: '2200', bank: '1020', cheque: '1020' };
 var CASH_OUT_ACCOUNTS = { payout: '6000', expense: '6100', pickup: '1030' };
 
 function tenderAccount_(type) {
@@ -4290,6 +4305,10 @@ function accounting_(session, params) {
     } else if (kind === 'deposit_refund') {
       e = entry(t.created_at, 'deposit_refund', ref, 'Deposit refunded on ' + String(t.counterparty || ''));
       post(e, '2100', grossC);
+      tenders(e, t, -1, grossC);
+    } else if (kind === 'supplier_payment') {
+      e = entry(t.created_at, 'supplier_payment', String(t.external_ref || ref), 'Paid ' + String(t.counterparty || 'supplier'));
+      post(e, '2300', grossC);
       tenders(e, t, -1, grossC);
     } else if (kind === 'tradein') {
       e = entry(t.created_at, 'tradein', ref, 'Trade-in bought from ' + String(t.counterparty || ''));
@@ -5237,8 +5256,10 @@ function poSupplierMap_(supplierRows) {
 }
 
 function suppliers_(session, payload) {
-  /* admin only: who the shop buys from is an ownership decision */
-  requireRole_(session, ['admin']);
+  /* Adding a supplier is admin only - who the shop buys from is an ownership
+     decision. Reading the list is not: managers raise and receive purchase
+     orders, and the Purchases screen cannot load without it (v1.48.0 fix). */
+  requireRole_(session, ['admin', 'manager']);
   /* list mode */
   if (!payload || !Object.keys(payload).length) {
     var rows = readRows_('Suppliers', SUPPLIER_HEADERS);
@@ -5253,6 +5274,7 @@ function suppliers_(session, payload) {
     };
   }
 
+  requireRole_(session, ['admin']);
   var name = String(payload.name || '').trim();
   if (!name) throw statusError_(400, 'Supplier name is required');
 
@@ -5550,6 +5572,7 @@ function purchaseOrderReceive_(session, payload) {
         original_client_tx: '', counterparty: supplierName, grand_total: round2_(receivedValue),
         status: 'COMPLETED', tenders_json: '[]', items_json: JSON.stringify(txItems),
         note: 'Received against ' + String(po.po_number || ''), created_at: new Date().toISOString(), subtotal: '', tax_amount: '', discount_pct: '', customer_id: '',
+        supplier_id: String(po.supplier_id || ''), po_id: id,
       }]);
     }
     logAudit_(session, 'po.receive', 'purchase_order', id,
@@ -5582,6 +5605,229 @@ function purchaseOrderCancel_(session, payload) {
     applyPatches_('PurchaseOrders', PO_HEADERS, 'id', { [id]: { status: 'CANCELLED', updated_at: new Date().toISOString() } });
     logAudit_(session, 'po.cancel', 'purchase_order', id, String(po.po_number || '') + ' cancelled (was ' + status + ')', payload.deviceId);
     return { id: id, status: 'CANCELLED' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Supplier payments and accounts payable (v1.48.0)
+ *
+ *  Stock received against a purchase order is owed to the supplier (a
+ *  'purchase' row, booked to Accounts payable). Paying them is a
+ *  'supplier_payment' row: cash from the drawer, a bank transfer or a cheque,
+ *  optionally against one order. What a supplier is owed is simply received
+ *  less paid, and the part of it past the supplier's terms ("Net 30") is
+ *  overdue, oldest delivery first.
+ *
+ *  A payment can be voided by an admin (entered twice, wrong supplier): the
+ *  row is marked VOIDED, which takes it out of every total that reads only
+ *  COMPLETED rows - the balance, the drawer, the books - while it stays on
+ *  record.
+ * ------------------------------------------------------------------ */
+
+var SUPPLIER_PAY_METHODS = { cash: 'Cash', bank: 'Bank transfer', cheque: 'Cheque' };
+
+/* "Net 30", "30 days", "net30" -> 30. Anything without a number is due on delivery. */
+function termsDays_(terms) {
+  var m = /(\d{1,3})/.exec(String(terms || ''));
+  return m ? Math.min(365, num_(m[1])) : 0;
+}
+
+/* Which supplier and order a purchase or payment row belongs to. Rows written
+   from v1.48.0 carry both; older receipts are traced through their client id
+   ("po-<first 8 of the order id>-date") or, failing that, the supplier name. */
+function payableLinks_(t, poById, poByPrefix, supplierByName) {
+  var supplierId = String(t.supplier_id || '');
+  var poId = String(t.po_id || '');
+  if (!poId && String(t.kind) === 'purchase') {
+    var m = /^po-([0-9a-f]{8})-/.exec(String(t.client_tx_id || ''));
+    if (m && poByPrefix[m[1]]) poId = String(poByPrefix[m[1]].id);
+  }
+  if (!supplierId && poId && poById[poId]) supplierId = String(poById[poId].supplier_id || '');
+  if (!supplierId) {
+    var byName = supplierByName[String(t.counterparty || '').toLowerCase()];
+    if (byName) supplierId = String(byName.id);
+  }
+  return { supplierId: supplierId, poId: poId };
+}
+
+/* Every supplier's account: receipts, payments, per order, and what is overdue. */
+function payablesBook_() {
+  var suppliers = readRows_('Suppliers', SUPPLIER_HEADERS);
+  var pos = readRows_('PurchaseOrders', PO_HEADERS);
+  var poById = Object.create(null), poByPrefix = Object.create(null), supplierByName = Object.create(null);
+  for (var i = 0; i < pos.length; i++) { poById[String(pos[i].id)] = pos[i]; poByPrefix[String(pos[i].id).slice(0, 8)] = pos[i]; }
+  for (var s = 0; s < suppliers.length; s++) supplierByName[String(suppliers[s].name || '').toLowerCase()] = suppliers[s];
+
+  var books = Object.create(null);
+  function bookOf(id) {
+    return books[id] || (books[id] = { entries: [], orders: Object.create(null), receivedC: 0, paidC: 0 });
+  }
+  var tx = readRows_('Transactions', TX_HEADERS);
+  for (var t = 0; t < tx.length; t++) {
+    var row = tx[t];
+    var kind = String(row.kind || '');
+    if (kind !== 'purchase' && kind !== 'supplier_payment') continue;
+    if (String(row.status) !== 'COMPLETED') continue;
+    var links = payableLinks_(row, poById, poByPrefix, supplierByName);
+    if (!links.supplierId) continue;
+    var b = bookOf(links.supplierId);
+    var c = cents_(row.grand_total);
+    var method = '';
+    if (kind === 'supplier_payment') {
+      try { method = String((JSON.parse(row.tenders_json || '[]')[0] || {}).type || ''); } catch (_) {}
+    }
+    b.entries.push({ id: String(row.id), kind: kind, at: String(row.created_at || ''), c: c, poId: links.poId,
+      poNumber: links.poId && poById[links.poId] ? String(poById[links.poId].po_number || '') : '',
+      method: method, reference: String(row.external_ref || ''), note: String(row.note || ''), userId: String(row.user_id || '') });
+    if (links.poId) {
+      var o = b.orders[links.poId] || (b.orders[links.poId] = { receivedC: 0, paidC: 0 });
+      if (kind === 'purchase') o.receivedC += c; else o.paidC += c;
+    }
+    if (kind === 'purchase') b.receivedC += c; else b.paidC += c;
+  }
+  return { suppliers: suppliers, books: books, poById: poById };
+}
+
+function supplierAccount_(supplier, book, poById, nowMs) {
+  book = book || { entries: [], orders: Object.create(null), receivedC: 0, paidC: 0 };
+  var days = termsDays_(supplier.payment_terms);
+  var entries = book.entries.slice().sort(function (a, b) { return a.at.localeCompare(b.at); });
+  /* overdue: deliveries past their due date, less every payment made, oldest first */
+  var dueC = 0, oldestDue = '';
+  for (var i = 0; i < entries.length; i++) {
+    var e = entries[i];
+    if (e.kind !== 'purchase') continue;
+    var due = new Date(new Date(e.at).getTime() + days * 86400000);
+    e.dueAt = isNaN(due.getTime()) ? '' : due.toISOString();
+    if (!isNaN(due.getTime()) && due.getTime() < nowMs) { dueC += e.c; if (!oldestDue) oldestDue = e.dueAt; }
+  }
+  var balanceC = book.receivedC - book.paidC;
+  var overdueC = Math.max(0, Math.min(balanceC, dueC - book.paidC));
+  var orders = Object.keys(book.orders).map(function (poId) {
+    var o = book.orders[poId], po = poById[poId] || {};
+    var owedC = o.receivedC - o.paidC;
+    return { poId: poId, poNumber: String(po.po_number || ''), status: String(po.status || ''), orderTotal: num_(po.total),
+      received: o.receivedC / 100, paid: o.paidC / 100, owed: owedC / 100,
+      payment: o.receivedC === 0 ? (o.paidC ? 'prepaid' : 'nothing_received') : owedC <= 0 ? 'paid' : o.paidC > 0 ? 'part_paid' : 'unpaid' };
+  }).sort(function (a, b) { return String(b.poNumber).localeCompare(String(a.poNumber)); });
+  return {
+    id: String(supplier.id), name: String(supplier.name || ''), paymentTerms: String(supplier.payment_terms || ''), termsDays: days,
+    received: book.receivedC / 100, paid: book.paidC / 100, balance: balanceC / 100,
+    overdue: overdueC / 100, oldestDue: overdueC > 0 ? oldestDue : '',
+    orders: orders, entries: entries,
+  };
+}
+
+function supplierPayables_(session) {
+  requireRole_(session, ['admin', 'manager']);
+  var all = payablesBook_();
+  var nowMs = Date.now();
+  var store = getStore_();
+  var list = all.suppliers.filter(function (s) { return String(s.store_id) === store.id; }).map(function (s) {
+    var acc = supplierAccount_(s, all.books[String(s.id)], all.poById, nowMs);
+    delete acc.entries;
+    return acc;
+  }).sort(function (a, b) { return b.overdue - a.overdue || b.balance - a.balance || a.name.localeCompare(b.name); });
+  var owedC = 0, overdueC = 0;
+  for (var i = 0; i < list.length; i++) { owedC += cents_(list[i].balance); overdueC += cents_(list[i].overdue); }
+  return { suppliers: list, totalOwed: owedC / 100, totalOverdue: overdueC / 100 };
+}
+
+function supplierStatement_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var id = String((params && params.supplierId) || '');
+  var all = payablesBook_();
+  var supplier = null;
+  for (var i = 0; i < all.suppliers.length; i++) if (String(all.suppliers[i].id) === id) { supplier = all.suppliers[i]; break; }
+  if (!supplier) throw statusError_(404, 'Supplier not found');
+  var acc = supplierAccount_(supplier, all.books[id], all.poById, Date.now());
+  var runC = 0;
+  acc.lines = acc.entries.map(function (e) {
+    runC += e.kind === 'purchase' ? e.c : -e.c;
+    return {
+      id: e.id, kind: e.kind, at: e.at, poNumber: e.poNumber, dueAt: e.dueAt || '',
+      received: e.kind === 'purchase' ? e.c / 100 : 0, paid: e.kind === 'supplier_payment' ? e.c / 100 : 0,
+      balance: runC / 100, method: e.method, reference: e.reference, note: e.note, by: auditName_(e.userId),
+    };
+  });
+  delete acc.entries;
+  return acc;
+}
+
+function supplierPayment_(session, payload) {
+  requireRole_(session, ['admin', 'manager']);
+  payload = payload || {};
+  var supplierId = String(payload.supplierId || '');
+  var method = String(payload.method || '');
+  var amountC = cents_(payload.amount);
+  var reference = String(payload.reference || '').trim().slice(0, 60);
+  var note = String(payload.note || '').trim().slice(0, 200);
+  var poId = String(payload.poId || '');
+  if (!Object.prototype.hasOwnProperty.call(SUPPLIER_PAY_METHODS, method)) throw statusError_(400, 'Pay by cash, bank transfer or cheque');
+  if (!(amountC > 0)) throw statusError_(400, 'Enter the amount paid');
+  if (method !== 'cash' && !reference) throw statusError_(400, 'A bank transfer or cheque needs its reference');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var all = payablesBook_();
+    var supplier = null;
+    for (var i = 0; i < all.suppliers.length; i++) if (String(all.suppliers[i].id) === supplierId) { supplier = all.suppliers[i]; break; }
+    if (!supplier) throw statusError_(404, 'Supplier not found');
+    var acc = supplierAccount_(supplier, all.books[supplierId], all.poById, Date.now());
+    var po = null;
+    if (poId) {
+      po = all.poById[poId];
+      if (!po || String(po.supplier_id) !== supplierId) throw statusError_(400, 'That order is not from this supplier');
+      var order = acc.orders.filter(function (o) { return o.poId === poId; })[0];
+      var orderOwedC = order ? cents_(order.owed) : 0;
+      if (amountC > orderOwedC) throw statusError_(409, 'That is more than is owed on ' + String(po.po_number || 'the order') + ' (' + (orderOwedC / 100).toFixed(2) + ')');
+    }
+    /* the POS does not hold supplier credit: paying ahead of delivery is a
+       conversation with the supplier, not a balance here */
+    if (amountC > cents_(acc.balance)) throw statusError_(409, 'That is more than ' + String(supplier.name) + ' is owed (' + acc.balance.toFixed(2) + ')');
+
+    var now = new Date().toISOString();
+    var txId = Utilities.getUuid();
+    var amount = amountC / 100;
+    appendRows_('Transactions', TX_HEADERS, [{
+      id: txId, store_id: getStore_().id, user_id: String(session.uid || ''), device_id: 'server',
+      client_tx_id: 'spay-' + txId.slice(0, 8), kind: 'supplier_payment', original_client_tx: '',
+      counterparty: String(supplier.name || ''), grand_total: amount, status: 'COMPLETED',
+      tenders_json: JSON.stringify([{ type: method, amount: amount }]), items_json: '[]',
+      note: note || ('Payment to ' + String(supplier.name || '') + (po ? ' for ' + String(po.po_number || '') : '')),
+      created_at: now, subtotal: '', tax_amount: '', discount_pct: '', customer_id: '',
+      receipt_no: '', channel: 'in_store', external_ref: reference, supplier_id: supplierId, po_id: poId,
+    }]);
+    logAudit_(session, 'supplier.payment', 'supplier', supplierId,
+      'Paid ' + String(supplier.name || '') + ' ' + amount.toFixed(2) + ' by ' + SUPPLIER_PAY_METHODS[method]
+      + (reference ? ' (' + reference + ')' : '') + (po ? ' for ' + String(po.po_number || '') : ''), payload.deviceId);
+    return { transactionId: txId, supplierId: supplierId, amount: amount, method: method, balance: (cents_(acc.balance) - amountC) / 100 };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function supplierPaymentVoid_(session, payload) {
+  requireRole_(session, ['admin']);
+  payload = payload || {};
+  var id = String(payload.id || '');
+  var reason = String(payload.reason || '').trim().slice(0, 200);
+  if (!reason) throw statusError_(400, 'Voiding a payment needs a reason');
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var rows = readRows_('Transactions', TX_HEADERS);
+    var row = null;
+    for (var i = 0; i < rows.length; i++) if (String(rows[i].id) === id) { row = rows[i]; break; }
+    if (!row || String(row.kind) !== 'supplier_payment') throw statusError_(404, 'Supplier payment not found');
+    if (String(row.status) !== 'COMPLETED') throw statusError_(409, 'That payment is already voided');
+    applyPatches_('Transactions', TX_HEADERS, 'id', { [id]: { status: 'VOIDED', note: (String(row.note || '') + ' | Voided: ' + reason).slice(0, 500) } });
+    logAudit_(session, 'supplier.payment_void', 'supplier', String(row.supplier_id || ''),
+      'Voided payment of ' + num_(row.grand_total).toFixed(2) + ' to ' + String(row.counterparty || '') + ': ' + reason, payload.deviceId);
+    return { id: id, status: 'VOIDED' };
   } finally {
     lock.releaseLock();
   }
@@ -6782,6 +7028,11 @@ function shiftExpectedCash_(shift, allTxRows) {
         for (var dq = 0; dq < tenders.length; dq++) {
           if (String(tenders[dq].type || '') === 'cash') expected += num_(tenders[dq].amount);
         }
+      } else if (kind === 'supplier_payment') {
+        /* a supplier paid in cash from the till */
+        for (var sq = 0; sq < tenders.length; sq++) {
+          if (String(tenders[sq].type || '') === 'cash') expected -= num_(tenders[sq].amount);
+        }
       } else if (kind === 'tradein') {
         /* the shop bought a device: cash paid out of the drawer */
         for (var tq = 0; tq < tenders.length; tq++) {
@@ -7803,7 +8054,7 @@ function driveExport_(session, payload, params) {
   var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note' + (isStore ? ',cost,gross_profit' : '') + '\n';
   var sales = 0, refunds = 0, payouts = 0, pickups = 0, expenses = 0, collections = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
   var cashDrawer = 0, cardTotal = 0;
-  var depositsIn = 0, depositsApplied = 0, depositsRefunded = 0, tradeIns = 0;
+  var depositsIn = 0, depositsApplied = 0, depositsRefunded = 0, tradeIns = 0, supplierPaid = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
     var k = String(t.kind || 'sale');
@@ -7816,6 +8067,7 @@ function driveExport_(session, payload, params) {
     else if (k === 'deposit') depositsIn += v;
     else if (k === 'deposit_refund') depositsRefunded += v;
     else if (k === 'tradein') tradeIns += v;
+    else if (k === 'supplier_payment') supplierPaid += v;
     else if (k !== 'purchase') sales += v;
 
     /* What the drawer should actually hold is a TENDER question, not a kind
@@ -7828,7 +8080,7 @@ function driveExport_(session, payload, params) {
       if (dty === 'card') cardTotal += (k === 'refund' || k === 'deposit_refund' ? -dta : dta);
       if (dty === 'deposit' && k === 'sale') depositsApplied += dta;
       if (dty !== 'cash') continue;
-      if (k === 'refund' || k === 'deposit_refund' || k === 'tradein') cashDrawer -= dta;
+      if (k === 'refund' || k === 'deposit_refund' || k === 'tradein' || k === 'supplier_payment') cashDrawer -= dta;
       else if (k === 'sale' || k === 'payment' || k === 'deposit') cashDrawer += dta;
     }
     if (isCashOutKind_(k)) cashDrawer -= v;
@@ -7883,6 +8135,7 @@ function driveExport_(session, payload, params) {
   csv += ',,DEPOSITS APPLIED,,' + String(round2_(depositsApplied)) + ',\n';
   csv += ',,DEPOSITS REFUNDED,,' + String(round2_(depositsRefunded)) + ',\n';
   csv += ',,TRADE-INS BOUGHT,,' + String(round2_(tradeIns)) + ',\n';
+  csv += ',,SUPPLIERS PAID,,' + String(round2_(supplierPaid)) + ',\n';
   csv += ',,CARD,,' + String(round2_(cardTotal)) + ',\n';
   csv += ',,CASH IN DRAWER,,' + String(round2_(cashDrawer)) + ',\n';
   csv += ',,NET CASH,,' + String(net) + ',\n';

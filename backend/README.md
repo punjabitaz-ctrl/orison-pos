@@ -120,7 +120,13 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
 
 - `/api/products` and the pull snapshot. Cost prices go to managers and admins only.
 - `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` (admin, manager): create, edit, add serials, adjust counted stock (`reason` is recorded in the audit log).
-- **Suppliers** `/api/suppliers` (admin). **Purchase orders** `/api/purchase-orders`, `/detail`, `/receive` (admin, manager): receiving posts weighted-average cost, serials unit by unit, and a `purchase` ledger row. `/cancel` is admin only.
+- **Suppliers** `/api/suppliers` (list: admin, manager; add: admin). **Purchase orders** `/api/purchase-orders`, `/detail`, `/receive` (admin, manager): receiving posts weighted-average cost, serials unit by unit, and a `purchase` ledger row. `/cancel` is admin only. Receipts record `supplier_id` and `po_id` (v1.48.0).
+- **Supplier payments** (v1.48.0):
+  - `/api/suppliers/payables` (admin, manager): per supplier, `received`, `paid`, `balance` and `overdue` (deliveries past `termsDays_(payment_terms)` less payments, oldest first), plus `orders[]` with payment state; `totalOwed`, `totalOverdue`.
+  - `/api/suppliers/statement?supplierId` (admin, manager): the same, plus `lines[]` with a running balance.
+  - `/api/suppliers/payment` (admin, manager): `{ supplierId, amount, method: cash|bank|cheque, reference (required unless cash), poId?, note? }`. It refuses more than is owed on the order or to the supplier, and writes a server-only `supplier_payment` row.
+  - `/api/suppliers/payment/void` (admin): `{ id, reason }` sets that row to VOIDED.
+  - Older receipts are linked by `payableLinks_` (the `po-<id8>` client id, or the supplier name).
 - **Price history** `/api/price-history` (admin, manager): sources `create`, `patch`, `po` and `bulk`.
 - **Inventory aging** `/api/inventory/aging` and **reorder worksheet** `/api/inventory/reorder` (admin, manager).
 - **Bulk price update** `/api/admin/products/bulk-price` (admin). The client sends a rule, never prices. `preview: true` writes nothing.
@@ -220,7 +226,7 @@ Responses are always `{ "ok": true, "data": … }` or `{ "ok": false, "status": 
 `tests/backend-sim.mjs` runs `Code.gs` in `node:vm` against an in-memory mock of the Apps Script services (`SpreadsheetApp`, `Utilities`, `LockService`, `DriveApp`, `ContentService`, `PropertiesService`, `CacheService`). No network or Google account is needed:
 
 ```bash
-npm run test:backend   # 1022 checks
+npm run test:backend   # 1066 checks
 ```
 
 The mock's `LockService` always grants the lock, so concurrency bugs are not caught there.
