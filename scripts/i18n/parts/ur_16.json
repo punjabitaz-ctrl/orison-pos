@@ -1,0 +1,58 @@
+{
+"Average sale": "اوسط فروخت",
+"Breakdown": "تفصیل",
+"By staff member": "عملے کے لحاظ سے",
+"Channel": "ذریعہ",
+"Clear {n} filters": {
+"one": "{n} فلٹر ہٹائیں",
+"other": "{n} فلٹرز ہٹائیں"
+},
+"Cost": "لاگت",
+"Day": "دن",
+"Group by": "گروپ بندی",
+"Hour": "گھنٹہ",
+"In store": "دکان میں",
+"Items": "اشیاء",
+"Net": "خالص",
+"No sales match.": "کوئی مطابق فروخت نہیں۔",
+"Only the lines that match the filters": "صرف فلٹرز سے مطابقت رکھنے والی لائنیں",
+"Refunded": "واپس کی گئی",
+"Refunds only": "صرف واپسیاں",
+"Sales CSV": "فروخت CSV",
+"Sales CSV · {n} transactions": {
+"one": "فروخت CSV · {n} لین دین",
+"other": "فروخت CSV · {n} لین دین"
+},
+"Sales Report": "فروخت رپورٹ",
+"Sales and refunds": "فروخت اور واپسیاں",
+"Sales by hour of the day": "دن کے گھنٹوں کے لحاظ سے فروخت",
+"Sales only": "صرف فروخت",
+"Sales report": "فروخت رپورٹ",
+"Sales report failed": "فروخت رپورٹ لوڈ نہیں ہو سکی",
+"Show": "دکھائیں",
+"Show more · {shown} of {n}": "مزید دکھائیں · {n} میں سے {shown}",
+"Show only this": "صرف یہ دکھائیں",
+"Summary CSV": "خلاصہ CSV",
+"Summary CSV saved": "خلاصہ CSV محفوظ ہو گیا",
+"Time": "وقت",
+"Walk-in": "عام گاہک",
+"Your sales": "آپ کی فروخت",
+"gp {amount} · {pct}% margin": "مجموعی منافع {amount} · {pct}% مارجن",
+"part": "حصہ",
+"refund of {receipt}": "{receipt} کی واپسی",
+"{amount} refunded": "{amount} واپس",
+"{count} sales · average {avg} · {items} items each": "{count} فروخت · اوسط {avg} · فی فروخت {items} اشیاء",
+"{gross} sold · {refunds} refunded": "{gross} فروخت · {refunds} واپس",
+"{n} items per sale": "فی فروخت {n} اشیاء",
+"{n} refunds": {
+"one": "{n} واپسی",
+"other": "{n} واپسیاں"
+},
+"{n} refunds · {amount}": "{n} واپسیاں · {amount}",
+"{n} returned": "{n} واپس",
+"{n} transactions": {
+"one": "{n} لین دین",
+"other": "{n} لین دین"
+},
+"{pct}% margin": "{pct}% مارجن"
+}

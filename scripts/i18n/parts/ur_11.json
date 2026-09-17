@@ -1,0 +1,22 @@
+{
+"1 year": "1 سال",
+"1 year — brand-new hardware": "1 سال — بالکل نیا ہارڈویئر",
+"1-year warranty": "1 سال کی وارنٹی",
+"30-day warranty": "30 دن کی وارنٹی",
+"A change applies to future sales. What was already sold keeps its warranty.": "تبدیلی آئندہ فروخت پر لاگو ہوگی۔ جو پہلے فروخت ہو چکا اس کی وارنٹی برقرار رہے گی۔",
+"Booked in as {ticket} — under warranty from {receipt}": "{ticket} کے طور پر درج — {receipt} سے وارنٹی میں",
+"Check": "چیک کریں",
+"Check warranty": "وارنٹی چیک کریں",
+"Could not check the warranty": "وارنٹی چیک نہیں ہو سکی",
+"IMEI, serial or receipt number": "IMEI، سیریل یا رسید نمبر",
+"No warranty": "کوئی وارنٹی نہیں",
+"No warranty found — this was not sold here, or it was sold without one.": "کوئی وارنٹی نہیں ملی — یہ یہاں فروخت نہیں ہوا، یا بغیر وارنٹی کے فروخت ہوا۔",
+"Refunded — no warranty": "رقم واپس — کوئی وارنٹی نہیں",
+"Under warranty": "وارنٹی میں",
+"Warranty": "وارنٹی",
+"Warranty expired": "وارنٹی ختم",
+"Warranty must be none, 30 days or 1 year": "وارنٹی کوئی نہیں، 30 دن یا 1 سال ہونی چاہیے",
+"ended {date}": "{date} کو ختم",
+"until": "تک",
+"until {date}": "{date} تک"
+}

@@ -141,7 +141,11 @@ Baseline at v1.48.0: backend-sim **1066 / 0**, client **538 / 0**, demo **29 / 0
   `$t` at module scope (catalogues load asynchronously) and never name a local
   `t`. Add the new key to **both** `lang/ar.js` and `lang/ur.js`; the catalogue
   test fails on anything missing, stale, untranslated or with a dropped
-  placeholder.
+  placeholder. Build the catalogues rather than hand-editing them: put a
+  release's new strings in a NEW `scripts/i18n/parts/{ar,ur}_<n>.json`, then
+  `node scripts/i18n/collect-keys.mjs . scripts/i18n/keys.json` and
+  `python scripts/i18n/build-catalogues.py <lang> --write`. Delete a retired
+  string from its part. Arabic plurals need all six forms.
 - **RTL:** use logical CSS properties (`margin-inline-start`, `inset-inline-end`,
   `text-align: start`), never left/right. Money on screen goes through `fmt()`
   (it isolates itself in RTL); receipts use `fmtFor(doc.dir)`; anything that

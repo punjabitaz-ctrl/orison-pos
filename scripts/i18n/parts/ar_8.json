@@ -1,0 +1,18 @@
+{
+"A credit limit cannot be negative": "لا يمكن أن يكون حد الائتمان سالبًا",
+"Another till": "صندوق آخر",
+"Balance unavailable offline": "الرصيد غير متاح دون اتصال",
+"Credit limit": "حد الائتمان",
+"Credit limit ({symbol})": "حد الائتمان ({symbol})",
+"Credit limit for {name}": "حد الائتمان لـ {name}",
+"Credit limit saved": "تم حفظ حد الائتمان",
+"Customer changes": "تعديلات العملاء",
+"No limit": "بلا حد",
+"Owes {amount}": "مستحق عليه {amount}",
+"The most this customer may owe on account. 0 means no limit. Going over it at the till needs a manager to approve.": "أقصى مبلغ يمكن أن يكون مستحقًا على هذا العميل على الحساب. 0 يعني بلا حد. تجاوزه عند الصندوق يحتاج موافقة مدير.",
+"Type at least four characters to look up a sale": "اكتب أربعة أحرف على الأقل للبحث عن عملية بيع",
+"Whole shop": "المتجر كله",
+"limit {limit} · {available} available": "الحد {limit} · المتاح {available}",
+"{amount} over the limit, a manager approves it": "{amount} فوق الحد، يوافق عليه مدير",
+"{name} would owe {amount} over their limit": "سيتجاوز {name} حده بمبلغ {amount}"
+}

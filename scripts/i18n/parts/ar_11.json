@@ -1,0 +1,22 @@
+{
+"1 year": "سنة واحدة",
+"1 year — brand-new hardware": "سنة واحدة — أجهزة جديدة تمامًا",
+"1-year warranty": "ضمان لمدة سنة",
+"30-day warranty": "ضمان لمدة 30 يومًا",
+"A change applies to future sales. What was already sold keeps its warranty.": "يسري التغيير على المبيعات القادمة. ما بيع سابقًا يحتفظ بضمانه.",
+"Booked in as {ticket} — under warranty from {receipt}": "سُجّل برقم {ticket} — ضمن الضمان من {receipt}",
+"Check": "تحقّق",
+"Check warranty": "التحقق من الضمان",
+"Could not check the warranty": "تعذّر التحقق من الضمان",
+"IMEI, serial or receipt number": "IMEI أو الرقم التسلسلي أو رقم الإيصال",
+"No warranty": "بلا ضمان",
+"No warranty found — this was not sold here, or it was sold without one.": "لم يُعثر على ضمان — لم يُبع هنا، أو بيع دون ضمان.",
+"Refunded — no warranty": "مُسترد — بلا ضمان",
+"Under warranty": "ضمن الضمان",
+"Warranty": "الضمان",
+"Warranty expired": "انتهى الضمان",
+"Warranty must be none, 30 days or 1 year": "يجب أن يكون الضمان بلا، أو 30 يومًا، أو سنة",
+"ended {date}": "انتهى في {date}",
+"until": "حتى",
+"until {date}": "حتى {date}"
+}

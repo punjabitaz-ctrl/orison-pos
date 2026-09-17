@@ -7,3 +7,5 @@ tests/console-dump.txt
 .clasp.json
 .clasprc.json
 dist/
+scripts/i18n/keys.json
+scripts/i18n/report_*.txt

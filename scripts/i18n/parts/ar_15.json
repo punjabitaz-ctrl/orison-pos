@@ -1,0 +1,18 @@
+{
+"All categories": "كل الفئات",
+"Counter": "الكاونتر",
+"Insights": "التحليلات",
+"No products yet.": "لا توجد منتجات بعد.",
+"Nothing in this category.": "لا شيء في هذه الفئة.",
+"Results for “{term}”": "نتائج «{term}»",
+"Stock & customers": "المخزون والعملاء",
+"Uncategorized": "بدون فئة",
+"{n} products": {
+"zero": "لا منتجات",
+"one": "منتج واحد",
+"two": "منتجان",
+"few": "{n} منتجات",
+"many": "{n} منتجًا",
+"other": "{n} منتج"
+}
+}

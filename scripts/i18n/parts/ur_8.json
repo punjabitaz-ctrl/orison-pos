@@ -1,0 +1,18 @@
+{
+"A credit limit cannot be negative": "کریڈٹ کی حد منفی نہیں ہو سکتی",
+"Another till": "دوسرا کیش رجسٹر",
+"Balance unavailable offline": "آف لائن بیلنس دستیاب نہیں",
+"Credit limit": "کریڈٹ کی حد",
+"Credit limit ({symbol})": "کریڈٹ کی حد ({symbol})",
+"Credit limit for {name}": "{name} کی کریڈٹ کی حد",
+"Credit limit saved": "کریڈٹ کی حد محفوظ ہو گئی",
+"Customer changes": "گاہک کے ریکارڈ میں تبدیلیاں",
+"No limit": "کوئی حد نہیں",
+"Owes {amount}": "{amount} واجب",
+"The most this customer may owe on account. 0 means no limit. Going over it at the till needs a manager to approve.": "یہ گاہک کھاتے پر زیادہ سے زیادہ کتنا مقروض ہو سکتا ہے۔ 0 کا مطلب کوئی حد نہیں۔ کیش رجسٹر پر اس سے تجاوز کے لیے منیجر کی منظوری درکار ہے۔",
+"Type at least four characters to look up a sale": "فروخت تلاش کرنے کے لیے کم از کم چار حروف لکھیں",
+"Whole shop": "پوری دکان",
+"limit {limit} · {available} available": "حد {limit} · {available} دستیاب",
+"{amount} over the limit, a manager approves it": "حد سے {amount} زیادہ، منیجر منظوری دے گا",
+"{name} would owe {amount} over their limit": "{name} اپنی حد سے {amount} زیادہ کے مقروض ہو جائیں گے"
+}
