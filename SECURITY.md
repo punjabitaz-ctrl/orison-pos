@@ -209,6 +209,7 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/shifts/force-close` | admin, manager; reason required |
 | `/api/suppliers` (add), `/api/purchase-orders/cancel`, `/api/suppliers/payment/void` | admin |
 | `/api/suppliers` (list), `/api/suppliers/payables`, `/api/suppliers/statement`, `/api/suppliers/payment` | admin, manager |
+| `/api/repairs/needs` (the bench's own list) | admin, manager, cashier |
 | `/api/marketplace/settings` (set the sheet) | admin; managers read status only (no link) |
 | `/api/marketplace/import` | admin, manager (the hourly trigger runs as the admin who set the sheet) |
 | `/api/admin/products/bulk-price`, `/api/admin/stock-take` | admin |

@@ -44,6 +44,7 @@ export const ACTION_GROUPS = [
   { label: N_('Repairs'), actions: [
     { id: 'repair.created', label: N_('Repairs booked in') },
     { id: 'repair.part', label: N_('Parts fitted or returned') },
+    { id: 'repair.need', label: N_('Parts a job is waiting for') },
     { id: 'repair.labour', label: N_('Labour') },
     { id: 'repair.status', label: N_('Status changes') },
     { id: 'repair.deposit', label: N_('Deposits taken') },

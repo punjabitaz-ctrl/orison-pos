@@ -82,6 +82,14 @@ check('the order still on its way is on trade terms, so receiving it shows the d
 const owed = call(rt2, '/api/suppliers/payables', {}, tokens.manager).data;
 check('a supplier is owed money, part of it overdue, after a part payment',
   owed.totalOwed === 110 && owed.totalOverdue === 110 && owed.suppliers[0].paid === 100, JSON.stringify([owed.totalOwed, owed.totalOverdue]));
+const bench = call(rt2, '/api/repairs/needs', {}, tokens.cashier).data;
+check('two jobs on the bench are waiting for a part, and one of them nobody has ordered',
+  bench.ticketCount === 2 && bench.parts.length === 2 && bench.shortfallCount === 1,
+  JSON.stringify(bench.parts.map((p) => [p.sku, p.needed, p.onOrder, p.shortfall])));
+check('the screen the waiting job needs is on the order that is coming',
+  bench.parts.some((p) => p.sku === 'RP-SCR-IP12' && p.onOrder === 1 && p.shortfall === 0
+    && p.tickets[0].status === 'awaiting_parts'), JSON.stringify(bench.parts.find((p) => p.sku === 'RP-SCR-IP12')));
+
 const shifts = call(rt2, '/api/shifts', {}, tokens.manager).data;
 check('a till shift is open for today', JSON.stringify(shifts).indexOf('OPEN') >= 0);
 

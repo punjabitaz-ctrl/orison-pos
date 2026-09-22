@@ -112,6 +112,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/repairs':         return repairs_(session, payload, params);
     case '/api/repairs/detail':  return repairDetail_(session, params);
     case '/api/repairs/parts':   return repairParts_(session, payload);
+    case '/api/repairs/needs':   return repairNeeds_(session, payload, params);
     case '/api/repairs/labour':  return repairLabour_(session, payload);
     case '/api/repairs/status':  return repairStatus_(session, payload);
     case '/api/repairs/void':    return repairVoid_(session, payload);
@@ -373,7 +374,7 @@ var REPAIR_HEADERS = ['id', 'store_id', 'ticket_no', 'customer_id', 'customer_na
   'condition_note', 'accessories', 'status', 'parts_json', 'labour_json',
   'estimate_total', 'deposit_total', 'final_total', 'assigned_to', 'note',
   'created_by', 'created_at', 'updated_at', 'promised_at', 'closed_at', 'invoice_tx_id',
-  'warranty_status', 'warranty_until', 'warranty_receipt'];
+  'warranty_status', 'warranty_until', 'warranty_receipt', 'needs_json'];
 
 /* The flow a job actually walks. Order matters: the UI renders it in this
  * order, and "can this move forward" is an index comparison. */
@@ -5419,9 +5420,34 @@ function purchaseOrders_(session, payload) {
       note: String(payload.note || '').slice(0, 500), created_by: String(session.uid || ''),
       created_at: now, updated_at: now,
     }]);
+    /* ordering what the bench is waiting for: every open need for a product on
+       this order is stamped with it, so the ticket can say which order it is
+       on and when it is due. It reserves nothing - the unit that arrives can
+       still be sold at the counter. */
+    var linkedNeeds = 0;
+    if (payload.linkNeeds) {
+      var repairRows = readRows_('Repairs', REPAIR_HEADERS);
+      var wantIds = built.items.map(function (it) { return String(it.productId); });
+      var hits = needsForProducts_(wantIds, repairRows);
+      var needPatches = {};
+      for (var h = 0; h < hits.length; h++) {
+        var hit = hits[h];
+        if (String(hit.need.poId || '')) continue;
+        var pending = needPatches[String(hit.row.id)];
+        var ns = itobjs_(pending ? pending.needs_json : hit.row.needs_json);
+        if (!ns[hit.index]) continue;
+        ns[hit.index].poId = id;
+        ns[hit.index].orderedAt = now;
+        needPatches[String(hit.row.id)] = { needs_json: JSON.stringify(ns), updated_at: now };
+        linkedNeeds += 1;
+      }
+      if (linkedNeeds) applyPatches_('Repairs', REPAIR_HEADERS, 'id', needPatches);
+    }
+
     logAudit_(session, 'po.create', 'purchase_order', id,
-      poNumber + ' for ' + String(supplier.name) + ', ' + built.items.length + ' line(s), total ' + total + ' (' + status + ')', payload.deviceId);
-    return { id: id, poNumber: poNumber, status: status, total: total };
+      poNumber + ' for ' + String(supplier.name) + ', ' + built.items.length + ' line(s), total ' + total + ' (' + status + ')'
+      + (linkedNeeds ? ', ' + linkedNeeds + ' for the bench' : ''), payload.deviceId);
+    return { id: id, poNumber: poNumber, status: status, total: total, linkedNeeds: linkedNeeds };
   } finally {
     lock.releaseLock();
   }
@@ -5665,12 +5691,41 @@ function purchaseOrderReceive_(session, payload) {
         supplier_id: String(po.supplier_id || ''), po_id: id,
       }]);
     }
+    /* which bench jobs this delivery frees: the oldest need for a part that is
+       now on the shelf in the quantity it asked for. Nothing is reserved, so
+       this is what could go ahead, not a promise. */
+    var unblocked = [];
+    var freshProds = readRows_('Products', PRODUCT_HEADERS);
+    var freshById = {};
+    for (var fp = 0; fp < freshProds.length; fp++) freshById[String(freshProds[fp].id)] = freshProds[fp];
+    var freshSerials = serialsAvailable_();
+    var available = Object.create(null);
+    var receivedIds = [];
+    for (var av = 0; av < taking.length; av++) {
+      available[taking[av].pid] = stockOnHand_(freshById[taking[av].pid], freshSerials);
+      receivedIds.push(taking[av].pid);
+    }
+    var waiting = needsForProducts_(receivedIds, readRows_('Repairs', REPAIR_HEADERS));
+    for (var wt = 0; wt < waiting.length; wt++) {
+      var nd = waiting[wt].need || {};
+      var npid = String(nd.productId || '');
+      var nqty = num_(nd.quantity || 1);
+      if (num_(available[npid]) < nqty) continue;
+      available[npid] -= nqty;
+      unblocked.push({
+        repairId: String(waiting[wt].row.id), ticketNo: String(waiting[wt].row.ticket_no || ''),
+        customerName: String(waiting[wt].row.customer_name || ''), productId: npid,
+        name: String(nd.name || ''), quantity: nqty,
+      });
+    }
+
     logAudit_(session, 'po.receive', 'purchase_order', id,
       String(po.po_number || '') + ': ' + txItems.length + ' unit(s) received, stock ' + round2_(goodsC / 100)
-      + (taxShareC ? ' + tax ' + round2_(taxShareC / 100) : '') + ', owed ' + round2_(owedC / 100) + ' (' + newStatus + ')', payload.deviceId);
+      + (taxShareC ? ' + tax ' + round2_(taxShareC / 100) : '') + ', owed ' + round2_(owedC / 100) + ' (' + newStatus + ')'
+      + (unblocked.length ? ', frees ' + unblocked.length + ' bench job(s)' : ''), payload.deviceId);
     return {
       id: id, status: newStatus, receivedValue: round2_(owedC / 100),
-      goodsValue: round2_(goodsC / 100), taxValue: round2_(taxShareC / 100),
+      goodsValue: round2_(goodsC / 100), taxValue: round2_(taxShareC / 100), unblocked: unblocked,
       lines: newReceived.map(function (r) {
         return { productId: String(r.productId), quantity: num_(r.quantity), onHand: project[String(r.productId)] ? project[String(r.productId)].onHand : null, unitCost: project[String(r.productId)] ? project[String(r.productId)].unitCost : null };
       }),
@@ -5696,7 +5751,24 @@ function purchaseOrderCancel_(session, payload) {
   if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
   try {
     applyPatches_('PurchaseOrders', PO_HEADERS, 'id', { [id]: { status: 'CANCELLED', updated_at: new Date().toISOString() } });
-    logAudit_(session, 'po.cancel', 'purchase_order', id, String(po.po_number || '') + ' cancelled (was ' + status + ')', payload.deviceId);
+    /* the bench is waiting again: an order that is gone can no longer be what
+     a ticket is on order with */
+  var cancelRows = readRows_('Repairs', REPAIR_HEADERS);
+  var cancelPatches = {};
+  for (var cr = 0; cr < cancelRows.length; cr++) {
+    var cneeds = itobjs_(cancelRows[cr].needs_json);
+    var touched = false;
+    for (var cn = 0; cn < cneeds.length; cn++) {
+      if (String(cneeds[cn].poId || '') !== id) continue;
+      cneeds[cn].poId = '';
+      cneeds[cn].orderedAt = '';
+      touched = true;
+    }
+    if (touched) cancelPatches[String(cancelRows[cr].id)] = { needs_json: JSON.stringify(cneeds), updated_at: new Date().toISOString() };
+  }
+  if (Object.keys(cancelPatches).length) applyPatches_('Repairs', REPAIR_HEADERS, 'id', cancelPatches);
+
+  logAudit_(session, 'po.cancel', 'purchase_order', id, String(po.po_number || '') + ' cancelled (was ' + status + ')', payload.deviceId);
     return { id: id, status: 'CANCELLED' };
   } finally {
     lock.releaseLock();
@@ -6153,6 +6225,7 @@ function repairRow_(row) {
     warrantyStatus: String(row.warranty_status || ''),
     warrantyUntil: String(row.warranty_until || ''),
     warrantyReceipt: String(row.warranty_receipt || ''),
+    needsCount: itobjs_(row.needs_json).length,
   };
 }
 
@@ -6229,6 +6302,7 @@ function repairDetail_(session, params) {
   var prodRows = readRows_('Products', PRODUCT_HEADERS);
   var prodById = {};
   for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
+  dto.needs = repairNeedsWithStock_(row, prodById, poOutstanding_(), serialsAvailable_());
   var inv = repairInvoice_(row, prodById, getStore_());
   dto.invoiceSubtotal = inv.totals.subtotal;
   dto.invoiceTax = inv.totals.tax;
@@ -6236,6 +6310,264 @@ function repairDetail_(session, params) {
   dto.balanceDue = inv.balanceC / 100;
   dto.overpaid = inv.overpaidC / 100;
   return dto;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Parts a job is waiting for (v1.50.0)
+ *
+ *  A bench job often needs a part the shop does not have. Until now the only
+ *  record of that was the ticket's *Awaiting parts* status: what it was
+ *  waiting for lived in the technician's head, Purchases could not see it,
+ *  and when the box arrived nobody knew which job it freed.
+ *
+ *  A need is a line on the ticket (`needs_json`): a product, how many, and
+ *  why. It moves no stock - it is a statement of intent, not a reservation:
+ *  the unit that arrives can still be sold at the counter, and the board
+ *  shows what is on hand against what the bench is waiting for so that
+ *  contention is visible. When the part is fitted (`/api/repairs/parts` with
+ *  `needIndex`) the need goes with it.
+ *
+ *  Raising a purchase order with `linkNeeds` stamps every open need for a
+ *  product on that order with the order, so the ticket can say *on order,
+ *  PO-0003, expected Friday*; cancelling the order takes the stamp off.
+ *  Receiving reports which tickets the delivery unblocks.
+ * ------------------------------------------------------------------ */
+
+/* What is still to arrive on the orders that are out, by product. */
+function poOutstanding_() {
+  var pos = readRows_('PurchaseOrders', PO_HEADERS);
+  var out = Object.create(null);
+  for (var i = 0; i < pos.length; i++) {
+    var status = String(pos[i].status || '');
+    if (status !== 'ORDERED' && status !== 'PARTIAL') continue;
+    var items = itobjs_(pos[i].items_json);
+    var had = receivedByProduct_(pos[i].received_json);
+    for (var j = 0; j < items.length; j++) {
+      var pid = String(items[j].productId || '');
+      var ordered = num_(items[j].quantity || 1);
+      var got = Math.min(num_(had[pid] ? had[pid].quantity : 0), ordered);
+      if (ordered - got <= 0) continue;
+      var entry = out[pid] || (out[pid] = { quantity: 0, orders: [] });
+      entry.quantity += ordered - got;
+      entry.orders.push({ poId: String(pos[i].id), poNumber: String(pos[i].po_number || ''),
+        quantity: ordered - got, expectedDate: String(pos[i].expected_date || ''), status: status });
+    }
+  }
+  return out;
+}
+
+/* Serialized stock is counted by its units in stock, not by on_hand. */
+function serialsAvailable_() {
+  var rows = readRows_('Serials', SERIAL_HEADERS);
+  var out = Object.create(null);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].status) !== 'IN_STOCK') continue;
+    var pid = String(rows[i].product_id);
+    out[pid] = (out[pid] || 0) + 1;
+  }
+  return out;
+}
+
+function stockOnHand_(prod, serialCount) {
+  if (!prod) return 0;
+  return String(prod.is_serialized) === '1'
+    ? num_(serialCount[String(prod.id)] || 0)
+    : num_(prod.on_hand);
+}
+
+/* One ticket's needs, each with where the part stands right now. */
+function repairNeedsWithStock_(row, prodById, onOrder, serialCount) {
+  var needs = itobjs_(row.needs_json);
+  var out = [];
+  for (var i = 0; i < needs.length; i++) {
+    var need = needs[i] || {};
+    var pid = String(need.productId || '');
+    var prod = prodById[pid];
+    var have = stockOnHand_(prod, serialCount);
+    var order = onOrder[pid] || { quantity: 0, orders: [] };
+    var stamped = null;
+    for (var o = 0; o < order.orders.length; o++) {
+      if (String(order.orders[o].poId) === String(need.poId || '')) { stamped = order.orders[o]; break; }
+    }
+    out.push({
+      index: i,
+      productId: pid,
+      name: String(need.name || (prod ? prod.name : '')),
+      sku: String(need.sku || (prod ? prod.sku : '')),
+      quantity: num_(need.quantity || 1),
+      note: String(need.note || ''),
+      addedAt: String(need.addedAt || ''),
+      addedBy: auditName_(String(need.addedBy || '')),
+      onHand: have,
+      onOrder: num_(order.quantity),
+      canFit: have >= num_(need.quantity || 1),
+      poId: String(need.poId || ''),
+      poNumber: stamped ? stamped.poNumber : '',
+      expectedDate: stamped ? stamped.expectedDate : '',
+      orderedAt: String(need.orderedAt || ''),
+    });
+  }
+  return out;
+}
+
+/* The bench's whole list, grouped by part: what is wanted, what is here, what
+ * is on its way, and how short the shop is. */
+function repairNeedsBoard_(session) {
+  requireRole_(session, REPAIR_ROLES_ANY);
+  var store = getStore_();
+  var rows = readRows_('Repairs', REPAIR_HEADERS);
+  var prodRows = readRows_('Products', PRODUCT_HEADERS);
+  var prodById = {};
+  for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
+  var onOrder = poOutstanding_();
+  var serialCount = serialsAvailable_();
+
+  var byProduct = Object.create(null);
+  var order = [];
+  var ticketCount = 0;
+  for (var r = 0; r < rows.length; r++) {
+    var row = rows[r];
+    if (String(row.store_id) !== store.id) continue;
+    if (REPAIR_TERMINAL[String(row.status)]) continue;
+    var needs = itobjs_(row.needs_json);
+    if (!needs.length) continue;
+    ticketCount += 1;
+    for (var n = 0; n < needs.length; n++) {
+      var need = needs[n] || {};
+      var pid = String(need.productId || '');
+      var prod = prodById[pid];
+      var group = byProduct[pid];
+      if (!group) {
+        var supply = onOrder[pid] || { quantity: 0, orders: [] };
+        group = byProduct[pid] = {
+          productId: pid,
+          name: String(need.name || (prod ? prod.name : '')),
+          sku: String(need.sku || (prod ? prod.sku : '')),
+          cost: prod ? num_(prod.cost_price) : 0,
+          needed: 0,
+          onHand: stockOnHand_(prod, serialCount),
+          onOrder: num_(supply.quantity),
+          orders: supply.orders,
+          tickets: [],
+        };
+        order.push(pid);
+      }
+      group.needed += num_(need.quantity || 1);
+      group.tickets.push({
+        repairId: String(row.id), ticketNo: String(row.ticket_no || ''),
+        customerName: String(row.customer_name || ''), status: String(row.status || ''),
+        quantity: num_(need.quantity || 1), note: String(need.note || ''),
+        since: String(need.addedAt || row.created_at || ''),
+        promisedAt: String(row.promised_at || ''),
+      });
+    }
+  }
+
+  var parts = [];
+  var shortfallCount = 0;
+  for (var k = 0; k < order.length; k++) {
+    var g = byProduct[order[k]];
+    g.shortfall = Math.max(0, g.needed - g.onHand - g.onOrder);
+    g.ready = g.onHand >= g.needed;
+    if (g.shortfall > 0) shortfallCount += 1;
+    g.tickets.sort(function (a, b) { return String(a.since).localeCompare(String(b.since)); });
+    parts.push(g);
+  }
+  /* what nobody has ordered yet first, then what is oldest */
+  parts.sort(function (a, b) {
+    return (b.shortfall > 0) - (a.shortfall > 0)
+      || String(a.tickets[0].since).localeCompare(String(b.tickets[0].since));
+  });
+  return { parts: parts, ticketCount: ticketCount, partCount: parts.length, shortfallCount: shortfallCount };
+}
+
+/* Record what a job is waiting for, or drop a line. */
+function repairNeeds_(session, payload, params) {
+  if (!payload || !Object.keys(payload).length) return repairNeedsBoard_(session, params);
+  requireRole_(session, REPAIR_ROLES_ANY);
+  var id = String(payload.id || '');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = repairFind_(id);
+    if (!row) throw statusError_(404, 'Repair not found');
+    if (REPAIR_TERMINAL[String(row.status)]) throw statusError_(409, 'This ticket is closed');
+
+    var needs = itobjs_(row.needs_json);
+    var stamp = new Date().toISOString();
+    var patch = { updated_at: stamp };
+    var summary = '';
+
+    if (payload.removeIndex !== undefined && payload.removeIndex !== null) {
+      var idx = Math.floor(num_(payload.removeIndex));
+      if (!(idx >= 0 && idx < needs.length)) throw statusError_(400, 'No such line on this ticket');
+      summary = 'No longer waiting for ' + String(needs[idx].name || '') + ' on ' + String(row.ticket_no || '');
+      needs.splice(idx, 1);
+    } else {
+      var add = Array.isArray(payload.add) ? payload.add : [];
+      if (!add.length) throw statusError_(400, 'Nothing to wait for');
+      var prodRows = readRows_('Products', PRODUCT_HEADERS);
+      var prodById = {};
+      for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
+      var named = [];
+      for (var a = 0; a < add.length; a++) {
+        var ln = add[a] || {};
+        var prod = prodById[String(ln.productId || '')];
+        if (!prod || String(prod.active) !== '1') throw statusError_(400, 'Product is unknown or inactive');
+        if (String(prod.item_type) === 'service') throw statusError_(400, 'A service is not a part to wait for');
+        var qty = Math.max(1, Math.floor(num_(ln.quantity) || 1));
+        for (var d = 0; d < needs.length; d++) {
+          if (String(needs[d].productId) === String(prod.id)) throw statusError_(409, String(prod.name) + ' is already on this ticket\'s list');
+        }
+        needs.push({
+          productId: String(prod.id), name: String(prod.name || ''), sku: String(prod.sku || ''),
+          quantity: qty, note: String(ln.note || '').slice(0, 140),
+          addedAt: stamp, addedBy: String(session.uid || ''), poId: '', orderedAt: '',
+        });
+        named.push(String(prod.name || '') + ' x' + qty);
+      }
+      summary = 'Waiting for ' + named.join(', ') + ' on ' + String(row.ticket_no || '');
+      /* a job that is waiting for a part is awaiting parts: say so on the board
+         rather than leaving the status to be remembered separately */
+      var was = String(row.status || '');
+      if (was === 'intake' || was === 'diagnosed') {
+        patch.status = 'awaiting_parts';
+        summary += ' (' + was + ' → awaiting_parts)';
+      }
+    }
+
+    patch.needs_json = JSON.stringify(needs);
+    applyPatches_('Repairs', REPAIR_HEADERS, 'id', { [id]: patch });
+    logAudit_(session, 'repair.need', 'repair', id, summary, payload.deviceId);
+
+    row.needs_json = patch.needs_json;
+    if (patch.status) row.status = patch.status;
+    var prodRows2 = readRows_('Products', PRODUCT_HEADERS);
+    var prodById2 = {};
+    for (var q = 0; q < prodRows2.length; q++) prodById2[String(prodRows2[q].id)] = prodRows2[q];
+    return { id: id, status: String(row.status || ''), needs: repairNeedsWithStock_(row, prodById2, poOutstanding_(), serialsAvailable_()) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* Every open need for these products, oldest first: who is waiting. */
+function needsForProducts_(productIds, repairRows) {
+  var want = Object.create(null);
+  for (var i = 0; i < productIds.length; i++) want[String(productIds[i])] = true;
+  var out = [];
+  for (var r = 0; r < repairRows.length; r++) {
+    var row = repairRows[r];
+    if (REPAIR_TERMINAL[String(row.status)]) continue;
+    var needs = itobjs_(row.needs_json);
+    for (var n = 0; n < needs.length; n++) {
+      if (!want[String(needs[n].productId || '')]) continue;
+      out.push({ row: row, index: n, need: needs[n] });
+    }
+  }
+  out.sort(function (a, b) { return String(a.need.addedAt || '').localeCompare(String(b.need.addedAt || '')); });
+  return out;
 }
 
 /* Fit a part, or take one back off.
@@ -6256,11 +6588,13 @@ function repairParts_(session, payload) {
     if (REPAIR_TERMINAL[String(row.status)]) throw statusError_(409, 'This ticket is closed');
 
     var parts = itobjs_(row.parts_json);
+    var needs = itobjs_(row.needs_json);
     var prodRows = readRows_('Products', PRODUCT_HEADERS);
     var prodById = {};
     for (var p = 0; p < prodRows.length; p++) prodById[String(prodRows[p].id)] = prodRows[p];
     var serialRows = readRows_('Serials', SERIAL_HEADERS);
     var stamp = new Date().toISOString();
+    var needsChanged = false;
     var productPatches = {};
     var serialPatches = {};
     var summary = '';
@@ -6328,19 +6662,37 @@ function repairParts_(session, payload) {
         added.push(line.name + (serial ? ' (' + serial + ')' : '') + ' x' + qty);
       }
       summary = 'Fitted ' + added.join(', ') + ' to ' + String(row.ticket_no || '');
+      /* fitting the part the job was waiting for answers the need */
+      if (payload.needIndex !== undefined && payload.needIndex !== null) {
+        var ni = Math.floor(num_(payload.needIndex));
+        if (!(ni >= 0 && ni < needs.length)) throw statusError_(400, 'No such line on this ticket');
+        summary += ' (it was waiting for ' + String(needs[ni].name || '') + ')';
+        needs.splice(ni, 1);
+        needsChanged = true;
+      }
     }
 
-    applyPatches_('Repairs', REPAIR_HEADERS, 'id', {
-      [id]: { parts_json: JSON.stringify(parts), updated_at: stamp },
-    });
+    var repairPatch = { parts_json: JSON.stringify(parts), updated_at: stamp };
+    if (needsChanged) {
+      repairPatch.needs_json = JSON.stringify(needs);
+      /* nothing left to wait for: the job is on the bench again, not waiting */
+      if (!needs.length && String(row.status) === 'awaiting_parts') {
+        repairPatch.status = 'in_progress';
+        summary += ' (awaiting_parts → in_progress)';
+      }
+    }
+    applyPatches_('Repairs', REPAIR_HEADERS, 'id', { [id]: repairPatch });
     if (Object.keys(productPatches).length) applyPatches_('Products', PRODUCT_HEADERS, 'id', productPatches);
     if (Object.keys(serialPatches).length) applyPatches_('Serials', SERIAL_HEADERS, 'id', serialPatches);
 
     logAudit_(session, 'repair.part', 'repair', id, summary, '');
 
     row.parts_json = JSON.stringify(parts);
+    if (needsChanged) row.needs_json = JSON.stringify(needs);
+    if (repairPatch.status) row.status = repairPatch.status;
     var t = repairTotals_(row);
-    return { id: id, parts: parts, partsTotal: t.parts, labourTotal: t.labour, total: t.total };
+    return { id: id, parts: parts, needs: repairNeedsWithStock_(row, prodById, poOutstanding_(), serialsAvailable_()),
+      partsTotal: t.parts, labourTotal: t.labour, total: t.total };
   } finally {
     lock.releaseLock();
   }

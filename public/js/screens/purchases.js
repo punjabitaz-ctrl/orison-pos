@@ -63,6 +63,12 @@ export function receiptOwed(order, taking) {
   return { goods: goodsC / 100, tax: taxShareC / 100, owed: (goodsC + taxShareC) / 100, closes };
 }
 
+export function benchOrderLines(board) {
+  return ((board && board.parts) || [])
+    .filter((p) => Number(p.shortfall) > 0)
+    .map((p) => ({ productId: p.productId, quantity: Number(p.shortfall), unitCost: Number(p.cost) || 0 }));
+}
+
 export function paymentLabel(state) {
   const m = PAYMENT_META[state] || PAYMENT_META.unpaid;
   return { label: $t(m.label), cls: m.cls };
@@ -107,6 +113,7 @@ export const screen = {
     let orders = [];
     let products = [];
     let payables = { suppliers: [], totalOwed: 0, totalOverdue: 0 };
+    let bench = { parts: [], ticketCount: 0, shortfallCount: 0 };
     let loadErr = '';
     const isAdmin = user.role === 'admin';
     const accountOf = (id) => payables.suppliers.find((s) => s.id === id) || null;
@@ -122,15 +129,17 @@ export const screen = {
       loadErr = '';
       root.innerHTML = `<div class="empty"><p>${$t('Loading…')}</p></div>`;
       try {
-        const [sup, ord, prods, pay] = await Promise.all([
+        const [sup, ord, prods, pay, bnc] = await Promise.all([
           api.get('/api/suppliers'),
           api.get('/api/purchase-orders'),
           api.get('/api/products'),
           api.get('/api/suppliers/payables'),
+          api.get('/api/repairs/needs'),
         ]);
         suppliers = sup.suppliers || [];
         orders = ord.orders || [];
         payables = pay || payables;
+        bench = bnc || bench;
         products = (prods || []).filter((p) => p.itemType === 'product');
       } catch (err) {
         loadErr = (err && err.offline) ? $t('Offline — purchases need the server') : $t('Failed to load purchases');
@@ -171,6 +180,28 @@ export const screen = {
           </div>` : `<p class="muted">${$t('No suppliers yet — add one to place a purchase order.')}</p>`}
         </section>
 
+        ${bench.parts.length ? `
+        <section class="po-block po-bench">
+          <h3>${$t('The bench is waiting for')}</h3>
+          <p class="muted">${esc($tn('{n} repair is waiting on parts', '{n} repairs are waiting on parts', bench.ticketCount))}</p>
+          <div class="po-plain">
+            ${bench.parts.map((p) => `
+              <div class="po-bench-row${p.shortfall > 0 ? ' po-bench-short' : ''}">
+                <div class="po-bench-main">
+                  <strong>${esc(p.name)}</strong>
+                  <span class="muted">${esc(p.sku || '')} · ${esc($tn('{n} job', '{n} jobs', p.tickets.length))}: ${esc(p.tickets.map((t) => t.ticketNo).join(', '))}</span>
+                </div>
+                <div class="po-bench-right">
+                  <span class="muted">${esc($t('need {needed} · {onHand} here · {onOrder} on order', { needed: p.needed, onHand: p.onHand, onOrder: p.onOrder }))}</span>
+                  ${p.shortfall > 0
+                    ? `<strong class="po-chip overdue">${esc($t('{n} to order', { n: p.shortfall }))}</strong>`
+                    : `<strong class="po-chip ${p.ready ? 'received' : 'ordered'}">${p.ready ? $t('On the shelf') : $t('On order')}</strong>`}
+                </div>
+              </div>`).join('')}
+          </div>
+          ${bench.shortfallCount > 0 ? `<button class="btn btn-sm btn-primary" id="poBenchOrder">${$t('Order what is short')}</button>` : ''}
+        </section>` : ''}
+
         <section class="po-block">
           <h3>${$t('Purchase orders')}</h3>
           ${orders.length ? `
@@ -198,6 +229,8 @@ export const screen = {
 
       const newBtn = root.querySelector('#poNew');
       if (newBtn) newBtn.addEventListener('click', () => newPoModal(false));
+      const benchBtn = root.querySelector('#poBenchOrder');
+      if (benchBtn) benchBtn.addEventListener('click', () => newPoModal(false, benchOrderLines(bench)));
       const addBtn = root.querySelector('#poAddSupplier');
       if (addBtn) addBtn.addEventListener('click', addSupplierModal);
       root.querySelectorAll('[data-po]').forEach((el) => {
@@ -396,7 +429,7 @@ export const screen = {
       linesEl.appendChild(row);
     }
 
-    function newPoModal(saveAsOrdered) {
+    function newPoModal(saveAsOrdered, prefill) {
       const m = openModal(`
         <h3>${$t('New purchase order')}</h3>
         <div class="form-grid">
@@ -436,7 +469,9 @@ export const screen = {
         </div>
       `);
       const linesEl = m.querySelector('#poLines');
-      addLineRow(linesEl);
+      const forBench = Array.isArray(prefill) && prefill.length > 0;
+      if (forBench) prefill.forEach((line) => addLineRow(linesEl, line));
+      else addLineRow(linesEl);
       m.querySelector('#poAddLine').addEventListener('click', () => addLineRow(linesEl));
 
       function recalc() {
@@ -483,8 +518,11 @@ export const screen = {
             taxAmount: Number(m.querySelector('#poTax').value) || 0,
             note: m.querySelector('#poNote').value.trim(),
             status,
+            linkNeeds: forBench,
           });
-          toast($t('{number} saved', { number: res.poNumber }), 'ok');
+          toast(res.linkedNeeds
+            ? $t('{number} saved — {n} waiting job(s) now say it is on order', { number: res.poNumber, n: res.linkedNeeds })
+            : $t('{number} saved', { number: res.poNumber }), 'ok');
           beep('ok');
           closeModal();
           await load();
@@ -637,6 +675,9 @@ export const screen = {
           const res = await api.post('/api/purchase-orders/receive', { id: ord.id, lines });
           closeModal();
           toast($t('Receipt posted — {amount} owed', { amount: fmt(res.receivedValue) }), 'ok');
+          if ((res.unblocked || []).length) {
+            toast($t('{jobs} can go ahead now', { jobs: res.unblocked.map((u) => u.ticketNo).join(', ') }), 'ok');
+          }
           beep('ok');
           await load();
         } catch (err) {

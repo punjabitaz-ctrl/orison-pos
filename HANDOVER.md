@@ -13,9 +13,9 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.49.0** — a delivery is owed what the invoice will say: order discount and tax (`2026-09-17`) |
+| Current version | **v1.50.0** — parts a job is waiting for: ticket → purchase order → back to the bench (`2026-09-22`) |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
-| Validation bar | `backend-sim` **PASS 1089 / FAIL 0** · client units **PASS 545 / FAIL 0** · demo **PASS 30 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Validation bar | `backend-sim` **PASS 1126 / FAIL 0** · client units **PASS 557 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -127,6 +127,26 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.50.0** Parts a job is waiting for (repairs → purchase orders → bench).
+  - Repairs column `needs_json`; `/api/repairs/needs` (board with no payload,
+    add/remove with one), `repairNeedsBoard_` / `repairNeedsWithStock_` /
+    `needsForProducts_`, and `poOutstanding_` / `serialsAvailable_` /
+    `stockOnHand_` for what is here and what is coming.
+  - `/api/repairs/parts` takes `needIndex`: fitting answers the need in the
+    same lock. `/api/purchase-orders` takes `linkNeeds` (stamps `poId` /
+    `orderedAt` on every open need for a product on the order); `/cancel`
+    clears the stamp; `/receive` returns `unblocked`, oldest need first and
+    only as far as the delivery covers.
+  - Client: Repairs *Waiting on parts* section + `needState()`; Purchases
+    *The bench is waiting for* card + `benchOrderLines()`; audit filter
+    `repair.need`.
+  - **Design decision:** a need reserves nothing. The part can still be sold
+    at the counter; the board shows on-hand against what the bench wants so
+    the clash is visible. Reserving stock for a job would be a separate
+    feature and needs the owner's call.
+  - Recording the first part moves intake/diagnosed → `awaiting_parts`;
+    fitting the last one moves `awaiting_parts` → `in_progress`.
+  - 37 sim checks + 10 client checks, 9 mutations caught.
 - **v1.49.0** What a delivery is owed: the order's discount and tax.
   - `poDiscountPct_` / `poNetGoodsC_` / `poTaxShareC_`; receiving allocates both
     **cumulatively** (owing after this delivery − owing before), so deliveries of
@@ -612,7 +632,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **1089 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **1126 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0

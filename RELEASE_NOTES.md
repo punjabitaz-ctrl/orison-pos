@@ -7,7 +7,45 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.49.0 — a delivery is owed what the invoice will say
+## Latest: v1.50.0 — parts a job is waiting for
+
+**2026-09-22.**
+
+- **A repair ticket now records the parts it is waiting for**, instead of just
+  saying *Awaiting parts* and leaving the rest in someone's head.
+- **Each line says where the part is**: on the shelf, on order (with the order
+  number and the date it is due), or nobody has ordered it yet.
+- **Purchases shows the whole bench** — every waiting job's parts grouped by
+  part, with what is needed, what is here, what is coming and how short the
+  shop is. One button raises a purchase order for the shortfall.
+- **Raising that order marks the jobs waiting on it**, so the ticket says
+  *on order, PO-0004, due Friday*. Cancelling the order puts them back.
+- **Receiving stock names the jobs it frees**, oldest request first.
+- **Fit it** puts the part on the job and clears the line in one tap; the last
+  one moves the ticket off *Awaiting parts* on its own.
+- **Nothing is reserved**: the part can still be sold at the counter. The
+  board makes the clash visible rather than hiding stock from a customer.
+
+**Validation:** backend-sim **PASS 1126 / FAIL 0** · client units **PASS 557 /
+FAIL 0** · demo **PASS 32 / FAIL 0**.
+- Nine mutations confirm the tests bite: the order not marking the jobs, a
+  cancelled order keeping its mark, every waiting job reported whatever
+  arrived, the fitted part not clearing its line, the shortfall ignoring what
+  is on order, closed tickets staying on the board, the ticket not moving to
+  *Awaiting parts*, jobs answered newest-first instead of oldest, and the
+  ticket left waiting after its last part was fitted.
+- Checked in the browser: recorded a part on a ticket, ordered the shortfall
+  from Purchases, saw the ticket say which order it is on, received it, and
+  fitted it from the ticket.
+
+### Deploying
+
+**Backend redeploy required.** The new Repairs column is added on first use.
+Nothing to run. The demo updates itself.
+
+---
+
+## v1.49.0 — a delivery is owed what the invoice will say
 
 **2026-09-17.**
 

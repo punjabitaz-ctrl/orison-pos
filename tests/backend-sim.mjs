@@ -5068,6 +5068,134 @@ check('statement carries the changer/cashier',
     && sandbox.poTaxShareC_({ discount_pct: 0, subtotal: 100, tax_amount: 9 }, 12000) === 900);
 }
 {
+  section('parts a job is waiting for (v1.50.0)');
+
+  const nAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const nMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const nCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+
+  const nSup = req('/api/suppliers', { name: 'Bench Parts Co', paymentTerms: 'Net 14' }, { session: nAdm }).data.id;
+  const mkPart = (name, sku, o) => req('/api/admin/products', {
+    name, sku, category: 'Parts', costPrice: (o || {}).cost || 10, retailPrice: (o || {}).retail || 40,
+    isSerialized: !!(o || {}).serialized, onHand: (o || {}).onHand || 0,
+  }, { session: nAdm }).data.id;
+  const screen = mkPart('Bench Screen 13', 'BP-SCR-13', { cost: 40, retail: 120 });
+  const battery = mkPart('Bench Battery 13', 'BP-BAT-13', { cost: 12, retail: 45 });
+  const fitting = req('/api/admin/products', { name: 'Bench Fitting', sku: 'BP-FIT', category: 'Parts',
+    costPrice: 0, retailPrice: 25, itemType: 'service', onHand: 0 }, { session: nAdm }).data.id;
+
+  const ticket = (name, fault) => req('/api/repairs', {
+    customerName: name, customerPhone: '07700 900000', deviceMake: 'Apple', deviceModel: 'iPhone 13',
+    reportedFault: fault,
+  }, { session: nCash }).data;
+  const jobA = ticket('Needs Ayesha', 'Screen smashed');
+  const jobB = ticket('Needs Bilal', 'Screen smashed too');
+
+  const needs = (body, session) => req('/api/repairs/needs', body, { session: session || nCash });
+  const board = (session) => req('/api/repairs/needs', {}, { session: session || nCash }).data;
+  const detail = (id) => req('/api/repairs/detail', {}, { session: nCash, params: { id } }).data;
+
+  /* ---- recording what a job is waiting for ---- */
+  const wantA = needs({ id: jobA.id, add: [{ productId: screen, quantity: 1, note: 'Black, with frame' }] });
+  check('a cashier can record what a job is waiting for', wantA.ok === true, JSON.stringify(wantA.data));
+  check('the need comes back with where the part stands: none here, none on order',
+    wantA.data.needs.length === 1 && wantA.data.needs[0].onHand === 0 && wantA.data.needs[0].onOrder === 0
+    && wantA.data.needs[0].canFit === false && wantA.data.needs[0].note === 'Black, with frame', JSON.stringify(wantA.data.needs));
+  check('and the ticket says so on the board: intake → awaiting parts',
+    wantA.data.status === 'awaiting_parts' && detail(jobA.id).status === 'awaiting_parts');
+  check('the ticket carries how many parts it waits for',
+    req('/api/repairs', {}, { session: nCash, params: { q: 'Ayesha' } }).data.repairs[0].needsCount === 1);
+
+  check('a part has to be a part: a service is not something to wait for',
+    needs({ id: jobA.id, add: [{ productId: fitting, quantity: 1 }] }).status === 400);
+  check('an unknown product is refused', needs({ id: jobA.id, add: [{ productId: 'nope', quantity: 1 }] }).status === 400);
+  check('the same part twice on one ticket is refused, not doubled',
+    needs({ id: jobA.id, add: [{ productId: screen, quantity: 1 }] }).status === 409);
+  check('an empty list is refused', needs({ id: jobA.id, add: [] }).status === 400);
+  check('an unknown ticket is a 404', needs({ id: 'nope', add: [{ productId: screen, quantity: 1 }] }).status === 404);
+
+  needs({ id: jobB.id, add: [{ productId: screen, quantity: 1 }, { productId: battery, quantity: 2 }] });
+
+  /* ---- the board: what the bench is short of ---- */
+  let bd = board();
+  const partOf = (b, id) => b.parts.find((p) => p.productId === id) || {};
+  check('the board groups what is wanted by part, across tickets',
+    partOf(bd, screen).needed === 2 && partOf(bd, screen).tickets.length === 2 && bd.ticketCount === 2, JSON.stringify(bd.parts.map((p) => [p.sku, p.needed])));
+  check('it says what is on the shelf, what is on its way, and how short the shop is',
+    partOf(bd, screen).onHand === 0 && partOf(bd, screen).onOrder === 0 && partOf(bd, screen).shortfall === 2
+    && partOf(bd, battery).shortfall === 2 && bd.shortfallCount === 2, JSON.stringify(bd.parts.map((p) => [p.sku, p.shortfall])));
+  check('the oldest ticket waiting is named first',
+    partOf(bd, screen).tickets[0].ticketNo === jobA.ticketNo, JSON.stringify(partOf(bd, screen).tickets.map((t) => t.ticketNo)));
+  check('the part carries its cost, so an order can be raised from it', partOf(bd, screen).cost === 40);
+
+  /* ---- ordering it ---- */
+  const bpo = req('/api/purchase-orders', {
+    supplierId: nSup, status: 'ORDERED', expectedDate: '2026-10-09', linkNeeds: true,
+    lines: [{ productId: screen, quantity: 2, unitCost: 40 }],
+  }, { session: nMgr }).data;
+  check('raising the order stamps the needs it covers', bpo.linkedNeeds === 2, JSON.stringify(bpo));
+  const nd = detail(jobA.id).needs[0];
+  check('so the ticket says which order it is on, and when it is due',
+    nd.poNumber === bpo.poNumber && nd.expectedDate === '2026-10-09' && nd.onOrder === 2 && !!nd.orderedAt, JSON.stringify(nd));
+  bd = board();
+  check('and the board is no longer short of it', partOf(bd, screen).shortfall === 0 && partOf(bd, screen).onOrder === 2);
+  check('the battery nobody ordered is still short', partOf(bd, battery).shortfall === 2 && bd.shortfallCount === 1);
+  check('ordering for the bench is audited on the order',
+    req('/api/audit', {}, { session: nAdm, params: { action: 'po.create' } }).data.entries.some((e) => /for the bench/.test(e.summary)));
+
+  /* ---- an order that goes away leaves the bench waiting again ---- */
+  const dead = req('/api/purchase-orders', { supplierId: nSup, status: 'ORDERED', linkNeeds: true,
+    lines: [{ productId: battery, quantity: 2, unitCost: 12 }] }, { session: nMgr }).data;
+  check('the battery is on order too', detail(jobB.id).needs.some((n) => n.productId === battery && n.poNumber === dead.poNumber));
+  req('/api/purchase-orders/cancel', { id: dead.id }, { session: nAdm });
+  check('cancelling the order takes the stamp off the ticket',
+    detail(jobB.id).needs.every((n) => n.productId !== battery || (!n.poNumber && !n.poId)), JSON.stringify(detail(jobB.id).needs));
+  check('and the board is short of it again', partOf(board(), battery).shortfall === 2);
+
+  /* ---- receiving it says which jobs can go ahead ---- */
+  const oneIn = req('/api/purchase-orders/receive', { id: bpo.id, lines: [{ productId: screen, quantity: 1 }] }, { session: nMgr }).data;
+  check('one screen arrives, so only the job that asked first can go ahead',
+    oneIn.unblocked.length === 1 && oneIn.unblocked[0].ticketNo === jobA.ticketNo && oneIn.unblocked[0].name === 'Bench Screen 13',
+    JSON.stringify(oneIn.unblocked));
+  check('freeing a bench job is on the receipt in the audit log',
+    req('/api/audit', {}, { session: nAdm, params: { action: 'po.receive' } }).data.entries.some((e) => /frees 1 bench job/.test(e.summary)));
+  check('the waiting ticket can see the part is here now',
+    detail(jobA.id).needs[0].onHand === 1 && detail(jobA.id).needs[0].canFit === true);
+  check('nothing is reserved: the other ticket can see that unit too, until someone fits it',
+    detail(jobB.id).needs.find((n) => n.productId === screen).canFit === true);
+
+  /* ---- fitting it clears the need ---- */
+  const fitted = req('/api/repairs/parts', { id: jobA.id, needIndex: 0,
+    add: [{ productId: screen, quantity: 1, unitPrice: 120 }] }, { session: nCash });
+  check('fitting the part it waited for takes it off the list', fitted.ok === true && fitted.data.needs.length === 0 && fitted.data.parts.length === 1, JSON.stringify(fitted.data));
+  check('once it is fitted the other ticket is waiting again',
+    detail(jobB.id).needs.find((n) => n.productId === screen).canFit === false
+    && detail(jobB.id).needs.find((n) => n.productId === screen).onHand === 0);
+  check('with nothing left to wait for, the job is back on the bench',
+    detail(jobA.id).status === 'in_progress', detail(jobA.id).status);
+  check('and it is off the board with it', !board().parts.some((p) => p.productId === screen && p.tickets.some((t) => t.ticketNo === jobA.ticketNo)));
+  check('the fit says it answered a need in the audit log',
+    req('/api/audit', {}, { session: nAdm, params: { action: 'repair.part' } }).data.entries.some((e) => /it was waiting for/.test(e.summary)));
+  check('a part that is not there still cannot be fitted, and the need stays',
+    req('/api/repairs/parts', { id: jobB.id, needIndex: 0, add: [{ productId: screen, quantity: 1, unitPrice: 120 }] }, { session: nCash }).status === 409
+    && detail(jobB.id).needs.length === 2);
+  const inStock = mkPart('Bench Clip', 'BP-CLIP', { cost: 1, retail: 5, onHand: 5 });
+  check('a need index that is not on the ticket is refused, and nothing is fitted',
+    req('/api/repairs/parts', { id: jobB.id, needIndex: 9, add: [{ productId: inStock, quantity: 1, unitPrice: 5 }] }, { session: nCash }).status === 400
+    && detail(jobB.id).parts.length === 0
+    && req('/api/products', {}, { session: nCash }).data.find((p) => p.id === inStock).onHand === 5);
+
+  /* ---- dropping a line, and closing a ticket ---- */
+  const dropped = needs({ id: jobB.id, removeIndex: 0 });
+  check('a line can be dropped when it turns out not to be needed', dropped.ok === true && dropped.data.needs.length === 1);
+  check('dropping a line that is not there is refused', needs({ id: jobB.id, removeIndex: 5 }).status === 400);
+  req('/api/repairs/status', { id: jobB.id, status: 'cancelled', note: 'Customer took it elsewhere' }, { session: nMgr });
+  check('a closed ticket is off the board, however much it was waiting for',
+    !board().parts.some((p) => p.tickets.some((t) => t.ticketNo === jobB.ticketNo)), JSON.stringify(board().parts.map((p) => p.tickets.map((t) => t.ticketNo))));
+  check('and it takes no more needs', needs({ id: jobB.id, add: [{ productId: battery, quantity: 1 }] }).status === 409);
+  check('waiting for a part is audited', req('/api/audit', {}, { session: nAdm, params: { action: 'repair.need' } }).data.entries.length >= 3);
+}
+{
   section('marketplace sync from a Google Sheet (v1.42.0)');
 
   const kAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;

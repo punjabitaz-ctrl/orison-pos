@@ -5,6 +5,43 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.0] — 2026-09-22
+
+### Added
+
+- **Parts a job is waiting for.** A repair that needed a part the shop did not
+  have could only be marked *Awaiting parts*: what it was waiting for lived in
+  the technician's head, Purchases could not see it, and when the box arrived
+  nobody knew which job it freed.
+  - **On the ticket** (*Waiting on parts*): record the part, how many, and a
+    note ("black, with frame"). Each line says where the part actually is —
+    *On the shelf*, *On order* with the order number and its expected date, or
+    *Nobody has ordered it*.
+  - Recording the first part moves a ticket at intake or diagnosed to
+    **Awaiting parts**, so the board says what the job is doing.
+  - **Fit it** takes the part off the shelf onto the job in one tap, and the
+    line comes off the waiting list with it. Fitting the last one moves the
+    ticket from *Awaiting parts* back to *On the bench*.
+  - **In Purchases** (*The bench is waiting for*): every open job's parts,
+    grouped by part, with what is needed, what is on the shelf, what is on
+    order and how short the shop is — and which tickets are waiting.
+    **Order what is short** opens a purchase order filled in from it.
+  - **Raising that order marks the jobs**, so each ticket shows the order it
+    is on and when it is due. Cancelling the order puts them back to waiting.
+  - **Receiving stock says which jobs can go ahead**, oldest request first and
+    only as far as the delivery actually covers.
+  - `/api/repairs/needs` (any signed-in role: it is the bench's own list).
+    Without a payload it returns the whole board; with one it adds or drops a
+    line. `/api/repairs/parts` takes a `needIndex` to answer a need as it
+    fits. `/api/purchase-orders` takes `linkNeeds`; `/receive` returns
+    `unblocked`. New Repairs column `needs_json`. Audited as `repair.need`.
+  - **Nothing is reserved.** A part a job is waiting for can still be sold at
+    the counter — the board shows what is on the shelf against what the bench
+    wants so the clash is visible, rather than quietly holding stock back from
+    a paying customer.
+- **Demo:** two jobs on the bench are waiting for parts — an iPhone screen
+  that is on the order due Friday, and a Pixel charge port nobody has ordered.
+
 ## [1.49.0] — 2026-09-17
 
 ### Fixed

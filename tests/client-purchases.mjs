@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { paymentProblem, paymentLabel, PAY_METHODS, receiptOwed } from '../public/js/screens/purchases.js';
+import { paymentProblem, paymentLabel, PAY_METHODS, receiptOwed, benchOrderLines } from '../public/js/screens/purchases.js';
 
 test('paymentProblem() - what a supplier payment needs', async (t) => {
   await t.test('a complete bank transfer is fine', () => {
@@ -65,5 +65,26 @@ test('receiptOwed() - what this delivery will be owed', async (t) => {
   });
   await t.test('more than is outstanding is never counted', () => {
     assert.equal(receiptOwed(discounted({ case: 8 }), { case: 99 }).goods, 18);
+  });
+});
+
+test('benchOrderLines() - ordering what the bench is short of', async (t) => {
+  const board = { parts: [
+    { productId: 'scr', shortfall: 2, cost: 40, needed: 2, onHand: 0, onOrder: 0 },
+    { productId: 'bat', shortfall: 0, cost: 12, needed: 1, onHand: 1, onOrder: 0 },
+    { productId: 'cbl', shortfall: 3, cost: 0, needed: 3, onHand: 0, onOrder: 0 },
+  ] };
+  await t.test('only the parts nobody can cover are ordered', () => {
+    assert.deepEqual(benchOrderLines(board).map((l) => l.productId), ['scr', 'cbl']);
+  });
+  await t.test('each line asks for the shortfall, at the part cost', () => {
+    assert.deepEqual(benchOrderLines(board)[0], { productId: 'scr', quantity: 2, unitCost: 40 });
+  });
+  await t.test('a part with no cost on file still orders, at zero', () => {
+    assert.equal(benchOrderLines(board)[1].unitCost, 0);
+  });
+  await t.test('an empty or missing board orders nothing', () => {
+    assert.deepEqual(benchOrderLines({ parts: [] }), []);
+    assert.deepEqual(benchOrderLines(null), []);
   });
 });

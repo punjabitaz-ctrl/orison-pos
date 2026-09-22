@@ -64,6 +64,8 @@ export function seedDemo(rt, { now = new Date() } = {}) {
   mk({ name: 'Screen Protector Install', sku: 'SV-SCREENPROT', category: 'Services', retailPrice: 15, itemType: 'service' });
   mk({ name: 'Data Transfer & Setup', sku: 'SV-SETUP', category: 'Services', retailPrice: 35, itemType: 'service' });
   mk({ name: 'Tempered Glass Screen Protector', sku: 'AC-GLASS', category: 'Accessories', costPrice: 3, retailPrice: 19, onHand: 60 });
+  mk({ name: 'iPhone 12 Screen Assembly', sku: 'RP-SCR-IP12', category: 'Repair parts', costPrice: 62, retailPrice: 149, onHand: 0 });
+  mk({ name: 'Pixel 7 Charge Port Flex', sku: 'RP-PORT-P7', category: 'Repair parts', costPrice: 14, retailPrice: 49, onHand: 0 });
   mk({ name: 'Clear Phone Case', sku: 'AC-CASE-CLR', category: 'Accessories', costPrice: 4, retailPrice: 24, onHand: 45 });
   const usedPhone = mk({ name: 'Apple iPhone 13 128GB (Used)', sku: 'PU-IP13-128', category: 'Pre-owned', costPrice: 0, retailPrice: 429, isSerialized: true, warrantyDays: 30 });
   mk({ name: 'Samsung Galaxy S22 (Used)', sku: 'PU-S22-128', category: 'Pre-owned', costPrice: 0, retailPrice: 329, isSerialized: true, warrantyDays: 30 });
@@ -188,25 +190,31 @@ export function seedDemo(rt, { now = new Date() } = {}) {
   const fiveWeeks = new Date(now.getTime() - 35 * 86400000).toISOString();
   rt.call('applyPatches_', 'Transactions', rt.get('TX_HEADERS'), 'id', Object.fromEntries(received.map((r) => [r.id, { created_at: fiveWeeks }])));
   req(adm, '/api/suppliers/payment', { supplierId: supplier.id, poId: po1.id, amount: 100, method: 'bank', reference: 'TRF 44810', note: 'Part payment' });
-  const expected = new Date(now.getTime() + 3 * 86400000).toISOString().slice(0, 10);
-  /* that one is on 5% trade terms with tax on the invoice, so receiving it
-     shows what a delivery is really owed */
-  req(mgr, '/api/purchase-orders', { supplierId: supplier.id, status: 'ORDERED', expectedDate: expected, note: 'Phones for the weekend',
-    discountPct: 5, taxAmount: 35,
-    lines: [{ productId: bySku(list, 'PH-G62-128').id, quantity: 2, unitCost: 399 }, { productId: bySku(list, 'AU-BOSEQC45').id, quantity: 4, unitCost: 279 }] });
 
   /* the counter today: a till shift open, repairs on the bench, a trade-in */
   req(session.amara, '/api/shifts/open', { openingFloat: 200, note: 'Morning float' });
   const glass = req(session.amara, '/api/repairs', { customerId: cust.maya, customerName: 'Maya Patel', customerPhone: '(732) 555-0187',
     deviceMake: 'Apple', deviceModel: 'iPhone 12', deviceSerial: '353918104455667', reportedFault: 'Cracked screen, touch works', estimateTotal: 189, accessories: 'Case' });
   req(session.amara, '/api/repairs/deposit', { id: glass.id, amount: 50 });
-  req(mgr, '/api/repairs/status', { id: glass.id, status: 'awaiting_parts', note: 'Screen ordered' });
+  req(session.amara, '/api/repairs/needs', { id: glass.id,
+    add: [{ productId: bySku(products(), 'RP-SCR-IP12').id, quantity: 1, note: 'Black, with frame' }] });
   const battery = req(session.diego, '/api/repairs', { customerId: cust.james, customerName: 'James Okafor', customerPhone: '(908) 555-0123',
     deviceMake: 'Samsung', deviceModel: 'Galaxy S21', reportedFault: 'Battery drains by lunchtime', estimateTotal: 89 });
   req(mgr, '/api/repairs/labour', { id: battery.id, add: { description: 'Battery replacement', amount: 89 } });
   req(mgr, '/api/repairs/status', { id: battery.id, status: 'ready', note: 'Tested, holds charge' });
-  req(session.diego, '/api/repairs', { customerId: cust.grace, customerName: 'Grace Kim', customerPhone: '(732) 555-0198',
+  const pixel = req(session.diego, '/api/repairs', { customerId: cust.grace, customerName: 'Grace Kim', customerPhone: '(732) 555-0198',
     deviceMake: 'Google', deviceModel: 'Pixel 7', reportedFault: 'Will not charge', estimateTotal: 0 });
+  /* nobody has ordered this one yet: it is what the Purchases bench card is for */
+  req(session.diego, '/api/repairs/needs', { id: pixel.id,
+    add: [{ productId: bySku(products(), 'RP-PORT-P7').id, quantity: 1, note: 'Charging flex, not the board' }] });
+
+  const expected = new Date(now.getTime() + 3 * 86400000).toISOString().slice(0, 10);
+  /* that one is on 5% trade terms with tax on the invoice, so receiving it
+     shows what a delivery is really owed */
+  req(mgr, '/api/purchase-orders', { supplierId: supplier.id, status: 'ORDERED', expectedDate: expected, note: 'Phones for the weekend',
+    discountPct: 5, taxAmount: 35, linkNeeds: true,
+    lines: [{ productId: bySku(list, 'PH-G62-128').id, quantity: 2, unitCost: 399 }, { productId: bySku(list, 'AU-BOSEQC45').id, quantity: 4, unitCost: 279 },
+      { productId: bySku(list, 'RP-SCR-IP12').id, quantity: 1, unitCost: 62 }] });
 
   req(mgr, '/api/tradein', { customerId: cust.omar, productId: usedPhone, serialNumber: '356112233445566', condition: 'good',
     notes: 'Battery 88%, light scratches', amount: 260, paidBy: 'store_credit', idType: 'driving_licence', idRef: '7731' });

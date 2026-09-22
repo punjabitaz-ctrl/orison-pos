@@ -185,6 +185,7 @@ web-accessible status page without app load.
 | Add a supplier | Purchases → Suppliers → *Add supplier* (**admin only** since v1.23.0). |
 | Order stock | Purchases → *New PO* → lines with quantities + unit costs → Save draft / Place order (admin/manager). Cancelling a PO is admin only. |
 | Receive a delivery | Purchases → order → *Receive* → enter what arrived (serials for serialized lines); the dialog shows what the delivery will be owed (stock + tax) before you post. Stock comes in at the order cost **less the order's discount**; the order's tax is owed to the supplier but reclaimed, not added to stock cost. Deliveries of one order always add up to the order's total. |
+| A job waiting for a part | Repairs → ticket → *Waiting on parts* → *Wait for a part*. It reserves nothing; it records what the job needs. Purchases → *The bench is waiting for* → *Order what is short* raises the order and marks those jobs. When the stock lands, the receipt names the jobs it frees, and *Fit it* on the ticket puts the part on the job. |
 | An order on trade terms | Put the discount and the invoice tax on the order when you raise it (*New PO* → Discount %, Tax). What the supplier is owed then matches their invoice. If the shop cannot reclaim purchase tax, leave Tax at zero and build it into the line costs instead. |
 | Reprice / count stock | Products → Tools → *Bulk price* or *Stock take* (**admin only**). |
 | See why a price changed | Products → 📈 on any item (admin/manager). |

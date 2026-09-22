@@ -914,6 +914,18 @@ background: var(--card);
 .po-detail-main, .po-detail-right { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .po-detail-right { align-items: flex-end; }
 .po-recv-lines { display: flex; flex-direction: column; gap: 12px; margin: 10px 0; max-height: 46vh; overflow-y: auto; }
+.po-bench-row { display: flex; justify-content: space-between; gap: 12px; align-items: center;
+  padding: 10px 12px; border-block-end: 1px solid var(--line); }
+.po-bench-row:last-child { border-block-end: 0; }
+.po-bench-main { display: flex; flex-direction: column; gap: 2px; min-inline-size: 0; }
+.po-bench-main .muted { overflow-wrap: anywhere; }
+.po-bench-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: end; }
+.po-bench-short { background: color-mix(in srgb, var(--warn) 7%, transparent); }
+.po-bench .btn { margin-block-start: 10px; }
+.need-here { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.need-ordered { background: color-mix(in srgb, var(--navy-3) 12%, transparent); color: var(--navy-3); }
+.need-short { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+
 .po-recv-owed { margin-block-start: 10px; }
 .po-recv-owed strong { white-space: nowrap; }
 

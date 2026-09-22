@@ -40,6 +40,14 @@ export const REPAIR_FLOW = [
 const CLOSED = new Set(['collected', 'cancelled', 'unrepairable', 'voided']);
 const OPEN_ORDER = ['intake', 'diagnosed', 'awaiting_parts', 'in_progress', 'ready'];
 
+export function needState(need) {
+  const n = need || {};
+  if (n.canFit) return { id: 'here', label: N_('On the shelf'), cls: 'need-here' };
+  if (n.poNumber) return { id: 'ordered', label: N_('On order'), cls: 'need-ordered' };
+  if (Number(n.onOrder) > 0) return { id: 'coming', label: N_('On order'), cls: 'need-ordered' };
+  return { id: 'none', label: N_('Nobody has ordered it'), cls: 'need-short' };
+}
+
 export function statusLabel(id) {
   const hit = REPAIR_FLOW.find((s) => s.id === id);
   if (hit) return $t(hit.label);
@@ -195,6 +203,28 @@ export const screen = {
         })
         : `<p class="muted">${$t('Nothing fitted yet.')}</p>`;
 
+      const needsHtml = (t.needs || []).length
+        ? dataTable({
+          head: [{ label: $t('Waiting for') }, { label: $t('Qty'), num: true }, { label: $t('Where it is') }, { label: '' }],
+          bodyHtml: t.needs.map((n, i) => {
+            const st = needState(n);
+            const where = [
+              n.poNumber ? $t('{number}{due}', { number: n.poNumber, due: n.expectedDate ? ' · ' + $t('due {date}', { date: n.expectedDate }) : '' }) : '',
+              $t('{n} on the shelf', { n: n.onHand }),
+            ].filter(Boolean).join(' · ');
+            return `
+            <tr>
+              <td>${esc(n.name)}${n.note ? `<br><span class="muted">${esc(n.note)}</span>` : ''}</td>
+              <td class="num">${esc(n.quantity)}</td>
+              <td><span class="po-chip ${st.cls}">${esc($t(st.label))}</span><br><span class="muted">${esc(where)}</span></td>
+              <td>${CLOSED.has(t.status) ? '' : `
+                ${n.canFit ? `<button class="btn btn-sm" data-fit-need="${i}">${$t('Fit it')}</button>` : ''}
+                <button class="cl-remove" data-drop-need="${i}" aria-label="${$t('Remove')}">✕</button>`}</td>
+            </tr>`;
+          }).join(''),
+        })
+        : `<p class="muted">${$t('Not waiting for anything.')}</p>`;
+
       const labourHtml = t.labour.length
         ? dataTable({
           head: [{ label: $t('Work') }, { label: $t('Amount'), num: true }, { label: '' }],
@@ -220,6 +250,9 @@ export const screen = {
           <p><span class="muted">${$t('Reported fault')}</span><br>${esc(t.reportedFault)}</p>
           ${t.conditionNote ? `<p><span class="muted">${$t('Condition at intake')}</span><br>${esc(t.conditionNote)}</p>` : ''}
           ${t.accessories ? `<p><span class="muted">${$t('Left with it')}</span><br>${esc(t.accessories)}</p>` : ''}
+
+          ${sectionHead({ title: $t('Waiting on parts'), asideHtml: CLOSED.has(t.status) ? '' : `<button class="btn btn-sm" id="rpAddNeed" type="button">${$t('Wait for a part')}</button>` })}
+          ${needsHtml}
 
           ${sectionHead({ title: $t('Parts'), asideHtml: CLOSED.has(t.status) ? '' : `<button class="btn btn-sm" id="rpAddPart" type="button">${$t('Fit a part')}</button>` })}
           ${partsHtml}
@@ -258,6 +291,11 @@ export const screen = {
       detail.querySelectorAll('[data-move]').forEach((b) => b.addEventListener('click', () => move(t, b.dataset.move)));
       detail.querySelectorAll('[data-drop-part]').forEach((b) => b.addEventListener('click', () => dropPart(t.id, Number(b.dataset.dropPart))));
       detail.querySelectorAll('[data-drop-lab]').forEach((b) => b.addEventListener('click', () => dropLabour(t.id, Number(b.dataset.dropLab))));
+      const addNeedBtn = detail.querySelector('#rpAddNeed');
+      if (addNeedBtn) addNeedBtn.addEventListener('click', () => needDialog(t.id));
+      detail.querySelectorAll('[data-drop-need]').forEach((b) => b.addEventListener('click', () => dropNeed(t.id, Number(b.dataset.dropNeed))));
+      detail.querySelectorAll('[data-fit-need]').forEach((b) => b.addEventListener('click', () => fitNeed(t.id, Number(b.dataset.fitNeed), t.needs[Number(b.dataset.fitNeed)])));
+
       const ap = detail.querySelector('#rpAddPart');
       if (ap) ap.addEventListener('click', () => partDialog(t.id));
       const al = detail.querySelector('#rpAddLab');
@@ -304,6 +342,91 @@ export const screen = {
         await api.post('/api/repairs/labour', { id, removeIndex: index });
         await openTicket(id);
       } catch (e) { toast((e && e.message) || $t('Could not remove that line'), 'err'); }
+    }
+
+    async function dropNeed(id, index) {
+      try {
+        await api.post('/api/repairs/needs', { id, removeIndex: index });
+        await openTicket(id);
+      } catch (e) { toast((e && e.message) || $t('Could not remove that line'), 'err'); }
+    }
+
+    async function fitNeed(id, index, need) {
+      if (!need) return;
+      try {
+        const all = await idb.getAll('products');
+        const prod = (all || []).find((p) => p.id === need.productId) || {};
+        let serialNumber = '';
+        if (prod.isSerialized) {
+          serialNumber = String(window.prompt($t('Which {name}? Enter the serial.', { name: need.name })) || '').trim();
+          if (!serialNumber) return;
+        }
+        await api.post('/api/repairs/parts', {
+          id,
+          needIndex: index,
+          add: [{ productId: need.productId, quantity: need.quantity, unitPrice: prod.retailPrice || 0, serialNumber }],
+        });
+        toast($t('Part fitted and taken off the shelf'), 'ok');
+        beep('ok');
+        await openTicket(id);
+      } catch (e) {
+        toast((e && e.message) || $t('Could not fit that part'), 'err');
+        beep('err');
+      }
+    }
+
+    function needDialog(id) {
+      const modal = openModal(`
+        <div class="form-modal">
+          <h3>${$t('Wait for a part')}</h3>
+          <p class="muted">${$t('This holds nothing back from the shop floor — it records what the job needs so it can be ordered.')}</p>
+          <div class="form-grid">
+            <div class="field"><span>${$t('How many')}</span>
+              <input id="rpNeedQty" inputmode="numeric" value="1"></div>
+            <div class="field"><span>${$t('Note')}</span>
+              <input id="rpNeedNote" placeholder="${$t('Colour, variant, anything the order needs')}"></div>
+          </div>
+          <div class="field"><span>${$t('Find the part')}</span>
+            <input id="rpNeedQ" type="search" placeholder="${$t('Name, SKU or barcode…')}" autocomplete="off"></div>
+          <div id="rpNeedHits" class="cust-results"></div>
+          <p id="rpNeedErr" class="login-err"></p>
+          <div class="row"><button class="btn btn-ghost" data-cancel type="button">${$t('Cancel')}</button></div>
+        </div>`);
+      const q = modal.querySelector('#rpNeedQ');
+      const hits = modal.querySelector('#rpNeedHits');
+      const err = modal.querySelector('#rpNeedErr');
+      modal.querySelector('[data-cancel]').addEventListener('click', closeModal);
+
+      q.addEventListener('input', async () => {
+        const term = q.value.trim().toLowerCase();
+        if (!term) { hits.innerHTML = ''; return; }
+        const all = await idb.getAll('products');
+        const found = (all || []).filter((p) => p.itemType !== 'service'
+          && (p.name.toLowerCase().includes(term)
+          || (p.sku || '').toLowerCase().includes(term)
+          || (p.upc || '').toLowerCase().includes(term))).slice(0, 8);
+        hits.innerHTML = found.map((p) => `
+          <button class="cust-row" data-pick="${esc(p.id)}" type="button">
+            ${esc(p.name)}<em class="muted">${esc(p.sku || '')} · ${esc($t('{n} on hand', { n: p.onHand }))}</em>
+          </button>`).join('') || `<p class="muted">${$t('Nothing matches.')}</p>`;
+        hits.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', async () => {
+          const p = found.find((x) => x.id === b.dataset.pick);
+          if (!p) return;
+          const quantity = Math.max(1, Math.floor(Number(modal.querySelector('#rpNeedQty').value) || 1));
+          try {
+            await api.post('/api/repairs/needs', {
+              id, add: [{ productId: p.id, quantity, note: modal.querySelector('#rpNeedNote').value.trim() }],
+            });
+            closeModal();
+            toast($t('Added to what this job is waiting for'), 'ok');
+            await openTicket(id);
+          } catch (e) {
+            err.textContent = (e && e.message) || $t('Could not add that part');
+            beep('err');
+          }
+        }));
+      });
+      q.focus();
     }
 
     function partDialog(id) {
