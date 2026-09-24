@@ -14,6 +14,7 @@ record of truth; every feature is one tagged revision.
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
 | Current version | **v1.50.0** — parts a job is waiting for: ticket → purchase order → back to the bench (`2026-09-22`) |
+| Gaps analysis | `docs/superpowers/specs/2026-09-24-gaps-analysis.md` — what a trading shop needs that v1.50.0 does not have, in the order I would build it |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
 | Validation bar | `backend-sim` **PASS 1126 / FAIL 0** · client units **PASS 557 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
