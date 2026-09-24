@@ -5,6 +5,26 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.53.0] — 2026-09-24
+
+### Added
+
+- **Serial / IMEI lifecycle trace** (`/api/serials/trace`, admin and manager):
+  one IMEI or serial number, and its whole working life on one timeline.
+  - **Every leg a serial has walked.** Intake (PO or trade-in, with the value
+    paid), the sales that carried that exact unit, refunds that brought it
+    back into stock, repair tickets filed against that device, and trade-ins
+    where the store bought it back — ordered oldest to newest from the ledger.
+  - **Immutable intake stamp.** Each serial now records when it entered the
+    store (`created_at`) on every intake path — PO receive, trade-in intake,
+    and manual serial entry. Buy-back of a unit already sold here keeps the
+    original intake stamp, so a bought-back serial is one serial, not two.
+  - **Screen and export.** The new Serial Trace screen (Stock & customers)
+    traces by IMEI or serial with a read-only step table; no bookkeeping
+    mutation, same role guard as stock health.
+- **Demo & tests:** the trade-in sim section now traces serials and asserts
+  the timeline shape, ordering, a single intake stamp, and the role guard.
+
 ## [1.52.0] — 2026-09-24
 
 ### Added

@@ -13,9 +13,9 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.52.0** — inventory velocity: sell-through, turnover and buy-again signals on the stock-health window (`2026-09-24`) |
+| Current version | **v1.53.0** — serial lifecycle trace: one IMEI, its whole working life (intake, sales, refunds, repairs, trade-ins) on one timeline (`2026-09-24`) |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
-| Validation bar | `backend-sim` **PASS 1166 / FAIL 0** · client units **PASS 572 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Validation bar | `backend-sim` **PASS 1172 / FAIL 0** · client units **PASS 572 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -127,6 +127,18 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.53.0** Serial lifecycle trace (`/api/serials/trace`, admin/manager): one
+  IMEI or serial, its whole working life on one timeline - intake (PO or
+  trade-in, at the value paid), the sales that carried that exact unit,
+  refunds/restocks, repair tickets, and trade-ins where the store bought it
+  back. Serials gain an immutable `created_at` intake stamp on every intake
+  path (PO receive, trade-in, manual add); a bought-back serial keeps its
+  original stamp, so it is one intake, not two. New Serial Trace screen in
+  Stock & customers, read-only.
+- **v1.52.0** Inventory velocity: sell-through, turnover and buy-again signals
+  on the stock-health window (read-only).
+- **v1.51.0** Stock health: shelf value at retail and cost, per-product
+  movement, slow/dead flags (read-only).
 - **v1.50.0** Parts a job is waiting for (repairs → purchase orders → bench).
   - Repairs column `needs_json`; `/api/repairs/needs` (board with no payload,
     add/remove with one), `repairNeedsBoard_` / `repairNeedsWithStock_` /

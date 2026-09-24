@@ -4722,6 +4722,29 @@ check('statement carries the changer/cashier',
     const e = req('/api/audit', {}, { session: tAdm, params: { action: 'tradein.create' } }).data.entries;
     return e.length === 3 && e.some((x) => /approved by/.test(x.summary));
   })());
+
+  /* serial lifecycle trace (v1.53.0) */
+  const tr1 = req('/api/serials/trace', {}, { session: tAdm, params: { q: 'TI-IMEI-1' } }).data;
+  check('trace finds the serial and lists its legs oldest to newest',
+    tr1.found === true
+    && tr1.steps.length >= 2
+    && tr1.steps[0].kind === 'intake'
+    && tr1.steps[0].source === 'tradein'
+    && tr1.steps.some((s) => s.kind === 'sale')
+    && tr1.steps.every((s, i) => i === 0 || new Date(tr1.steps[i - 1].date).getTime() <= new Date(s.date).getTime()),
+    JSON.stringify(tr1.steps));
+  check('the trade-in intake carries the value the shop paid',
+    tr1.steps[0].kind === 'intake' && tr1.steps[0].money === 180, JSON.stringify(tr1.steps[0]));
+  check('a bought-back serial is still one serial: no re-intake leg appears',
+    (() => {
+      const tr2 = req('/api/serials/trace', {}, { session: tAdm, params: { q: 'TI-NEW-1' } }).data;
+      return tr2.found === true && tr2.steps.filter((s) => s.kind === 'intake').length === 1
+        && tr2.steps.some((s) => s.kind === 'sale') && tr2.steps.some((s) => s.kind === 'tradein')
+        && tr2.steps.some((s) => s.kind === 'restock');
+    })(), 'steps for TI-NEW-1');
+  check('trace needs three characters to look for', req('/api/serials/trace', {}, { session: tAdm, params: { q: 'TI' } }).status === 400);
+  check('a cashier cannot trace a serial', req('/api/serials/trace', {}, { session: tCash, params: { q: 'TI-IMEI-1' } }).status === 403);
+  check('an unknown serial is reported as not found', req('/api/serials/trace', {}, { session: tAdm, params: { q: 'TI-IMEI-9' } }).data.found === false);
 }
 {
   section('sales report (v1.47.0)');

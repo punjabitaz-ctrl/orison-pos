@@ -121,6 +121,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/repairs/deposit-refund': return repairDepositRefund_(session, payload);
     case '/api/tradein':         return tradeIn_(session, payload);
     case '/api/tradeins':        return tradeIns_(session, params);
+    case '/api/serials/trace':   return serialsTrace_(session, params);
     case '/api/drawer/open':     return drawerOpen_(session, payload);
     case '/api/approve':         return approve_(session, payload);
     case '/api/warranty':        return warrantyLookup_(session, params);
@@ -359,7 +360,7 @@ var META_HEADERS    = ['key', 'value'];
 var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at'];
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable', 'warranty_days'];
-var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at', 'cost', 'source'];
+var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at', 'cost', 'source', 'created_at'];
 var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by', 'tax_inclusive', 'tax_rate', 'supplier_id', 'po_id'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at', 'credit_limit', 'trn'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status', 'closed_by'];
@@ -5950,7 +5951,7 @@ function purchaseOrderReceive_(session, payload) {
       var netUnit = round2_(lineC / 100 / tk.qty);
       for (var sx = 0; sx < tk.serials.length; sx++) {
         serialNew.push({ id: Utilities.getUuid(), product_id: tk.pid, serial_number: tk.serials[sx], status: 'IN_STOCK',
-          tx_id: '', updated_at: stamp, cost: netUnit, source: 'po' });
+          tx_id: '', updated_at: stamp, cost: netUnit, source: 'po', created_at: stamp });
       }
       for (var tx = 0; tx < tk.qty; tx++) {
         txItems.push({ productId: tk.pid, name: String(tk.ordered.name || ''), quantity: 1, unitPrice: netUnit, unitCost: netUnit, taxable: !(String(tk.prod.taxable) === '0') });
@@ -6427,6 +6428,119 @@ function warrantyLookup_(session, params) {
   for (var i = 0; i < custs.length; i++) custName[String(custs[i].id)] = String(custs[i].name || '');
   matches.forEach(function (m) { m.customer = m.customerId ? (custName[m.customerId] || '') : ''; delete m.customerId; });
   return { query: q, matches: matches };
+}
+
+function serialsTrace_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var q = String((params && params.q) || '').trim().toUpperCase();
+  if (q.length < 3) throw statusError_(400, 'Enter at least three characters of an IMEI or serial');
+  var serials = readRows_('Serials', SERIAL_HEADERS)
+    .filter(function (r) { return String(r.serial_number).toUpperCase() === q; });
+  if (!serials.length) return { query: q, found: false, steps: [] };
+
+  var serial = serials[serials.length - 1];
+  var steps = [];
+
+  /* intake: the Serials row itself — created_at is the immutable intake stamp,
+   * source says po|tradein, cost is the intake value at the time. A bought-back
+   * serial keeps its original row (buy-back patches it, never re-adds). */
+  for (var s = 0; s < serials.length; s++) {
+    steps.push({
+      kind: 'intake',
+      date: String(serials[s].created_at || serials[s].updated_at || ''),
+      source: String(serials[s].source || ''),
+      money: num_(serials[s].cost) > 0 ? num_(serials[s].cost) : null,
+    });
+  }
+
+  var txs = readRows_('Transactions', TX_HEADERS);
+  var custs = readRows_('Customers', CUSTOMERS_HEADERS);
+  var custName = Object.create(null);
+  for (var c = 0; c < custs.length; c++) custName[String(custs[c].id)] = String(custs[c].name || '');
+
+  for (var t = 0; t < txs.length; t++) {
+    var tx = txs[t];
+    var items = [];
+    try { items = JSON.parse(String(tx.items_json || '[]')); } catch (e) { items = []; }
+    var hit = null, lineValue = null;
+    for (var it = 0; it < items.length; it++) {
+      if (String(items[it].serialNumber || '').toUpperCase() === q) {
+        hit = items[it];
+        lineValue = num_(items[it].unitPrice) * num_(items[it].quantity || 1);
+        break;
+      }
+    }
+    if (!hit) continue;
+    var kind = String(tx.kind || '');
+    if (kind === 'sale') {
+      steps.push({
+        kind: 'sale',
+        date: String(tx.created_at || ''),
+        money: lineValue,
+        receipt: String(tx.receipt_no || ''),
+        customer: tx.customer_id ? (custName[String(tx.customer_id)] || '') : String(tx.counterparty || ''),
+        transaction: String(tx.id || ''),
+      });
+    } else if (kind === 'refund' || kind === 'return') {
+      steps.push({
+        kind: 'restock',
+        date: String(tx.created_at || ''),
+        money: lineValue,
+        receipt: String(tx.receipt_no || ''),
+        customer: tx.customer_id ? (custName[String(tx.customer_id)] || '') : String(tx.counterparty || ''),
+        transaction: String(tx.id || ''),
+      });
+    }
+  }
+
+  var repairs = readRows_('Repairs', REPAIR_HEADERS)
+    .filter(function (r) { return String(r.device_serial).toUpperCase() === q; });
+  for (var r = 0; r < repairs.length; r++) {
+    steps.push({
+      kind: 'repair',
+      date: String(repairs[r].created_at || repairs[r].updated_at || ''),
+      ticket: String(repairs[r].ticket_no || ''),
+      repaired: String(repairs[r].status || ''),
+      issue: String(repairs[r].reported_fault || ''),
+    });
+  }
+
+  var tradeIns = readRows_('TradeIns', TRADEIN_HEADERS)
+    .filter(function (r) { return String(r.serial_number).toUpperCase() === q; });
+  for (var ti = 0; ti < tradeIns.length; ti++) {
+    steps.push({
+      kind: 'tradein',
+      date: String(tradeIns[ti].created_at || ''),
+      money: num_(tradeIns[ti].amount) > 0 ? num_(tradeIns[ti].amount) : null,
+      seller: String(tradeIns[ti].seller_name || ''),
+    });
+  }
+
+  steps.sort(function (a, b) {
+    var ta = new Date(a.date).getTime();
+    var tb = new Date(b.date).getTime();
+    if (isNaN(ta)) ta = 0;
+    if (isNaN(tb)) tb = 0;
+    return ta - tb;
+  });
+
+  var productId = String(serial.product_id || '');
+  var products = readRows_('Products', PRODUCT_HEADERS);
+  var productName = '', serialized = '';
+  for (var p = 0; p < products.length; p++) {
+    if (String(products[p].id) === productId) {
+      productName = String(products[p].name || '');
+      serialized = String(products[p].sku || '');
+      break;
+    }
+  }
+
+  return {
+    query: q,
+    found: true,
+    serial: { id: String(serial.id || ''), serialNumber: String(serial.serial_number || ''), status: String(serial.status || ''), productId: productId, productName: productName },
+    steps: steps,
+  };
 }
 
 var REPAIR_ROLES_ANY = ['admin', 'manager', 'cashier'];
@@ -7586,7 +7700,7 @@ function tradeIn_(session, payload) {
       applyPatches_('Serials', SERIAL_HEADERS, 'id', { [String(existing.id)]: serialFields });
       serialNumber = String(existing.serial_number);
     } else {
-      appendRows_('Serials', SERIAL_HEADERS, [Object.assign({ id: Utilities.getUuid(), serial_number: serialNumber }, serialFields)]);
+      appendRows_('Serials', SERIAL_HEADERS, [Object.assign({ id: Utilities.getUuid(), serial_number: serialNumber, created_at: now }, serialFields)]);
     }
     applyPatches_('Products', PRODUCT_HEADERS, 'id', { [productId]: { updated_at: now } });
 
@@ -8563,6 +8677,7 @@ function adminSerials_(session, payload) {
         status: 'IN_STOCK',
         tx_id: '',
         updated_at: now,
+        created_at: now,
       });
     }
     appendRows_('Serials', SERIAL_HEADERS, newRows);

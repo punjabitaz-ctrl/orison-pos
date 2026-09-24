@@ -7,7 +7,35 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.52.0 — inventory velocity
+## Latest: v1.53.0 — serial lifecycle trace
+
+**2026-09-24.**
+
+- **One IMEI, its whole life in one timeline.** Serial Trace
+  (`/api/serials/trace`, admin and manager) takes a serial number or IMEI and
+  lists every leg that serial has walked — the intake that brought it in
+  (purchase order or trade-in, at the value actually paid), every sale that
+  carried that exact unit, refunds that returned it to stock, repair tickets
+  filed against that device, and trade-ins where the store bought it back —
+  oldest to newest.
+- **Immutable intake stamp.** Each serial now records when it entered the
+  store on every intake path (PO receive, trade-in intake, manual entry).
+  Buying back a unit this store already sold keeps the original intake stamp,
+  so a serial bought back is still one serial, not a second intake.
+- **Read-only, same guardrails as stock health.** The screen and timeline
+  never write a bookkeeping row; serialized stock still counts by serial, and
+  admin and manager only.
+
+**Validation:** backend-sim **PASS 1172 / FAIL 0** · client units **PASS 572 /
+FAIL 0** · demo **PASS 32 / FAIL 0**.
+- The trace sim section drives a full trade-in lifecycle (take in, resell,
+  buy back, resell, refund) and asserts the timeline shape, date ordering, the
+  single intake stamp on a bought-back serial, the min-length and role guards,
+  and the "not found" case.
+
+---
+
+## v1.52.0 — inventory velocity
 
 **2026-09-24.**
 

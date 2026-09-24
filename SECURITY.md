@@ -199,6 +199,7 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/approve` | any signed-in role asks; the approver must be a different, active manager or admin, and within their own discount limit |
 | `/api/reports`, `/api/price-history`, `/api/inventory/aging`, `/api/inventory/reorder` | admin, manager |
 | `/api/inventory/health` (incl. `view=velocity`) | admin, manager (read-only; movement and turnover are reported, never auto-hidden or discounted) |
+| `/api/serials/trace` | admin, manager (read-only; an immutable `created_at` intake stamp on the Serials sheet joins the ledger timeline) |
 | `/api/reports/sales` | admin, manager (whole shop, with cost); a cashier gets their own sales only (the server overrides `userId`) and no cost, profit or margin |
 | `/api/customers/ledger`, `/receivables`, `/statement` | admin, manager |
 | `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` | admin, manager |

@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.52.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.53.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -52,6 +52,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Aging and alerts**: 0–30 / 31–60 / 61–90 / 90+ day buckets, plus out-of-stock, low, locked and slow-moving items.
 - **Stock health** (v1.51.0): what the shelf is worth at retail and at cost, and how fast each product actually sells — units sold and revenue from the ledger over a 30/90/180/365-day window. *Slow* (cover > 180 days or ≤ 1 sold in the window) and *dead* (nothing sold in 180 days) are reported, and KPIs, category and movement filters, and a CSV export point a manager at what is tying up cash. Read-only: nothing is ever auto-hidden or discounted.
 - **Inventory velocity** (v1.52.0): sell-through and turnover on the health window — per-day units and revenue, days of cover, and turnover against the average shelf value of each line and category. A product is flagged *buy again* only when it genuinely out-sold what came back in and the shelf is running low (nothing on hand, or cover shorter than the window). The screen toggles Health ↔ Velocity, each with its own CSV export. Read-only like health.
+- **Serial lifecycle trace** (v1.53.0): one IMEI or serial number, its whole working life on one timeline — the intake that brought it in (PO or trade-in, at the value paid), every sale that carried that exact unit, refunds that returned it to stock, repair tickets, and trade-ins where the store bought it back. An immutable intake stamp (`created_at`) is recorded on every intake path; buying back a unit already sold keeps the original stamp, so a bought-back serial is one serial, not two. The Serial Trace screen (admin, manager) is read-only.
 
 ### Reporting and the business
 
