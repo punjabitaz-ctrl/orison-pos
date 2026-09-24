@@ -193,6 +193,7 @@ web-accessible status page without app load.
 | Set a customer's credit limit | Customers → the customer → *Set credit limit* (admin/manager). 0 means none; going over at the till needs approval. |
 | Check a return rung on another till | History → tick *Whole shop* → search the receipt number or IMEI (any cashier). |
 | See what's sat in stock too long | Products → *Aging* (admin/manager). |
+| Value the shelf & find dead stock | Menu → *Stock Health* (admin/manager) — valuation at cost and retail, and what is slow or dead over 30/90/180/365 days; CSV export. |
 | Refund a sale | History → the sale → *Refund items*. A cashier's refund asks a manager to approve on the spot; **services are never refundable**. |
 | Approve at the till | When a cashier's screen asks for approval, the manager types **their own** email and PIN. It needs a connection. |
 | Trade in the UAE | Settings → Store → *Tax jurisdiction* → United Arab Emirates (admin): 5 % VAT included in prices. Enter the shop's 15-digit TRN, set the currency to AED, and add TRNs to business customers (Customers → *Credit limit & TRN*). Receipts print as a Tax Invoice. |

@@ -25,11 +25,12 @@ import { screen as accounts } from './screens/accounts.js';
 import { screen as tradein } from './screens/tradein.js';
 import { screen as salesreport } from './screens/salesreport.js';
 import { screen as repairs } from './screens/repairs.js';
+import { screen as stockhealth } from './screens/stockhealth.js';
 import { primaryTabs, menuTiles, navGroups, isRestricted } from './nav.js';
 import { navButton, appHeaderHtml } from './components.js';
 import { $t, $tn, setLanguage, resolveLanguage, loadChoice, setStoreLanguage, dateLocale } from './lang.js';
 
-const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff, menu, audit, accounts, tradein, salesreport, repairs };
+const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff, menu, audit, accounts, tradein, salesreport, repairs, stockhealth };
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

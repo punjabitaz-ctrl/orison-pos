@@ -5,6 +5,30 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.51.0] — 2026-09-24
+
+### Added
+
+- **Stock Health** (`/api/inventory/health`, admin and manager): what the whole
+  shelf is worth at retail and at cost, and how fast each product actually
+  sells. This is the first delivery of the inventory-and-customer-lifecycle
+  program; plan in
+  `docs/superpowers/plans/2026-09-24-inventory-and-customer-lifecycle-program.md`.
+  - **Valuation is on the ledger, not the cache.** Units sold and revenue come
+    from `Transactions`; on-hand comes from the catalog; serialized stock is
+    valued at known serial costs with unallocated units at the product cost.
+  - **A manager picks the window** (30/90/180/365 days, default 90). `perDay`
+    is ledger units against window days, and `daysOfCover` is current on-hand
+    divided by that. Movement is reported, never applied: `slow` (cover > 180
+    days, or ≤ 1 unit sold in the window) and `dead` (0 units sold in 180 days)
+    appear on the screen and in the CSV, and no client or server code ever
+    hides or discounts them.
+  - **Screen** (Menu → Stock Health, admin/manager): KPI tiles (cost value,
+    retail value, units, slow, dead), per-category aggregation, product table
+    sorted by cost value, movement chips, and CSV export with stable English
+    columns and spreadsheet-safe quoting.
+- **Demo:** no changes this version (stock health reads the existing ledger).
+
 ## [1.50.0] — 2026-09-22
 
 ### Added

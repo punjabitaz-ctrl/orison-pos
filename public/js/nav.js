@@ -34,6 +34,7 @@ export const DESTINATIONS = [
   { id: 'expense', label: N_('Staff Expense'), screen: 'dashboard', roles: MANAGER, dialog: 'expense', group: 'cash' },
   { id: 'customers', label: N_('Customers'), screen: 'customers', roles: MANAGER, group: 'stock' },
   { id: 'inventory', label: N_('Products'), screen: 'inventory', roles: MANAGER, group: 'stock' },
+  { id: 'stockhealth', label: N_('Stock Health'), screen: 'stockhealth', roles: MANAGER, group: 'stock' },
   { id: 'purchases', label: N_('Purchases'), screen: 'purchases', roles: MANAGER, group: 'stock' },
   { id: 'external', label: N_('Sold Elsewhere'), screen: 'register', roles: MANAGER, dialog: 'external', group: 'stock' },
   { id: 'alerts', label: N_('Alerts'), screen: 'alerts', roles: MANAGER, group: 'stock' },

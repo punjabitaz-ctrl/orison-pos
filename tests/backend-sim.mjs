@@ -5292,6 +5292,97 @@ check('statement carries the changer/cashier',
   req('/api/admin/store', { taxRate: 0 }, { session: kAdm });
 }
 {
+  section('inventory health (v1.51.0)');
+
+  const hAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const hMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const hCash = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const hUsers = req('/api/admin/users/list', {}, { session: hAdm }).data.users;
+  const hCashId = hUsers.find((u) => u.email === 'diego@example.com').id;
+
+  check('stock health is manager/admin only',
+    req('/api/inventory/health', {}, { session: hCash }).status === 403
+    && req('/api/inventory/health', {}, { session: hAdm }).ok === true
+    && req('/api/inventory/health', {}, { session: hMgr }).ok === true);
+
+  const hMk = (name, sku, extra) => req('/api/admin/products', Object.assign({
+    name, sku, category: 'SH Fixtures', costPrice: 20, retailPrice: 40, onHand: 0,
+  }, extra || {}), { session: hAdm }).data.id;
+
+  const fast = hMk('SH Fast Mover', 'SH-FAST-01', { costPrice: 30, retailPrice: 60, onHand: 90 });
+  const slow = hMk('SH Slow Mover', 'SH-SLOW-01', { costPrice: 20, retailPrice: 40, onHand: 100 });
+  const ser = hMk('SH Serialized', 'SH-SER-01', { costPrice: 50, retailPrice: 90, isSerialized: true, onHand: 0 });
+  req('/api/admin/serials', { productId: ser, serialNumbers: ['SH-SN-A', 'SH-SN-B'] }, { session: hAdm });
+  const oldSale = hMk('SH Old Sale', 'SH-OLD-01', { costPrice: 10, retailPrice: 25, onHand: 8 });
+  const recentSale = hMk('SH Recent Sale', 'SH-REC-01', { costPrice: 10, retailPrice: 25, onHand: 6 });
+  const svc = hMk('SH Service', 'SH-SVC-01', { itemType: 'service' });
+
+  const sellHealth = (txId, productId, qty, unitPrice, createdAtIso) => req('/api/sync/push', {
+    deviceId: 'dev-health-1',
+    batch: [{
+      clientTxId: txId, userId: hCashId, kind: 'sale',
+      grandTotal: unitPrice * qty, createdAt: createdAtIso,
+      tenders: [{ type: 'cash', amount: unitPrice * qty }],
+      items: [{ productId, quantity: qty, unitPrice }],
+    }],
+  }, { session: hCash });
+
+  sellHealth('tx-sh-1', fast, 60, 60, new Date().toISOString());
+  sellHealth('tx-sh-2', slow, 1, 40, new Date().toISOString());
+  sellHealth('tx-sh-3', oldSale, 5, 25, new Date(Date.now() - 200 * 86400000).toISOString());
+  sellHealth('tx-sh-4', recentSale, 2, 25, new Date(Date.now() - 100 * 86400000).toISOString());
+
+  const h = req('/api/inventory/health', {}, { session: hAdm, params: { days: 90 } }).data;
+  const row = (sku) => h.items.find((i) => i.sku === sku);
+  const f = row('SH-FAST-01');
+  const sl = row('SH-SLOW-01');
+  const se = row('SH-SER-01');
+  const od = row('SH-OLD-01');
+  const rc = row('SH-REC-01');
+
+  check('the window defaults to 90 days and the dead rule to 180', h.window.days === 90 && h.rules.deadDays === 180 && h.rules.slowCoverDays === 180);
+  check('valuation: units × shelf price at retail', f && f.retailValue === 1800 && sl && Math.abs(sl.retailValue - sl.onHand * sl.retailPrice) < 0.001 && Math.abs(f.retailValue - f.onHand * f.retailPrice) < 0.001);
+  check('valuation: units × the PO-received weighted cost', f && Math.abs(f.costValue - 30 * 30) < 0.001 && f.costPrice === 30);
+  check('serialized stock values each serial, falling back to the product cost', se && se.onHand === 2 && Math.abs(se.costValue - 100) < 0.001, JSON.stringify(se));
+  check('services never appear on a stock health report', h.items.every((i) => i.sku !== 'SH-SVC-01'));
+  check('a product with no stock is not valued', !h.items.some((i) => i.sku === 'SH-SVC-01') && !h.items.some((i) => i.sku.startsWith('SH-') && i.onHand === 0));
+
+  const near = (a, b) => Math.abs(a - b) < 0.001;
+  check('days of cover is units on hand ÷ the window average', f && near(f.perDay, Math.round((60 / 90) * 100) / 100) && near(f.daysOfCover, 30 / (60 / 90)), JSON.stringify(f && { perDay: f.perDay, cover: f.daysOfCover }));
+  check('a product selling through fast is classified fast', f && f.movement === 'fast');
+  check('≤ 1 unit sold in the window is slow, however deep the cover', sl && sl.movement === 'slow' && sl.soldUnits === 1);
+  check('nothing sold in 180 days is dead', od && od.movement === 'dead' && od.soldUnits === 0);
+  check('a sale older than the window but newer than 180 days is slow, not dead', rc && rc.movement === 'slow' && rc.soldUnits === 0);
+  check('the refund sign is respected net of the window (fast moved 60 out, none back)', f && f.soldUnits === 60);
+
+  const sumRetail = h.items.reduce((n, x) => n + x.retailValue, 0);
+  const sumCost = h.items.reduce((n, x) => n + x.costValue, 0);
+  const sumUnits = h.items.reduce((n, x) => n + x.onHand, 0);
+  check('summary totals reconcile with the items list',
+    h.summary.products === h.items.length
+    && h.summary.units === sumUnits
+    && near(h.summary.retailValue, sumRetail)
+    && near(h.summary.costValue, sumCost),
+    JSON.stringify(h.summary));
+  check('slow and dead counts reconcile with the items list',
+    h.summary.slowCount === h.items.filter((i) => i.movement === 'slow').length
+    && h.summary.deadCount === h.items.filter((i) => i.movement === 'dead').length,
+    JSON.stringify({ s: h.summary.slowCount, d: h.summary.deadCount }));
+  check('category totals reconcile with the items list',
+    near(h.categories.reduce((n, c) => n + c.costValue, 0), sumCost)
+    && near(h.categories.reduce((n, c) => n + c.retailValue, 0), sumRetail)
+    && near(h.categories.reduce((n, c) => n + c.units, 0), sumUnits),
+    JSON.stringify(h.categories));
+  check('categories and items lead with the most money stuck', (() => {
+    const cats = h.categories.map((c) => c.costValue);
+    const sorted = cats.every((v, i) => i === 0 || cats[i - 1] >= v);
+    const itemsSorted = h.items.every((v, i) => i === 0 || h.items[i - 1].costValue >= v.costValue);
+    return sorted && itemsSorted;
+  })());
+  const h10 = req('/api/inventory/health', {}, { session: hAdm, params: { days: 999999 } }).data;
+  check('a hostile days param clamps to the 365-day cap', h10.window.days === 365 && h10.items.some((i) => i.sku === 'SH-FAST-01'), String(h10.window.days));
+}
+{
   section('setup() deploy entry point (v1.35.1)');
 
   const usersBefore = sandbox.readRows_('Users', sandbox.USER_HEADERS).length;

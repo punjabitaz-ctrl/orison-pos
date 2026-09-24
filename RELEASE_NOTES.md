@@ -7,7 +7,36 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.50.0 — parts a job is waiting for
+## Latest: v1.51.0 — stock health
+
+**2026-09-24.**
+
+- **What is the shelf actually worth?** Stock Health values the whole catalog
+  at retail and at cost — serialized items at their known serial cost — so the
+  shopkeeper can see, in one number, how much cash is sitting on the shelf.
+- **Who is selling?** Over a 30/90/180/365-day window, each product shows what
+  actually left the door: units sold, revenue, days of cover. *Slow* (cover
+  over 180 days, or one unit or less sold) and *dead* (nothing sold in 180
+  days) are flagged.
+- **Reported, never auto-hidden.** The screen and the CSV point a manager at
+  what is tying up money; nothing gets hidden, held back or discounted by the
+  system.
+- **Admin and manager only**, read-only — the health report never writes a
+  bookkeeping row.
+
+**Validation:** backend-sim **PASS 1144 / FAIL 0** · client units **PASS 565 /
+FAIL 0** · demo **PASS 32 / FAIL 0**.
+- Eight mutation tests confirm the tests bite: category names that clobber
+  `Object.prototype` (like a category literally named `toString`) nulling out
+  of the JSON, every window being clamped, refund units not counting as sold,
+  stock with no cover being neither slow nor dead, serialized stock valued
+  wholesale outside the ledger, inactive and service lines reaching the count,
+  on-hand-of-zero items being reported, and the summary not reconciling with
+  the items it came from.
+
+---
+
+## v1.50.0 — parts a job is waiting for
 
 **2026-09-22.**
 

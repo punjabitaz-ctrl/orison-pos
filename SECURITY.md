@@ -198,6 +198,7 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/drawer/open` | admin, manager; a cashier with a single-use `drawer` approval (audited) |
 | `/api/approve` | any signed-in role asks; the approver must be a different, active manager or admin, and within their own discount limit |
 | `/api/reports`, `/api/price-history`, `/api/inventory/aging`, `/api/inventory/reorder` | admin, manager |
+| `/api/inventory/health` | admin, manager (read-only; slow and dead are reported, never auto-hidden or discounted) |
 | `/api/reports/sales` | admin, manager (whole shop, with cost); a cashier gets their own sales only (the server overrides `userId`) and no cost, profit or margin |
 | `/api/customers/ledger`, `/receivables`, `/statement` | admin, manager |
 | `/api/admin/products`, `/products/patch`, `/serials`, `/inventory` | admin, manager |

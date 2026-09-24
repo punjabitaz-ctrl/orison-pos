@@ -50,6 +50,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
   - Code 128 shelf labels
   - a reorder worksheet built from sales velocity
 - **Aging and alerts**: 0–30 / 31–60 / 61–90 / 90+ day buckets, plus out-of-stock, low, locked and slow-moving items.
+- **Stock health** (v1.51.0): what the shelf is worth at retail and at cost, and how fast each product actually sells — units sold and revenue from the ledger over a 30/90/180/365-day window. *Slow* (cover > 180 days or ≤ 1 sold in the window) and *dead* (nothing sold in 180 days) are reported, and KPIs, category and movement filters, and a CSV export point a manager at what is tying up cash. Read-only: nothing is ever auto-hidden or discounted.
 
 ### Reporting and the business
 

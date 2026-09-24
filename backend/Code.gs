@@ -134,6 +134,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/backup/status':   return backupStatus_(session);
     case '/api/backup/run':      return backupNow_(session);
     case '/api/inventory/reorder': return inventoryReorder_(session, params);
+    case '/api/inventory/health':  return inventoryHealth_(session, params);
     case '/api/admin/products/bulk-price': return adminBulkPrice_(session, payload);
     case '/api/admin/stock-take': return adminStockTake_(session, payload);
     default:
@@ -5005,6 +5006,140 @@ function inventoryReorder_(session, params) {
     window: { days: days, coverDays: targetDays, since: sinceIso },
     items: items2,
     summary: { lines: items2.length, units: items2.reduce(function (n, x) { return n + x.suggested; }, 0), cost: round2_(totalCost) },
+  };
+}
+
+/* What the shelf is worth, and how long it lasts. Every active product is
+ * valued at retail (units × shelf price) and at cost (units × the
+ * PO-received weighted cost; serialized products value each serial at its
+ * own sticker cost, falling back to the product cost), shows its days of
+ * cover from the same velocity the reorder worksheet uses, and is classified
+ * fast / slow / dead by the program rules (D3). Slow and dead money is
+ * reported, never auto-hidden and never repriced. Read-only like Reports:
+ * admin and manager only, no write path here. */
+function inventoryHealth_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var days = parseInt(params && params.days, 10);
+  if (isNaN(days) || days < 1) days = 90;
+  days = Math.min(days, 365);
+  var deadDays = 180;
+  var slowCoverDays = 180;
+  var slowSoldMax = 1;
+  var nowMs = Date.now();
+  var dayMs = 86400000;
+  var sinceIso = new Date(nowMs - days * dayMs).toISOString();
+  var sinceDeadIso = new Date(nowMs - deadDays * dayMs).toISOString();
+
+  /* units sold per product over the window, and over the dead-stock window;
+     refunds give units back, exactly like the reorder worksheet. */
+  var sold = {}, soldDead = {};
+  var txRows = readRows_('Transactions', TX_HEADERS);
+  for (var t = 0; t < txRows.length; t++) {
+    var tx = txRows[t];
+    if (String(tx.status) !== 'COMPLETED') continue;
+    var kind = String(tx.kind || 'sale');
+    if (kind !== 'sale' && kind !== 'refund') continue;
+    var createdAt = String(tx.created_at || '');
+    var sign = kind === 'refund' ? -1 : 1;
+    var items = itobjs_(tx.items_json);
+    var inWindow = createdAt >= sinceIso;
+    var inDeadWindow = createdAt >= sinceDeadIso;
+    for (var i = 0; i < items.length; i++) {
+      var pid = String(items[i].productId || '');
+      if (!pid) continue;
+      var qty = sign * (num_(items[i].quantity) || 1);
+      if (inWindow) sold[pid] = (sold[pid] || 0) + qty;
+      if (inDeadWindow) soldDead[pid] = (soldDead[pid] || 0) + qty;
+    }
+  }
+
+  var serialCount = {}, serialCostKnown = {}, serialCostUnknown = {};
+  var serRows = readRows_('Serials', SERIAL_HEADERS);
+  for (var s = 0; s < serRows.length; s++) {
+    if (String(serRows[s].status) !== 'IN_STOCK') continue;
+    var spid = String(serRows[s].product_id);
+    serialCount[spid] = (serialCount[spid] || 0) + 1;
+    if (num_(serRows[s].cost) > 0) serialCostKnown[spid] = (serialCostKnown[spid] || 0) + num_(serRows[s].cost);
+    else serialCostUnknown[spid] = (serialCostUnknown[spid] || 0) + 1;
+  }
+
+  var summary = { products: 0, units: 0, retailValue: 0, costValue: 0, slowCount: 0, deadCount: 0 };
+  /* null prototype so a category name like 'toString' cannot hit Object.prototype */
+  var catMap = Object.create(null);
+  var items2 = [];
+  var prods = readRows_('Products', PRODUCT_HEADERS);
+  for (var p = 0; p < prods.length; p++) {
+    var prod = prods[p];
+    if (String(prod.item_type) === 'service' || String(prod.active) !== '1') continue;
+    var isSerialized = String(prod.is_serialized) === '1';
+    var onHand = isSerialized ? (serialCount[String(prod.id)] || 0) : num_(prod.on_hand);
+    if (onHand <= 0) continue;
+
+    var retailPrice = num_(prod.retail_price);
+    var retailValue = round2_(onHand * retailPrice);
+    var costValue = isSerialized
+      ? round2_((serialCostKnown[String(prod.id)] || 0) + (serialCostUnknown[String(prod.id)] || 0) * num_(prod.cost_price))
+      : round2_(onHand * num_(prod.cost_price));
+
+    var soldUnits = Math.max(0, sold[String(prod.id)] || 0);
+    var soldDeadUnits = Math.max(0, soldDead[String(prod.id)] || 0);
+    var perDay = soldUnits / days;
+    var cover = perDay > 0 ? onHand / perDay : null;
+    var movement = soldDeadUnits === 0 ? 'dead'
+      : (soldUnits <= slowSoldMax || (cover !== null && cover > slowCoverDays)) ? 'slow' : 'fast';
+
+    var category = String(prod.category || '');
+    var cat = catMap[category] || (catMap[category] = { category: category, units: 0, retailValue: 0, costValue: 0 });
+
+    items2.push({
+      id: String(prod.id),
+      name: String(prod.name || ''),
+      sku: String(prod.sku || ''),
+      category: category,
+      isSerialized: isSerialized,
+      onHand: onHand,
+      retailPrice: retailPrice,
+      /* the per-unit cost figure a serialized product shows is its weighted
+         on-the-shelf cost, because each serial may carry its own sticker. */
+      costPrice: isSerialized ? round2_(costValue / onHand) : num_(prod.cost_price),
+      retailValue: retailValue,
+      costValue: costValue,
+      soldUnits: soldUnits,
+      perDay: Math.round(perDay * 100) / 100,
+      daysOfCover: cover === null ? null : Math.round(cover * 10) / 10,
+      movement: movement,
+    });
+
+    summary.products += 1;
+    summary.units += onHand;
+    summary.retailValue += retailValue;
+    summary.costValue += costValue;
+    if (movement === 'slow') summary.slowCount += 1;
+    if (movement === 'dead') summary.deadCount += 1;
+    cat.units += onHand;
+    cat.retailValue += retailValue;
+    cat.costValue += costValue;
+  }
+
+  summary.retailValue = round2_(summary.retailValue);
+  summary.costValue = round2_(summary.costValue);
+  var categories = [];
+  for (var key in catMap) {
+    catMap[key].retailValue = round2_(catMap[key].retailValue);
+    catMap[key].costValue = round2_(catMap[key].costValue);
+    categories.push(catMap[key]);
+  }
+  /* the most money stuck in a category first. */
+  categories.sort(function (a, b) { return b.costValue - a.costValue; });
+  items2.sort(function (a, b) { return b.costValue - a.costValue; });
+
+  return {
+    asOf: new Date().toISOString(),
+    window: { days: days, since: sinceIso },
+    rules: { slowCoverDays: slowCoverDays, slowSoldMax: slowSoldMax, deadDays: deadDays },
+    summary: summary,
+    categories: categories,
+    items: items2,
   };
 }
 

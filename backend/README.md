@@ -130,6 +130,7 @@ Every call is an `action` string posted to `/exec` (see [Envelope](#envelope)). 
   - Older receipts are linked by `payableLinks_` (the `po-<id8>` client id, or the supplier name).
 - **Price history** `/api/price-history` (admin, manager): sources `create`, `patch`, `po` and `bulk`.
 - **Inventory aging** `/api/inventory/aging` and **reorder worksheet** `/api/inventory/reorder` (admin, manager).
+- **Inventory health** `/api/inventory/health` (admin, manager, v1.51.0): what the whole shelf is worth at retail and at cost — and who is selling. `days` (1–365, default 90) is the velocity window. Sale units and revenue come from the ledger; on-hand comes from the catalog. `perDay` is ledger units against window days (not a calendar rate), and `daysOfCover` is current on-hand divided by it. A product is `slow` (cover > 180 days, or ≤ 1 unit sold in the window) or `dead` (0 units sold in 180 days) — reported, never auto-hidden or discounted. Serialized stock is valued at known serial costs (a serial bought back keeps its original cost) plus the product cost for unallocated units; stock with no price history carries the product cost. Returns the summary, per-category aggregation, and every item server-side sorted, `onHand > 0`, excluding services and inactive products.
 - **Bulk price update** `/api/admin/products/bulk-price` (admin). The client sends a rule, never prices. `preview: true` writes nothing.
 - **Stock take** `/api/admin/stock-take` (admin). Read and write happen in one lock, every line is recorded, and one bad line rolls back the count.
 
