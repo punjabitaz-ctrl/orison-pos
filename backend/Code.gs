@@ -5019,6 +5019,7 @@ function inventoryReorder_(session, params) {
  * admin and manager only, no write path here. */
 function inventoryHealth_(session, params) {
   requireRole_(session, ['admin', 'manager']);
+  if (String(params && params.view || '') === 'velocity') return inventoryVelocity_(session, params);
   var days = parseInt(params && params.days, 10);
   if (isNaN(days) || days < 1) days = 90;
   days = Math.min(days, 365);
@@ -5140,6 +5141,179 @@ function inventoryHealth_(session, params) {
     summary: summary,
     categories: categories,
     items: items2,
+  };
+}
+
+/* Sell-through (v1.52.0): how fast things actually move, so buying has
+ * numbers behind it. Units and AED sold and refunded in the window (30 days
+ * for sell-through, D2; `days` clamps 1-365), per product and per category,
+ * using the Sales-report money rules: line price minus the line and order
+ * discounts, tax taken out of a tax-inclusive line. turnover is AED sold
+ * divided by the average shelf value over the period - the retail turnover
+ * ratio. buyAgain is the product already selling through faster than it is
+ * replacing (more units out than in, and the shelf would not last the
+ * window): a buying signal on screen, nothing auto-ordered. */
+function inventoryVelocity_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var days = parseInt(params && params.days, 10);
+  if (isNaN(days) || days < 1) days = 30;
+  days = Math.min(days, 365);
+  var nowMs = Date.now();
+  var sinceIso = new Date(nowMs - days * 86400000).toISOString();
+
+  var prodById = {};
+  var prods = readRows_('Products', PRODUCT_HEADERS);
+  for (var p = 0; p < prods.length; p++) prodById[String(prods[p].id)] = prods[p];
+
+  /* units and AED sold / refunded, units received (purchase rows), and the
+     cost-at-sale for gross profit - the same money the Sales report computes. */
+  var soldU = {}, refundU = {}, soldRev = {}, refundRev = {}, received = {}, cost = {};
+  var add = function (map, key, n) { map[key] = (map[key] || 0) + n; };
+  var txRows = readRows_('Transactions', TX_HEADERS);
+  for (var t = 0; t < txRows.length; t++) {
+    var tx = txRows[t];
+    if (String(tx.status) !== 'COMPLETED') continue;
+    if (String(tx.created_at || '') < sinceIso) continue;
+    var kind = String(tx.kind || 'sale');
+    var items = itobjs_(tx.items_json);
+    if (kind === 'sale' || kind === 'refund') {
+      var sign = kind === 'refund' ? -1 : 1;
+      var orderPct = num_(tx.discount_pct);
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i] || {};
+        var pid = String(it.productId || '');
+        if (!pid) continue;
+        var qty = Math.max(1, num_(it.quantity) || 1);
+        var linePct = clampPct_(num_(it.discountPct));
+        var lineNetCents = round2_(num_(it.unitPrice) * 100 * qty * (1 - linePct / 100));
+        var revCents = round2_(lineNetCents * (100 - orderPct) / 100);
+        if (String(tx.tax_inclusive) === '1' && it.taxable !== false && num_(tx.tax_rate) > 0) {
+          revCents = revCents * 100 / (100 + num_(tx.tax_rate));
+        }
+        var lineRev = round2_(Math.round(revCents) / 100);
+        if (sign < 0) { add(refundU, pid, qty); add(refundRev, pid, lineRev); }
+        else { add(soldU, pid, qty); add(soldRev, pid, lineRev); }
+        var prod = prodById[pid];
+        var costPer = (typeof it.unitCost === 'number' && it.unitCost > 0) ? it.unitCost
+          : (prod ? num_(prod.cost_price) : 0);
+        add(cost, pid, sign * costPer * qty);
+      }
+    } else if (kind === 'purchase') {
+      for (var pi = 0; pi < items.length; pi++) {
+        var itp = items[pi] || {};
+        var pid2 = String(itp.productId || '');
+        if (!pid2) continue;
+        add(received, pid2, Math.max(1, num_(itp.quantity) || 1));
+      }
+    }
+  }
+
+  var serialCount = {};
+  var serRows = readRows_('Serials', SERIAL_HEADERS);
+  for (var s = 0; s < serRows.length; s++) {
+    if (String(serRows[s].status) !== 'IN_STOCK') continue;
+    var spid = String(serRows[s].product_id);
+    serialCount[spid] = (serialCount[spid] || 0) + 1;
+  }
+
+  var probe = {};
+  for (var pr = 0; pr < prods.length; pr++) {
+    probe[String(prods[pr].id)] = 1;
+  }
+  for (var mu in soldU) probe[mu] = 1;
+  for (var mr in refundU) probe[mr] = 1;
+  for (var mm in received) probe[mm] = 1;
+
+  var rows = [];
+  var catMap = Object.create(null);
+  var summary = { products: 0, units: 0, netRevenue: 0, grossProfit: 0, avgShelfValue: 0, buyAgainCount: 0, turnover: null };
+  var buyAgain = [];
+  for (var id in probe) {
+    var prod = prodById[id];
+    if (!prod || String(prod.item_type) === 'service' || String(prod.active) !== '1') continue;
+    var isSerialized = String(prod.is_serialized) === '1';
+    var onHand = isSerialized ? (serialCount[id] || 0) : Math.max(0, num_(prod.on_hand));
+    var unitsSold = soldU[id] || 0;
+    var unitsRefunded = refundU[id] || 0;
+    var netUnits = unitsSold - unitsRefunded;
+    var revenueSold = round2_(soldRev[id] || 0);
+    var revenueRefunded = round2_(refundRev[id] || 0);
+    var netRevenue = round2_(revenueSold - revenueRefunded);
+    var receivedUnits = received[id] || 0;
+    /* only rows that moved in the window or still sit on the shelf. */
+    if (netUnits === 0 && receivedUnits === 0 && onHand <= 0) continue;
+
+    var grossProfit = round2_(netRevenue - round2_(cost[id] || 0));
+    var margin = netRevenue ? Math.round(grossProfit * 1000 / netRevenue) / 10 : null;
+
+    /* average shelf value over the window: the shelf began where it is today
+       less what arrived, plus what left; at retail, because turnover is
+       revenue against the price on the labels. */
+    var beginUnits = Math.max(0, onHand + netUnits - receivedUnits);
+    var avgUnits = (beginUnits + onHand) / 2;
+    var avgShelfValue = round2_(avgUnits * num_(prod.retail_price));
+    var perDay = netUnits / days;
+    var cover = perDay > 0 ? round2_(onHand / perDay * 10) / 10 : null;
+    /* outpaces replacement, and the shelf would not last the window. */
+    var buy = netUnits > 0 && netUnits > receivedUnits && (onHand === 0 || (cover !== null && cover < days));
+
+    var category = String(prod.category || '');
+    var cat = catMap[category] || (catMap[category] = {
+      category: category, products: 0, units: 0, netRevenue: 0, grossProfit: 0, avgShelfValue: 0,
+    });
+
+    var row = {
+      id: id, name: String(prod.name || ''), sku: String(prod.sku || ''),
+      category: category, isSerialized: isSerialized, onHand: onHand,
+      unitsSold: unitsSold, unitsRefunded: unitsRefunded, netUnits: netUnits,
+      revenueSold: revenueSold, revenueRefunded: revenueRefunded, netRevenue: netRevenue,
+      avgShelfValue: avgShelfValue,
+      turnover: netRevenue > 0 && avgShelfValue > 0 ? round2_(netRevenue / avgShelfValue * 100) / 100 : null,
+      perDay: Math.round(perDay * 100) / 100,
+      daysOfCover: cover,
+      grossProfit: grossProfit, margin: margin,
+      receivedUnits: receivedUnits,
+      buyAgain: buy,
+    };
+    rows.push(row);
+    if (buy) buyAgain.push(row);
+
+    summary.products += 1;
+    summary.units += netUnits;
+    summary.netRevenue += netRevenue;
+    summary.grossProfit += grossProfit;
+    summary.avgShelfValue += avgShelfValue;
+    if (buy) summary.buyAgainCount += 1;
+    cat.products += 1;
+    cat.units += netUnits;
+    cat.netRevenue += netRevenue;
+    cat.grossProfit += grossProfit;
+    cat.avgShelfValue += avgShelfValue;
+  }
+
+  var categories = [];
+  for (var key in catMap) {
+    var c = catMap[key];
+    c.turnover = c.netRevenue > 0 && c.avgShelfValue > 0 ? round2_(c.netRevenue / c.avgShelfValue * 100) / 100 : null;
+    categories.push(c);
+  }
+  categories.sort(function (a, b) { return b.netRevenue - a.netRevenue; });
+  rows.sort(function (a, b) { return b.netRevenue - a.netRevenue; });
+  buyAgain.sort(function (a, b) { return b.netUnits - a.netUnits; });
+
+  summary.netRevenue = round2_(summary.netRevenue);
+  summary.grossProfit = round2_(summary.grossProfit);
+  summary.avgShelfValue = round2_(summary.avgShelfValue);
+  summary.turnover = summary.netRevenue > 0 && summary.avgShelfValue > 0 ? round2_(summary.netRevenue / summary.avgShelfValue * 100) / 100 : null;
+
+  return {
+    asOf: new Date().toISOString(),
+    view: 'velocity',
+    window: { days: days, since: sinceIso },
+    summary: summary,
+    categories: categories,
+    items: rows,
+    buyAgain: buyAgain,
   };
 }
 

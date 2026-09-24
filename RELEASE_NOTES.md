@@ -7,7 +7,40 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.51.0 — stock health
+## Latest: v1.52.0 — inventory velocity
+
+**2026-09-24.**
+
+- **How hard is the shelf working?** Velocity puts a movement number on each
+  product: units and revenue per day, days of cover, and turnover — net
+  revenue divided by the average value of the stock sitting on the shelf over
+  the window. A line that took 300 days to clear shows it; a fast mover with a
+  full shelf shows it.
+- **Buy again.** A product earns a buy-again when it genuinely out-sold what
+  came back in *and* the shelf is running low (nothing on hand, or cover
+  shorter than the 30/90-day window). Idle stock and refund-swamped lines
+  never qualify, so the reorder shortlist is not padded with last year's
+  mistakes.
+- **Health ↔ Velocity, one screen.** Toggle the two views without losing the
+  filters; each exports its own CSV (`orison-stock-health.csv` /
+  `orison-stock-velocity.csv`).
+- **Same guardrails as stock health.** Serialized stock is counted by serial,
+  services and inactive products are excluded, turnover is never negative, and
+  the report is read-only — it never writes a bookkeeping row.
+
+**Validation:** backend-sim **PASS 1166 / FAIL 0** · client units **PASS 572 /
+FAIL 0** · demo **PASS 32 / FAIL 0**.
+- Mutation cases confirm the velocity maths bites: net revenue netting off
+  refunds at what the customer actually paid, refund units not counted as sold,
+  a 50%-discount line pushing turnover to null rather than a negative number,
+  serialized lines valued by serial count, buy-again false when restock from a
+  purchase order outpaces sales, idle lines flat and profitless, services and
+  inactive products staying out of the count, and the 90-day window and 365-day
+  clamp.
+
+---
+
+## v1.51.0 — stock health
 
 **2026-09-24.**
 

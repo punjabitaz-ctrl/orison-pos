@@ -1,0 +1,15 @@
+{
+"Velocity": "السرعة",
+"Health": "الصحة",
+"Sell-through and velocity": "البيع وحساب سرعة المنتجات",
+"Net revenue": "صافي الإيرادات",
+"Avg shelf value": "متوسط قيمة المخزون",
+"Turnover": "معدل دوران المخزون",
+"Buy again": "إعادة الطلب",
+"turnover is net revenue ÷ shelf value": "معدل الدوران = صافي الإيرادات ÷ قيمة المخزون",
+"No product is outpacing its replenishment.": "لا منتج يتفوق على تعويضه.",
+"selling through faster than it is replaced": "يُباع أسرع من تعويض المخزون",
+"nothing is selling through faster than it is replaced": "لا يُباع شيء أسرع من تعويض المخزون",
+"Units sold": "الوحدات المباعة",
+"Stock velocity CSV": "CSV سرعة البيع"
+}

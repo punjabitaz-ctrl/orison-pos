@@ -5,6 +5,33 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.52.0] — 2026-09-24
+
+### Added
+
+- **Inventory velocity** (`view=velocity` on `/api/inventory/health`, admin
+  and manager): how fast each line actually sells through, how hard the money
+  tied up in it is working, and when its next reorder makes sense.
+  - **Sell-through and turnover.** Ledger units and revenue against the
+    on-hand now on the shelf: `perDay`, `daysOfCover`, and `turnover` (net
+    revenue ÷ average shelf value over the window; `null` at ≤ 0 revenue) give
+    a movement number for every product and category. `avgShelfValue` uses the
+    absorbed cost this shelf is carrying, so turnover is money-driven, not
+    unit-driven.
+  - **Buy again.** A line is a buy-again when it actually out-sold what came
+    back in (`netUnits > receivedUnits`), and the shelf now needs the restock
+    (`onHand === 0`, or current cover is shorter than the window). Idle or
+    refund-swamped lines are never buy-agains.
+  - **Window and view.** `days` (1–365) is clamped like the health view, and
+    the client adds a 90-day preset. The screen toggles Health ↔ Velocity
+    without losing its filters, and CSV export gains a velocity layout
+    (`orison-stock-velocity.csv`).
+  - **Same guardrails as health.** Serialized lines count serials in stock,
+    services and inactive products are excluded, turnover is never negative,
+    and no client or server code ever hides or discounts a product.
+- **Demo:** velocity exercises the existing health fixtures (the sim health
+  section's products double as velocity shops).
+
 ## [1.51.0] — 2026-09-24
 
 ### Added

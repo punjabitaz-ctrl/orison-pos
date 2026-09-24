@@ -5383,6 +5383,136 @@ check('statement carries the changer/cashier',
   check('a hostile days param clamps to the 365-day cap', h10.window.days === 365 && h10.items.some((i) => i.sku === 'SH-FAST-01'), String(h10.window.days));
 }
 {
+  section('inventory velocity (v1.52.0)');
+
+  const vAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const vMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const vCash = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const vUsers = req('/api/admin/users/list', {}, { session: vAdm }).data.users;
+  const vCashId = vUsers.find((u) => u.email === 'diego@example.com').id;
+
+  const vMk = (name, sku, extra) => req('/api/admin/products', Object.assign({
+    name, sku, category: 'VL Fixtures', costPrice: 20, retailPrice: 40, onHand: 0,
+  }, extra || {}), { session: vAdm }).data.id;
+
+  const vFast = vMk('VL Fast Mover', 'VL-FAST-01', { costPrice: 40, retailPrice: 80, onHand: 10 });
+  const vRep = vMk('VL Replenished', 'VL-REPL-01', { costPrice: 10, retailPrice: 30, onHand: 5 });
+  const vOut = vMk('VL Sold Out', 'VL-SOLD-01', { costPrice: 25, retailPrice: 60, onHand: 8 });
+  const vDisc = vMk('VL Discounted', 'VL-DISC-01', { costPrice: 5, retailPrice: 20, onHand: 50 });
+  const vSer = vMk('VL Serialized', 'VL-SER-01', { costPrice: 100, retailPrice: 220, isSerialized: true, onHand: 0 });
+  req('/api/admin/serials', { productId: vSer, serialNumbers: ['VL-SN-1', 'VL-SN-2'] }, { session: vAdm });
+  const vIdle = vMk('VL Idle Shelf', 'VL-STATIC-01', { costPrice: 5, retailPrice: 15, onHand: 40 });
+  vMk('VL Service', 'VL-SVC-01', { itemType: 'service' });
+  const vOff = vMk('VL Inactive', 'VL-OFF-01', { onHand: 5 });
+  /* no API deactivates a product; the exclusion path is what this checks */
+  sandbox.applyPatches_('Products', sandbox.PRODUCT_HEADERS, 'id', { [vOff]: { active: 0 } });
+
+  const sellV = (txId, productId, qty, unitPrice, extra) => req('/api/sync/push', {
+    deviceId: 'dev-velocity-1',
+    batch: [Object.assign({
+      clientTxId: txId, userId: vCashId, kind: 'sale',
+      grandTotal: unitPrice * qty, createdAt: new Date().toISOString(),
+      tenders: [{ type: 'cash', amount: unitPrice * qty }],
+      items: [{ productId, quantity: qty, unitPrice }],
+    }, extra || {})],
+  }, { session: vCash });
+
+  sellV('tx-vl-1', vFast, 8, 80);
+  sellV('tx-vl-2', vRep, 10, 30);
+  sellV('tx-vl-3', vOut, 8, 60);
+  req('/api/sync/push', {
+    deviceId: 'dev-velocity-1',
+    batch: [{
+      clientTxId: 'tx-vl-4', userId: vCashId, kind: 'sale', grandTotal: 40,
+      tenders: [{ type: 'cash', amount: 40 }], createdAt: new Date().toISOString(),
+      items: [{ productId: vDisc, quantity: 4, unitPrice: 20, discountPct: 50 }],
+    }],
+  }, { session: vAdm }); // a 50% line is over a cashier's limit, so the admin applies it
+  sellV('tx-vl-5', vSer, 1, 220, { items: [{ productId: vSer, quantity: 1, unitPrice: 220, serialNumber: 'VL-SN-1' }] });
+
+  const refV = req('/api/sync/push', {
+    deviceId: 'dev-velocity-1',
+    batch: [{
+      clientTxId: 'tx-vl-1-rf', kind: 'refund', originalClientTx: 'tx-vl-1',
+      userId: vCashId, grandTotal: 160, tenders: [{ type: 'cash', amount: 160 }],
+      createdAt: new Date().toISOString(),
+      items: [{ productId: vFast, quantity: 2, unitPrice: 80 }],
+    }],
+  }, { session: vMgr });
+  check('the velocity fixture refund clears', refV.ok && refV.data.results[0].accepted === true, JSON.stringify(refV));
+
+  /* a purchase-order receipt lands a purchase row in the window, so
+     replenishment counts against sell-through (the "buy again" rule) */
+  const vSup = req('/api/suppliers', { name: 'Velocity Wholesale', paymentTerms: 'Net 30' }, { session: vAdm }).data.id;
+  const vPo = req('/api/purchase-orders', { supplierId: vSup, status: 'ORDERED', lines: [{ productId: vRep, quantity: 30, unitCost: 10 }] }, { session: vMgr }).data;
+  const vRec = req('/api/purchase-orders/receive', { id: vPo.id, lines: [{ productId: vRep, quantity: 30 }] }, { session: vAdm });
+  check('the velocity fixture purchase receipt clears', vRec.ok, JSON.stringify(vRec));
+
+  const near2 = (a, b) => Math.abs(a - b) < 0.001;
+  const v = req('/api/inventory/health', {}, { session: vAdm, params: { view: 'velocity' } }).data;
+  const vrow = (sku) => v.items.find((i) => i.sku === sku);
+  const vf = vrow('VL-FAST-01');
+  const vr = vrow('VL-REPL-01');
+  const vo = vrow('VL-SOLD-01');
+  const vd = vrow('VL-DISC-01');
+  const vs = vrow('VL-SER-01');
+  const vi = vrow('VL-STATIC-01');
+
+  check('velocity is a 30-day sell-through view, manager/admin only',
+    v.view === 'velocity' && v.window.days === 30
+    && req('/api/inventory/health', {}, { session: vCash, params: { view: 'velocity' } }).status === 403);
+
+  check('sold and refunded units are kept apart and netted', vf && vf.unitsSold === 8 && vf.unitsRefunded === 2 && vf.netUnits === 6, JSON.stringify(vf));
+  check('revenue uses the Sales-report money rules', vf && near2(vf.revenueSold, 640) && near2(vf.revenueRefunded, 160) && near2(vf.netRevenue, 480), JSON.stringify(vf));
+  check('gross profit is revenue minus cost-at-sale, margin follows', vf && near2(vf.grossProfit, 240) && near2(vf.margin, 50), JSON.stringify(vf && { gp: vf.grossProfit, margin: vf.margin }));
+  check('a discounted line nets its discount off the revenue', vd && vd.unitsSold === 4 && near2(vd.netRevenue, 40), JSON.stringify(vd));
+  check('serialized stock counts IN_STOCK serials and sells one', vs && vs.onHand === 1 && vs.unitsSold === 1 && near2(vs.netRevenue, 220), JSON.stringify(vs));
+
+  check('average shelf value is (begin + end) ÷ 2 × retail', vf && near2(vf.avgShelfValue, ((10 + 4) / 2) * 80), JSON.stringify(vf && { onHand: vf.onHand, net: vf.netUnits, recv: vf.receivedUnits, avg: vf.avgShelfValue }));
+  check('turnover is revenue ÷ average shelf value', vf && near2(vf.turnover, 480 / 560), JSON.stringify(vf && vf.turnover));
+  check('days of cover is on-hand ÷ the daily rate', vf && near2(vf.daysOfCover, 4 / (6 / 30)));
+
+  check('outpacing replenishment with thin cover is buy-again', vf && vf.buyAgain === true);
+  check('a sold-out product with demand is buy-again with zero cover', vo && vo.buyAgain === true && vo.onHand === 0 && vo.daysOfCover === 0);
+  check('a product replenished faster than it sells is not buy-again', vr && vr.buyAgain === false && vr.receivedUnits === 30, JSON.stringify(vr));
+  check('an idle shelf has no turnover and is not buy-again', vi && vi.buyAgain === false && vi.turnover === null, JSON.stringify(vi));
+  check('a serial with a full window of cover is not buy-again', vs && vs.buyAgain === false, JSON.stringify(vs));
+  check('services and disabled products never appear', v.items.every((i) => i.sku !== 'VL-SVC-01' && i.sku !== 'VL-OFF-01'),
+    JSON.stringify(v.items.map((i) => i.sku).filter((s) => s.indexOf('VL-') === 0)));
+
+  const sumR = v.items.reduce((n, x) => n + x.netRevenue, 0);
+  const sumG = v.items.reduce((n, x) => n + x.grossProfit, 0);
+  const sumA = v.items.reduce((n, x) => n + x.avgShelfValue, 0);
+  check('summary reconciles with the items list',
+    v.summary.products === v.items.length
+    && near2(v.summary.netRevenue, sumR)
+    && near2(v.summary.grossProfit, sumG)
+    && near2(v.summary.avgShelfValue, sumA)
+    && v.summary.buyAgainCount === v.buyAgain.length,
+    JSON.stringify(v.summary));
+  const catVL = v.categories.find((c) => c.category === 'VL Fixtures');
+  check('category totals reconcile with their items', catVL
+    && catVL.products === v.items.filter((i) => i.category === 'VL Fixtures').length
+    && near2(catVL.netRevenue, v.items.filter((i) => i.category === 'VL Fixtures').reduce((n, x) => n + x.netRevenue, 0))
+    && near2(catVL.avgShelfValue, v.items.filter((i) => i.category === 'VL Fixtures').reduce((n, x) => n + x.avgShelfValue, 0)));
+  check('the buy-again list holds exactly the flagged items', v.buyAgain.every((b) => b.buyAgain === true)
+    && v.buyAgain.some((b) => b.sku === 'VL-FAST-01') && v.buyAgain.some((b) => b.sku === 'VL-SOLD-01')
+    && !v.buyAgain.some((b) => b.sku === 'VL-REPL-01'), JSON.stringify(v.buyAgain.map((b) => b.sku)));
+
+  /* the Sales report on the same store must agree with velocity's revenue */
+  const vDay = new Date().toISOString().slice(0, 10);
+  const vRep2 = req('/api/reports', {}, { session: vAdm, params: { from: vDay, to: vDay } }).data;
+  const vCatVL = vRep2.byCategory.find((c) => c.category === 'VL Fixtures');
+  const vWantSold = v.items.filter((i) => i.category === 'VL Fixtures').reduce((n, x) => n + x.revenueSold, 0);
+  check('velocity sold revenue agrees with the Sales report category totals',
+    vCatVL && near2(vCatVL.sales, vWantSold) && near2(vCatVL.sales, 1680) && near2(vf.revenueRefunded, 160) && near2(vf.netRevenue, 480),
+    JSON.stringify(vCatVL));
+
+  const v90 = req('/api/inventory/health', {}, { session: vAdm, params: { view: 'velocity', days: 90 } }).data;
+  const v999 = req('/api/inventory/health', {}, { session: vAdm, params: { view: 'velocity', days: 999999 } }).data;
+  check('the 90-day sell-through window is honoured and days clamps at 365', v90.window.days === 90 && v999.window.days === 365);
+}
+{
   section('setup() deploy entry point (v1.35.1)');
 
   const usersBefore = sandbox.readRows_('Users', sandbox.USER_HEADERS).length;

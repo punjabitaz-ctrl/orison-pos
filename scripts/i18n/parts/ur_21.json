@@ -1,0 +1,15 @@
+{
+"Velocity": "رفتار",
+"Health": "صحت",
+"Sell-through and velocity": "فروخت کی رفتار اور تجزیہ",
+"Net revenue": "خالص آمدنی",
+"Avg shelf value": "اوسط شیلف مالیت",
+"Turnover": "ٹرن اوور",
+"Buy again": "دوبارہ خریداری",
+"turnover is net revenue ÷ shelf value": "ٹرن اوور = خالص آمدنی ÷ شیلف مالیت",
+"No product is outpacing its replenishment.": "کوئی پروڈکٹ اپنی فراہمی سے آگے نہیں ہے۔",
+"selling through faster than it is replaced": "فراہمی سے زیادہ تیزی سے فروخت ہو رہا ہے",
+"nothing is selling through faster than it is replaced": "کوئی چیز اپنی فراہمی سے زیادہ تیزی سے فروخت نہیں ہو رہی",
+"Units sold": "فروخت شدہ یونٹس",
+"Stock velocity CSV": "سی ایس وی فروخت کی رفتار"
+}
