@@ -13,9 +13,9 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.53.0** — serial lifecycle trace: one IMEI, its whole working life (intake, sales, refunds, repairs, trade-ins) on one timeline (`2026-09-24`) |
+| Current version | **v1.54.0** — customer 360 profile: total spent, net of refunds, visits, serialized devices with their warranty cover, open and collected repairs, and the ledger with aging, all behind the admin/manager gate (`2026-09-24`) |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
-| Validation bar | `backend-sim` **PASS 1172 / FAIL 0** · client units **PASS 572 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Validation bar | `backend-sim` **PASS 1190 / FAIL 0** · client units **PASS 572 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -127,6 +127,14 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.54.0** Customer 360 profile (`/api/customers/profile`, admin/manager):
+  everything one customer is on one screen — summary on the Sales-report money
+  rules (total spent, net of refunds, visits, average sale, first/last visit,
+  balance/owes/store credit/credit limit), the serialized devices they bought
+  with their warranty cover (same answer as the Warranty screen, refunded
+  units excluded), open and collected repairs joined on the repair's customer,
+  and the same ledger with aging a manager sees. Customers → *Ledger* loads
+  the full profile.
 - **v1.53.0** Serial lifecycle trace (`/api/serials/trace`, admin/manager): one
   IMEI or serial, its whole working life on one timeline - intake (PO or
   trade-in, at the value paid), the sales that carried that exact unit,

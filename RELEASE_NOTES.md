@@ -7,7 +7,35 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.53.0 — serial lifecycle trace
+## Latest: v1.54.0 — customer 360 profile
+
+**2026-09-24.**
+
+- **Everything one customer is, on one screen.** Customers → *Ledger* is now
+  a full Customer 360 profile: total spent, net of refunds, visits, average
+  sale, first and last visit — alongside what they owe, their store credit,
+  and their credit limit.
+- **The devices they bought, and their warranty cover.** Every serialized
+  unit on their sales, priced at what they actually paid, with the same
+  warranty answer as the Warranty screen as of today — active, expired, or
+  refunded — plus the expiry date and days left.
+- **Their repairs, open and collected.** Tickets still on the bench (intake
+  through ready) and repairs they've collected with the final total, joined
+  on the repair's customer.
+- **The same ledger managers already see**, with aging buckets, behind the
+  same admin/manager gate as the ledger and statement.
+
+**Validation:** backend-sim **PASS 1190 / FAIL 0** · client units **PASS 572 /
+FAIL 0** · demo **PASS 32 / FAIL 0**.
+- The profile sim section sells a serialized warranty phone on account,
+  refunds part of it to store credit, and books a repair against the same
+  customer, then asserts the summary money, the device's active warranty, the
+  open repair ticket, the ledger rows and aging, the role and 404 guards, and
+  a second customer cross-checked against the seeded ledger numbers.
+
+---
+
+## v1.53.0 — serial lifecycle trace
 
 **2026-09-24.**
 

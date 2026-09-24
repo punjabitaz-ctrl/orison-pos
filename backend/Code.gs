@@ -69,6 +69,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/customers':       return customers_(session, payload, params);
     case '/api/customers/ledger': return customerLedger_(session, params);
     case '/api/customers/statement': return customerStatement_(session, params);
+    case '/api/customers/profile': return customerProfile_(session, params);
     case '/api/customers/receivables': return receivables_(session);
     case '/api/reports':         return reports_(session, params);
     case '/api/accounting':      return accounting_(session, params);
@@ -3384,6 +3385,153 @@ function customerStatement_(session, params) {
     opening: 0,
     closing: running,
     items: items,
+  };
+}
+
+/* Everything a customer is to the shop, on one screen: what they've spent and
+   net of refunds, how often they come in, what they hold (balance, limit,
+   store credit), the serialized devices they own with their warranty cover,
+   open and collected repairs, and the same ledger the manager sees. Money
+   figures follow the Sales-report rule: gross revenue is what completes at the
+   till, refunds reduce it, visits count sales, average sale divides sales by
+   count. Warranty status per device matches the Warranty screen's answer. */
+function customerProfile_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var cid = String((params && params.customerId) || '');
+  if (!cid) throw statusError_(400, 'customerId is required');
+  var cust = null;
+  var custRows = readRows_('Customers', CUSTOMERS_HEADERS);
+  for (var i = 0; i < custRows.length; i++) {
+    if (String(custRows[i].id) === cid) { cust = custRows[i]; break; }
+  }
+  if (!cust) throw statusError_(404, 'Customer not found');
+
+  var txRows = readRows_('Transactions', TX_HEADERS)
+    .filter(function (t) { return String(t.status) === 'COMPLETED' && String(t.customer_id) === cid; });
+  var money = customerMoney_(txRows, cid);
+
+  /* the profile's summary uses transaction totals, matching the printed
+     receipt and the Sales report's gross/refunds split. A visit is any
+     completed transaction that named the customer (a trade-in or a payment
+     counts as a visit too). */
+  var gross = 0, refunds = 0, visits = 0, firstVisit = '', lastVisit = '';
+  for (var v = 0; v < txRows.length; v++) {
+    var tv = txRows[v];
+    var kind = String(tv.kind || 'sale');
+    var tvDate = String(tv.created_at || '');
+    visits++;
+    if (!firstVisit || tvDate < firstVisit) firstVisit = tvDate;
+    if (tvDate > lastVisit) lastVisit = tvDate;
+    if (kind === 'sale') gross += num_(tv.grand_total);
+    else if (kind === 'refund') refunds += num_(tv.grand_total);
+  }
+
+  /* serialized devices they bought, with the same warranty answer the
+     Warranty screen gives (refunded units covered nothing) */
+  var refundedSerials = Object.create(null);
+  var refundedQty = Object.create(null);
+  for (var rf = 0; rf < txRows.length; rf++) {
+    var rt = txRows[rf];
+    if (String(rt.kind || '') !== 'refund') continue;
+    var ritems = itobjs_(rt.items_json);
+    for (var ri = 0; ri < ritems.length; ri++) {
+      if (ritems[ri].serialNumber) refundedSerials[String(ritems[ri].serialNumber)] = true;
+      else refundedQty[String(ritems[ri].productId)] = (refundedQty[String(ritems[ri].productId)] || 0) + (ritems[ri].quantity || 1);
+    }
+  }
+  var now = Date.now();
+  var devices = [];
+  for (var s = 0; s < txRows.length; s++) {
+    var sale = txRows[s];
+    if (String(sale.kind || '') !== 'sale') continue;
+    var items = itobjs_(sale.items_json);
+    var soldMs = Date.parse(String(sale.created_at));
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k];
+      if (!it.serialNumber) continue;
+      var days = num_(it.warrantyDays);
+      var dp = num_(it.discountPct);
+      var price = it.unitPrice != null ? round2_(num_(it.unitPrice) * (1 - (dp > 0 ? dp : 0) / 100)) : round2_(num_(it.price) || 0);
+      var refunded = !!refundedSerials[String(it.serialNumber)];
+      var expiresMs = days > 0 && !isNaN(soldMs) ? soldMs + days * DAY_MS : NaN;
+      devices.push({
+        productId: String(it.productId || ''),
+        name: String(it.name || ''),
+        serialNumber: String(it.serialNumber),
+        soldAt: String(sale.created_at),
+        receiptNo: String(sale.receipt_no || ''),
+        price: price,
+        warrantyDays: days,
+        expiresAt: isNaN(expiresMs) ? '' : new Date(expiresMs).toISOString(),
+        daysLeft: isNaN(expiresMs) ? 0 : Math.max(0, Math.ceil((expiresMs - now) / DAY_MS)),
+        status: refunded ? 'refunded' : (days > 0 && !isNaN(expiresMs) && now > expiresMs ? 'expired' : (days > 0 ? 'active' : 'none')),
+      });
+    }
+  }
+  devices.sort(function (a, b) { return String(b.soldAt).localeCompare(String(a.soldAt)); });
+
+  /* repairs: what's still on the bench, and what was collected with its total */
+  var repairsOpen = [], repairsCollected = [];
+  var reps = readRows_('Repairs', REPAIR_HEADERS);
+  for (var rp = 0; rp < reps.length; rp++) {
+    var r = reps[rp];
+    if (String(r.customer_id || '') !== cid) continue;
+    var status = String(r.status || '');
+    var row = {
+      ticketNo: String(r.ticket_no || ''),
+      device: (String(r.device_make || '') + ' ' + String(r.device_model || '')).trim(),
+      serial: String(r.device_serial || ''),
+      status: status,
+      createdAt: String(r.created_at || ''),
+      promisedAt: String(r.promised_at || ''),
+      closedAt: String(r.closed_at || ''),
+      estimate: num_(r.estimate_total),
+      deposit: num_(r.deposit_total),
+      finalTotal: num_(r.final_total),
+    };
+    if (status === 'collected') repairsCollected.push(row);
+    else if (['intake', 'diagnosed', 'awaiting_parts', 'in_progress', 'ready'].indexOf(status) >= 0) repairsOpen.push(row);
+  }
+  repairsOpen.sort(function (a, b) { return String(a.createdAt).localeCompare(String(b.createdAt)); });
+  repairsCollected.sort(function (a, b) { return String(a.closedAt).localeCompare(String(b.closedAt)); });
+
+  return {
+    customer: customerDto_(cust),
+    summary: {
+      totalSpent: round2_(gross),
+      netOfRefunds: round2_(gross - refunds),
+      refunds: round2_(refunds),
+      visits: visits,
+      averageSale: visits ? round2_(gross / visits) : 0,
+      balance: money.balance,
+      owes: money.account,
+      storeCredit: money.credit,
+      creditLimit: num_(cust.credit_limit) > 0 ? num_(cust.credit_limit) : 0,
+      firstVisit: firstVisit,
+      lastVisit: lastVisit,
+    },
+    devices: devices,
+    repairsOpen: repairsOpen,
+    repairsCollected: repairsCollected,
+    ledger: {
+      credit: money.credit,
+      account: money.account,
+      balance: money.balance,
+      aging: agingBuckets_(txRows),
+      transactions: txRows.slice().sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); })
+        .slice(0, 100).map(function (t) {
+          var names = [];
+          try {
+            var arr = JSON.parse(t.items_json || '[]');
+            for (var q = 0; q < arr.length; q++) names.push(String(arr[q].name || ''));
+          } catch (_) {}
+          return {
+            id: String(t.id), clientTxId: String(t.client_tx_id || ''), kind: String(t.kind || 'sale'),
+            grandTotal: num_(t.grand_total), createdAt: String(t.created_at),
+            items: names.slice(0, 5),
+          };
+        }),
+    },
   };
 }
 

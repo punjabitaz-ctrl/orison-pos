@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.53.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.54.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -33,7 +33,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Till shifts**: open with a float, close with a count in the store's own notes and coins, and see *declared / expected / over-or-short*.
 - **Cash out by reason**: Paid Out, Cash Pick Up and Staff Expense are separate kinds, and each is split in reports and the export.
 - **Refunds**: validated against the original sale and any earlier refunds, with stock returned, for what the customer actually paid. A cashier refunds with a manager's approval.
-- **Customers**: Net-30 accounts with optional credit limits, a per-customer ledger, collections, receivables with 30/60/90+ day aging, and printable or CSV statements. Any cashier can add a customer at checkout and see what they owe before charging to account; going past a credit limit needs a manager's approval.
+- **Customers**: Net-30 accounts with optional credit limits, a per-customer ledger, collections, receivables with 30/60/90+ day aging, and printable or CSV statements. Any cashier can add a customer at checkout and see what they owe before charging to account; going past a credit limit needs a manager's approval. **Customer 360 profile** (v1.54.0): Customers → *Ledger* shows everything about one customer on one screen — what they've spent and net of refunds, visits and average sale, the serialized devices they bought with their warranty cover, open and collected repairs, and the same ledger with aging (admin, manager).
 - **Audit log** (admin only): append-only, filterable, exportable. It covers refunds and cash-outs, stock adjustments with a reason, product and price edits, purchase orders, staff and PIN changes, sign-ins and lockouts, repairs and drawer opens.
 
 ### Stock

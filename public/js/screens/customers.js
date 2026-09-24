@@ -96,19 +96,38 @@ export const screen = {
     }
 
     async function openLedger(cid) {
-      let res;
+      let p;
       try {
-        res = await api.get('/api/customers/ledger?customerId=' + encodeURIComponent(cid));
+        p = await api.get('/api/customers/profile?customerId=' + encodeURIComponent(cid));
       } catch (_) {
-        toast($t('Failed to load ledger'), 'warn');
+        toast($t('Failed to load profile'), 'warn');
         return;
       }
-      const l = res;
+      const s = p.summary || {};
+      const l = {
+        customer: p.customer,
+        balance: (p.ledger || {}).balance ?? s.balance,
+        account: (p.ledger || {}).account ?? s.owes,
+        credit: (p.ledger || {}).credit ?? s.storeCredit,
+        aging: (p.ledger || {}).aging,
+        transactions: (p.ledger || {}).transactions || [],
+      };
+      const devices = p.devices || [];
+      const openR = p.repairsOpen || [];
+      const doneR = p.repairsCollected || [];
       const modalEl = openModal(`
         <div class="tx-detail cust-ledger">
           <button class="icon-btn abs-close" data-x>✕</button>
           <h3>${esc(l.customer.name)}</h3>
           ${l.customer.phone ? `<p class="muted">${esc(l.customer.phone)}</p>` : ''}
+          <div class="ledger-bal">
+            <div><span>${$t('Total spent')}</span><b>${fmt(s.totalSpent || 0)}</b></div>
+            <div><span>${$t('Net of refunds')}</span><b>${fmt(s.netOfRefunds || 0)}</b></div>
+            <div><span>${$t('Visits')}</span><b>${s.visits || 0}</b></div>
+            <div><span>${$t('Average sale')}</span><b>${fmt(s.averageSale || 0)}</b></div>
+            <div><span>${$t('First visit')}</span><b>${s.firstVisit ? shortDate(s.firstVisit) : '—'}</b></div>
+            <div><span>${$t('Last visit')}</span><b>${s.lastVisit ? shortDate(s.lastVisit) : '—'}</b></div>
+          </div>
           <div class="ledger-bal">
             <div><span>${$t('Owes on account')}</span><b>${fmt(l.account)}</b></div>
             <div><span>${$t('Holds credit')}</span><b class="gp">${fmt(l.credit)}</b></div>
@@ -122,17 +141,56 @@ export const screen = {
             ${l.balance > 0 ? `<button class="btn btn-sm" id="collectBtn" style="--bg:#2e7d32">${$t('Collect payment')}</button>` : ''}
             <button class="btn btn-sm btn-ghost" id="stmtBtn">${$t('Statement')}</button>
           </div>
-          <div class="lg-txs">
-            ${(l.transactions || []).length ? l.transactions.map((t) => `
-              <div class="lg-tx">
-                <div>
-                  <span class="k-chip ${t.kind === 'refund' ? 'k-refund' : t.kind === 'payment' ? 'k-payout' : 'k-sale'}">${esc($t(kindInfo(t.kind).label))}</span>
-                  <span class="muted">${esc(shortDate(t.createdAt))}</span>
-                  <span class="muted"># ${esc(t.clientTxId || t.id)}</span>
-                </div>
-                <b>${t.kind === 'refund' ? '−' : ''}${fmt(t.grandTotal)}</b>
-              </div>`).join('')
-              : `<p class="empty">${$t('No transactions yet.')}</p>`}
+          ${devices.length ? `
+            <div class="ledger-sec"><h4>${$t('Devices they bought')}</h4>
+              ${devices.map((d) => `
+                <div class="lg-tx">
+                  <div>
+                    <span class="k-chip k-sale">${esc(d.name)}</span>
+                    <span class="muted">${esc(d.serialNumber)} · ${esc(shortDate(d.soldAt))}</span>
+                    ${d.receiptNo ? `<span class="muted"># ${esc(d.receiptNo)}</span>` : ''}
+                  </div>
+                  <b class="${d.status === 'active' ? 'gp' : 'muted'}">${esc(d.status === 'active' ? $t('Covered until {date}', { date: shortDate(d.expiresAt) })
+                    : d.status === 'expired' ? $t('Warranty expired')
+                    : d.status === 'refunded' ? $t('Refunded')
+                    : $t('No warranty'))}</b>
+                </div>`).join('')}
+            </div>` : ''}
+          ${openR.length ? `
+            <div class="ledger-sec"><h4>${$t('Open repairs')}</h4>
+              ${openR.map((r) => `
+                <div class="lg-tx">
+                  <div>
+                    <span class="k-chip k-sale">${esc(r.ticketNo)}</span>
+                    <span class="muted">${esc(r.device || '—')}${r.serial ? ' · ' + esc(r.serial) : ''}</span>
+                  </div>
+                  <b class="${r.status === 'ready' ? 'neg' : ''}">${esc(repairStatus(r.status))}${r.deposit > 0 ? ' · ' + $t('{amount} deposit', { amount: fmt(r.deposit) }) : ''}</b>
+                </div>`).join('')}
+            </div>` : ''}
+          ${doneR.length ? `
+            <div class="ledger-sec"><h4>${$t('Collected repairs')}</h4>
+              ${doneR.map((r) => `
+                <div class="lg-tx">
+                  <div>
+                    <span class="k-chip k-sale">${esc(r.ticketNo)}</span>
+                    <span class="muted">${esc(r.device || '—')}</span>
+                  </div>
+                  <b>${fmt(r.finalTotal)}</b>
+                </div>`).join('')}
+            </div>` : ''}
+          <div class="ledger-sec"><h4>${$t('Ledger')}</h4>
+            <div class="lg-txs">
+              ${l.transactions.length ? l.transactions.map((t) => `
+                <div class="lg-tx">
+                  <div>
+                    <span class="k-chip ${t.kind === 'refund' ? 'k-refund' : t.kind === 'payment' ? 'k-payout' : 'k-sale'}">${esc($t(kindInfo(t.kind).label))}</span>
+                    <span class="muted">${esc(shortDate(t.createdAt))}</span>
+                    <span class="muted"># ${esc(t.clientTxId || t.id)}</span>
+                  </div>
+                  <b>${t.kind === 'refund' ? '−' : ''}${fmt(t.grandTotal)}</b>
+                </div>`).join('')
+                : `<p class="empty">${$t('No transactions yet.')}</p>`}
+            </div>
           </div>
         </div>`);
       modalEl.querySelector('[data-x]').addEventListener('click', closeModal);
@@ -319,6 +377,21 @@ export const screen = {
       const d = new Date(iso);
       if (isNaN(d)) return iso;
       return d.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' });
+    }
+
+    /* Repair status shown to a customer standing with staff. Matches the
+       Repairs screen's wording (the server stores the raw english slug). */
+    function repairStatus(st) {
+      return $t({
+        intake: 'On the bench',
+        diagnosed: 'On the bench',
+        in_progress: 'On the bench',
+        awaiting_parts: 'Awaiting parts',
+        ready: 'Ready for collection',
+        unrepairable: 'Unrepairable',
+        cancelled: 'Cancelled',
+        voided: 'Voided',
+      }[st] || 'On the bench');
     }
 
     function agingChips(a) {

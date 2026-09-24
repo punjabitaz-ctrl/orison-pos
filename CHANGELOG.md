@@ -5,6 +5,37 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.54.0] — 2026-09-24
+
+### Added
+
+- **Customer 360 profile** (`/api/customers/profile`, admin and manager):
+  everything the shop knows about one customer on one screen.
+  - **Who they are and what they're worth.** Total spent, net of refunds,
+    visits (every completed transaction that named them), average sale, first
+    and last visit, what they owe on account, what they hold in store credit,
+    their overall balance, and their credit limit — money figures following
+    the same rule as the Sales report (gross completes at the till, refunds
+    reduce it).
+  - **The devices they bought, with their warranty cover.** Every serialized
+    unit on their completed sales, priced what they paid, with the same
+    warranty answer as the Warranty screen — active/expired/refunded, the
+    expiry date and days left. Refunded units are covered nothing.
+  - **Their repairs.** Open tickets on the bench (intake through ready) and
+    collected repairs with what they cost, joined on the repair's customer.
+  - **The ledger they see.** The same credit/account/balance plus aging
+    buckets and the last 100 transactions — behind the same admin/manager
+    gate as the ledger and statement.
+- **Profile screen on the client.** Customers → *Ledger* now loads the full
+  profile: summary grid, balance with aging chips and actions, the devices
+  list, open and collected repairs, and the ledger — instead of just the
+  numbers.
+- **Demo & tests:** the sim drives a full profile (serialized warranty sale,
+  account sale, store-credit refund, a repair booked to the customer) and
+  asserts the summary, the device warranty status, repairs, ledger rows and
+  aging; plus the role and 404 guards and a second-customer cross-check
+  against the seeded ledger numbers.
+
 ## [1.53.0] — 2026-09-24
 
 ### Added

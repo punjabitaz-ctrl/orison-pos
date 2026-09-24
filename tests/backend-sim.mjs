@@ -5536,6 +5536,101 @@ check('statement carries the changer/cashier',
   check('the 90-day sell-through window is honoured and days clamps at 365', v90.window.days === 90 && v999.window.days === 365);
 }
 {
+  section('customer 360 profile (v1.54.0)');
+
+  const pfAdmTok = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const pfCashTok = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const pfCashId = req('/api/admin/users/list', {}, { session: pfAdmTok }).data.users
+    .find((u) => u.email === 'amara@example.com').id;
+
+  const priya = req('/api/admin/customers', { name: 'Priya Shah', phone: '080-777-0001', creditLimit: 0 }, { session: pfAdmTok });
+  check('profile fixture customer created', priya.ok && priya.data.customer, JSON.stringify(priya));
+  const pfId = priya.data.customer.id;
+
+  const pfPhone = req('/api/admin/products', { name: 'Profile Phone', sku: 'PF-NEW', category: 'PF', costPrice: 500, retailPrice: 800, isSerialized: true, warrantyDays: 365 }, { session: pfAdmTok }).data.id;
+  req('/api/admin/serials', { productId: pfPhone, serialNumbers: ['PF-IMEI-1'] }, { session: pfAdmTok });
+  const pfCable = req('/api/products', {}, { session: pfAdmTok }).data.find((p) => p.sku === 'CB-USBC-1M');
+  req('/api/admin/store', { taxRate: 0 }, { session: pfAdmTok });
+
+  const pfPush = (batch) => req('/api/sync/push', { deviceId: 'dev-pf-1', batch }, { session: pfAdmTok });
+  check('profile phone sale accepted', pfPush([{
+    clientTxId: 'tx-pf-1', userId: pfCashId, customerId: pfId, grandTotal: 810,
+    tenders: [{ type: 'cash', amount: 810 }],
+    createdAt: new Date().toISOString(),
+    items: [{ productId: pfPhone, quantity: 1, unitPrice: 800, serialNumber: 'PF-IMEI-1' }, { productId: pfCable.id, quantity: 1, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+  check('profile account sale accepted', pfPush([{
+    clientTxId: 'tx-pf-2', userId: pfCashId, customerId: pfId, grandTotal: 30,
+    tenders: [{ type: 'net30', amount: 30 }],
+    createdAt: new Date().toISOString(),
+    items: [{ productId: pfCable.id, quantity: 3, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+  check('profile refund accepted', pfPush([{
+    clientTxId: 'tx-pf-rf', kind: 'refund', originalClientTx: 'tx-pf-1', userId: pfCashId, customerId: pfId, grandTotal: 10,
+    tenders: [{ type: 'store_credit', amount: 10 }],
+    createdAt: new Date().toISOString(),
+    items: [{ productId: pfCable.id, quantity: 1, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+
+  const pfRep = req('/api/repairs', {
+    customerId: pfId, customerName: 'Priya Shah', customerPhone: '080-777-0001',
+    deviceMake: 'Apple', deviceModel: 'iPhone 15', deviceSerial: 'PF-IMEI-1', reportedFault: 'No sound',
+  }, { session: pfCashTok });
+  check('profile customer books a repair with a customer id', pfRep.ok && !!pfRep.data.id, JSON.stringify(pfRep));
+
+  check('profile is admin and manager only',
+    req('/api/customers/profile', {}, { session: pfCashTok, params: { customerId: pfId } }).status === 403);
+  check('profile needs a customerId',
+    req('/api/customers/profile', {}, { session: pfAdmTok }).status === 400);
+  check('profile 404s unknown customers',
+    req('/api/customers/profile', {}, { session: pfAdmTok, params: { customerId: 'no-such-customer' } }).status === 404);
+
+  const prof = req('/api/customers/profile', {}, { session: pfAdmTok, params: { customerId: pfId } }).data;
+  check('profile summaries what they spent and net of refunds',
+    prof.summary.totalSpent === 840 && prof.summary.refunds === 10 && Math.abs(prof.summary.netOfRefunds - 830) < 0.001,
+    JSON.stringify(prof.summary));
+  check('visits count every completed transaction and drive the average sale',
+    prof.summary.visits === 3 && prof.summary.averageSale === 280, JSON.stringify({ v: prof.summary.visits, a: prof.summary.averageSale }));
+  check('profile mirrors the ledger money',
+    prof.summary.balance === prof.ledger.balance && prof.summary.owes === prof.ledger.account && prof.summary.storeCredit === prof.ledger.credit,
+    JSON.stringify({ s: prof.summary, l: prof.ledger }));
+  check('balance nets account against store credit',
+    Math.abs(prof.ledger.balance - (prof.ledger.account - prof.ledger.credit)) < 0.001);
+  check('profile records every visit window',
+    prof.summary.firstVisit && prof.summary.lastVisit && prof.summary.firstVisit <= prof.summary.lastVisit);
+
+  check('profile lists the serialized device they bought with its warranty',
+    prof.devices.length === 1
+      && prof.devices[0].serialNumber === 'PF-IMEI-1'
+      && prof.devices[0].name === 'Profile Phone'
+      && prof.devices[0].price === 800
+      && prof.devices[0].warrantyDays === 365
+      && prof.devices[0].status === 'active',
+    JSON.stringify(prof.devices));
+  check('the refund did not touch the phone device',
+    prof.devices[0].expiresAt && prof.devices[0].receiptNo && prof.devices[0].daysLeft > 300);
+
+  const openRep = prof.repairsOpen;
+  check('the open repair shows on the profile with its tickets',
+    prof.repairsCollected.length === 0 && openRep.length === 1
+      && openRep[0].serial === 'PF-IMEI-1'
+      && openRep[0].device === 'Apple iPhone 15'
+      && /^Orison-R\d{6}$/.test(openRep[0].ticketNo),
+    JSON.stringify(openRep));
+  check('profile ledger carries the rows with their goods',
+    prof.ledger.transactions.length === 3
+      && prof.ledger.transactions.some((t) => t.clientTxId === 'tx-pf-2' && /^COPPER|Cable|CB-USBC/.test(t.items[0] || ''))
+      && prof.ledger.aging.current === 30, JSON.stringify({ txs: prof.ledger.transactions, aging: prof.ledger.aging }));
+
+  const joeAgain = req('/api/customers', {}, { session: pfAdmTok, params: { q: 'Joe' } }).data.customers[0];
+  const joeProf = req('/api/customers/profile', {}, { session: pfAdmTok, params: { customerId: joeAgain.id } }).data;
+  check('a second customer cross-checks against the seeded ledger numbers',
+    joeProf.summary.totalSpent === 48 && joeProf.summary.refunds === 12 && Math.abs(joeProf.summary.netOfRefunds - 36) < 0.001
+      && Math.abs(joeProf.ledger.balance - 36) < 0.001
+      && joeProf.ledger.credit === 12,
+    JSON.stringify({ summary: joeProf.summary, ledger: joeProf.ledger }));
+}
+{
   section('setup() deploy entry point (v1.35.1)');
 
   const usersBefore = sandbox.readRows_('Users', sandbox.USER_HEADERS).length;
