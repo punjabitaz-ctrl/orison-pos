@@ -16,7 +16,7 @@ record of truth; every feature is one tagged revision.
 | Current version | **v1.55.2** — a review of the v1.51.0 → v1.55.0 lifecycle sprints from outside them: the serial trace rendered every step as "Step", `/api/reminders` rescanned the whole ledger on every Dashboard load (now cached, refresh button bypasses), and the Stock health valuation is now tied to the 1200 Inventory debit by a test (`2026-09-24`) |
 | Gaps analysis | `docs/superpowers/specs/2026-09-24-gaps-analysis.md` — what a trading shop needs that v1.50.0 does not have, in the order I would build it |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
-| Validation bar | `backend-sim` **PASS 1295 / FAIL 0** · client units **PASS 602 / FAIL 0** · demo **PASS 38 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Validation bar | `backend-sim` **PASS 1346 / FAIL 0** · client units **PASS 619 / FAIL 0** · demo **PASS 41 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~9,444 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -128,6 +128,21 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.58.0** Running costs + banking the cash (gaps analysis Tier 0 #4 and #3).
+  - Ledger kinds `opex` and `bank_deposit`, both server-only. TX column
+    `category`. Ten expense accounts 6300-6390; `expenseAccount_()` falls back
+    to 6390 so a retired category still lands somewhere the books can see.
+  - `opex`: Dr category account, Cr tender. Cash comes off the drawer; a
+    transfer does not. Reports gains `runningCosts` + `runningCostsByCategory`,
+    the export a RUNNING COSTS line.
+  - `bank_deposit`: Dr 1020, Cr 1030, and **what is in transit is derived**
+    (`bankingBook_`: pickups less non-voided deposits), so the shop cannot bank
+    more than it carries. Closes the 1030 leak flagged in the gaps analysis.
+  - Client: `screens/expenses.js` (a screen) + `banking-dialog.js` (a launcher
+    dialog, like the drawer). Pure helpers `expenseProblem` / `expensesCsv` /
+    `depositProblem`, all tested.
+  - 49 sim checks + 17 client checks, 7 mutations caught (two survived first).
+  - **Deliberately not built:** recurring bills that post themselves.
 - **v1.57.0** Opening balances (gaps analysis Tier 0 #1).
   - `OpeningBalances` sheet, one ACTIVE row per store; routes
     `/api/opening-balances[/void]`, **admin only**. Account **3000 Opening
@@ -718,7 +733,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **1295 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **1346 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -728,7 +743,7 @@ written by the repair routes.
   the guards that now read under the lock).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  **602 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  **619 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
   ui `fmt`/`esc`/`debounce`/`csvCell`/`emptyState`/`skeleton`, (v1.15.0)

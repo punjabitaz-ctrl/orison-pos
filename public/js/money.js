@@ -68,6 +68,8 @@ export function kindInfo(kind) {
     tradein: { label: N_('Trade-in'), cls: 'k-payout', sign: -1 },
     supplier_payment: { label: N_('Supplier payment'), cls: 'k-payout', sign: -1 },
     wages: { label: N_('Wages'), cls: 'k-payout', sign: -1 },
+    opex: { label: N_('Running cost'), cls: 'k-payout', sign: -1 },
+    bank_deposit: { label: N_('Banked'), cls: 'k-neutral', sign: 0 },
   };
   return map[kind || 'sale'] || map.sale;
 }

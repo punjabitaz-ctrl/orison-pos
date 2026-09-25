@@ -4504,7 +4504,10 @@ check('statement carries the changer/cashier',
   check('nor can a cashier', req('/api/accounting', {}, { session: aCash }).status === 403);
 
   const A0 = books();
-  check('the chart of accounts is returned', A0.accounts.length === 21 && A0.accounts[0].code === '1000' && A0.accounts[20].code === '6900');
+  check('the chart of accounts is returned', A0.accounts.length === 31 && A0.accounts[0].code === '1000' && A0.accounts[30].code === '6900');
+  check('and it has an account per running cost, so a P&L reads like one',
+    ['6300', '6310', '6320', '6330', '6340', '6350', '6360', '6370', '6380', '6390']
+      .every((c) => A0.accounts.some((a) => a.code === c && a.type === 'expense')));
   check('and an equity account for what the shop opened with', A0.accounts.some((a) => a.code === '3000' && a.type === 'equity'));
   check('and it carries an account for wages', A0.accounts.some((a) => a.code === '6200' && a.type === 'expense'));
 
@@ -6037,6 +6040,164 @@ check('statement carries the changer/cashier',
     near((req('/api/accounting', {}, { session: obAdm, params: { from: today, to: today } }).data.journal
       .find((j) => j.kind === 'opening').lines.find((l) => l.code === '1000') || {}).debit, 400));
   req('/api/opening-balances/void', { reason: 'tidy up after the test' }, { session: obAdm });
+}
+{
+  section('running costs and banking the cash (v1.58.0, v1.59.0)');
+
+  const rcAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const rcMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const rcCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const near = (a, b) => Math.abs(a - b) < 0.005;
+  const day = new Date().toISOString().slice(0, 10);
+
+  /* ---- what the shop actually spends money on ---- */
+  const spend = (body, session) => req('/api/expenses', body, { session: session || rcMgr });
+  check('a cashier cannot record a running cost', spend({ category: 'rent', amount: 10, payee: 'x' }, rcCash).status === 403);
+  check('the category must be one the books have an account for',
+    spend({ category: 'yacht', amount: 10, payee: 'x' }).status === 400);
+  check('an amount is required', spend({ category: 'rent', amount: 0, payee: 'x' }).status === 400);
+  check('somebody has to have been paid', spend({ category: 'rent', amount: 10, payee: '  ' }).status === 400);
+  check('a transfer needs its reference',
+    spend({ category: 'rent', amount: 10, payee: 'Landlord', method: 'bank' }).status === 400);
+  check('and the method must be one the books know',
+    spend({ category: 'rent', amount: 10, payee: 'Landlord', method: 'crypto' }).status === 400);
+
+  const rep0 = req('/api/reports', {}, { session: rcAdm, params: { from: day, to: day } }).data.summary;
+  const books0 = req('/api/accounting', {}, { session: rcAdm, params: { from: day, to: day } }).data;
+  const rent = spend({ category: 'rent', amount: 3500, payee: 'Main Street Holdings', method: 'bank', reference: 'TRF-77120', note: 'September' });
+  check('the manager records the rent', rent.ok === true && rent.data.account === '6300', JSON.stringify(rent.data));
+  const power = spend({ category: 'utilities', amount: 240.5, payee: 'City Power', method: 'bank', reference: 'DD-0912' });
+  const rcShift = req('/api/shifts/open', { openingFloat: 200 }, { session: rcMgr });
+  const courier = spend({ category: 'transport', amount: 35, payee: 'Bike courier', method: 'cash' });
+  check('and a courier out of the till', courier.ok === true && power.ok === true);
+
+  const list = req('/api/expenses', {}, { session: rcMgr, params: { from: day, to: day } }).data;
+  check('they come back newest first, with who was paid and how',
+    list.expenses.length >= 3
+    && list.expenses.every((e, i, all) => i === 0 || all[i - 1].at >= e.at)
+    && list.expenses[0].payee === 'Bike courier' && list.expenses[0].method === 'cash'
+    && list.expenses.some((e) => e.reference === 'TRF-77120'), JSON.stringify(list.expenses.map((e) => [e.payee, e.at])));
+  check('and totalled by category, biggest first',
+    list.categories[0].id === 'rent' && near(list.categories[0].total, 3500)
+    && near(list.total, 3775.5), JSON.stringify([list.categories[0], list.total]));
+  check('a category filter narrows it',
+    req('/api/expenses', {}, { session: rcMgr, params: { from: day, to: day, category: 'utilities' } }).data.expenses.length === 1);
+
+  const rep1 = req('/api/reports', {}, { session: rcAdm, params: { from: day, to: day } }).data.summary;
+  check('Reports counts running costs apart from petty cash and wages',
+    near(rep1.runningCosts - rep0.runningCosts, 3775.5) && rep1.runningCostCount - rep0.runningCostCount === 3
+    && near(rep1.expenses, rep0.expenses) && near(rep1.payouts, rep0.payouts), JSON.stringify([rep0.runningCosts, rep1.runningCosts]));
+  check('and splits them by category', near(rep1.runningCostsByCategory.rent, 3500));
+
+  const books1 = req('/api/accounting', {}, { session: rcAdm, params: { from: day, to: day } }).data;
+  const jFor = (ref) => books1.journal.find((j) => j.kind === 'opex' && j.ref === ref);
+  const lineOf2 = (j, code) => (j && j.lines.find((l) => l.code === code)) || { debit: 0, credit: 0 };
+  check('the rent is an expense against the bank, in its own account',
+    near(lineOf2(jFor('TRF-77120'), '6300').debit, 3500) && near(lineOf2(jFor('TRF-77120'), '1020').credit, 3500),
+    JSON.stringify(jFor('TRF-77120')));
+  check('the courier came out of the till', books1.journal.some((j) => j.kind === 'opex' && near(lineOf2(j, '6340').debit, 35) && near(lineOf2(j, '1000').credit, 35)));
+  check('and the books still balance', books1.trialBalance.balanced === true);
+  check('the P&L names every account that moved, so nothing hides in a total',
+    books1.pnl.expenseLines.some((l) => l.code === '6300' && near(l.amount, 3500))
+    && books1.pnl.expenseLines.some((l) => l.code === '6340' && near(l.amount, 35))
+    && near(books1.pnl.expenseLines.reduce((t, l) => t + l.amount, 0), books1.pnl.expenses),
+    JSON.stringify(books1.pnl.expenseLines));
+  check('and an account that did not move is not listed',
+    !books1.pnl.expenseLines.some((l) => l.amount === 0));
+  check('net income carries every one of them',
+    near((books1.pnl.expenses - books0.pnl.expenses), 3775.5)
+    && near(books1.pnl.netIncome - books0.pnl.netIncome, -3775.5),
+    JSON.stringify([books0.pnl.expenses, books1.pnl.expenses]));
+
+  const rcClosed = req('/api/shifts/close', { shiftId: rcShift.data.shift.id, denoms: {} }, { session: rcMgr }).data.shift;
+  check('cash paid out of the till comes off the drawer, a transfer does not',
+    near(rcClosed.expectedCash, 200 - 35), String(rcClosed.expectedCash));
+
+  const rcExport = req('/api/drive/export', { date: day }, { session: rcAdm });
+  check('the day export has a running-costs line',
+    rcExport.ok && driveFiles[driveFiles.length - 1].content.indexOf(',,RUNNING COSTS,,3775.5') >= 0,
+    driveFiles[driveFiles.length - 1].content.slice(-420));
+  check('a running cost cannot be pushed from a terminal',
+    req('/api/sync/push', { deviceId: 'till-rc', batch: [{ clientTxId: 'rc-fake', kind: 'opex', grandTotal: 5,
+      tenders: [{ type: 'cash', amount: 5 }], items: [], createdAt: new Date().toISOString() }] }, { session: rcAdm })
+      .data.results[0].accepted === false);
+  check('recording one is audited', req('/api/audit', {}, { session: rcAdm, params: { action: 'expense.record' } }).data.entries.length === 3);
+
+  check('only an admin voids one', req('/api/expenses/void', { id: power.data.id, reason: 'x' }, { session: rcMgr }).status === 403);
+  check('a void needs a reason', req('/api/expenses/void', { id: power.data.id }, { session: rcAdm }).status === 400);
+  check('the admin voids the duplicate', req('/api/expenses/void', { id: power.data.id, reason: 'Entered twice' }, { session: rcAdm }).ok === true);
+  check('and it leaves the totals and the books',
+    near(req('/api/reports', {}, { session: rcAdm, params: { from: day, to: day } }).data.summary.runningCosts - rep0.runningCosts, 3535)
+    && !req('/api/accounting', {}, { session: rcAdm, params: { from: day, to: day } }).data.journal.some((j) => j.kind === 'opex' && j.ref === 'DD-0912'));
+  check('voiding twice is refused', req('/api/expenses/void', { id: power.data.id, reason: 'again' }, { session: rcAdm }).status === 409);
+  const afterVoid = req('/api/expenses', {}, { session: rcMgr, params: { from: day, to: day } }).data;
+  check('the voided one is off the list totals, but still on record with its state',
+    near(afterVoid.total, 3535) && near((afterVoid.categories.find((c) => c.id === 'utilities') || {}).total, 0)
+    && afterVoid.expenses.some((e) => e.id === power.data.id && e.status === 'VOIDED'),
+    JSON.stringify([afterVoid.total, afterVoid.categories.find((c) => c.id === 'utilities')]));
+
+  /* a category retired later, or a row written by an older version, must still
+     land somewhere the books can see rather than posting to nothing */
+  const orphan = sandbox.readRows_('Transactions', sandbox.TX_HEADERS).find((r) => r.id === rent.data.id);
+  sandbox.applyPatches_('Transactions', sandbox.TX_HEADERS, 'id', { [orphan.id]: { category: 'retired_category' } });
+  const booksOrphan = req('/api/accounting', {}, { session: rcAdm, params: { from: day, to: day } }).data;
+  check('a cost whose category no longer exists lands in Other, not nowhere',
+    near((booksOrphan.journal.find((j) => j.kind === 'opex' && j.ref === 'TRF-77120').lines.find((l) => l.code === '6390') || {}).debit, 3500)
+    && booksOrphan.trialBalance.balanced === true,
+    JSON.stringify(booksOrphan.journal.find((j) => j.kind === 'opex' && j.ref === 'TRF-77120')));
+  check('and the list still names it something a person can read',
+    req('/api/expenses', {}, { session: rcMgr, params: { from: day, to: day } }).data
+      .expenses.some((e) => e.id === orphan.id && e.categoryLabel === 'Other running costs'));
+  sandbox.applyPatches_('Transactions', sandbox.TX_HEADERS, 'id', { [orphan.id]: { category: 'rent' } });
+  check('a sale is not a running cost to void',
+    req('/api/expenses/void', { id: sandbox.readRows_('Transactions', sandbox.TX_HEADERS).find((r) => r.kind === 'sale').id, reason: 'x' }, { session: rcAdm }).status === 404);
+
+  /* ---- banking what the till gave up ---- */
+  const banking = () => req('/api/banking', {}, { session: rcMgr }).data;
+  const before = banking();
+  check('a cashier cannot see or move the banking', req('/api/banking', {}, { session: rcCash }).status === 403);
+  check('what is in transit is every pick-up less everything banked',
+    near(before.inTransit, before.pickedUp - before.banked) && before.pickedUp > 0, JSON.stringify(before));
+
+  const bank = (body, session) => req('/api/banking', body, { session: session || rcMgr });
+  check('a deposit needs its paying-in slip', bank({ amount: 10 }).status === 400);
+  check('an amount is required', bank({ amount: 0, reference: 'X' }).status === 400);
+  check('the shop cannot bank more than it is carrying',
+    bank({ amount: before.inTransit + 1, reference: 'TOO-MUCH' }).status === 409);
+
+  const booksPreBank = req('/api/accounting', {}, { session: rcAdm, params: { from: day, to: day } }).data;
+  const deposited = bank({ amount: 100, reference: 'PIS-4471', bank: 'First National', note: 'Friday run' });
+  check('the manager banks a hundred of it',
+    deposited.ok === true && near(deposited.data.inTransit, before.inTransit - 100), JSON.stringify(deposited.data));
+  check('and what is left in transit falls by exactly that', near(banking().inTransit, before.inTransit - 100));
+  check('the deposit is listed with its slip and who banked it',
+    banking().deposits.some((d) => d.reference === 'PIS-4471' && d.bank === 'First National' && d.by));
+
+  const books2 = req('/api/accounting', {}, { session: rcAdm, params: { from: day, to: day } }).data;
+  const bj = books2.journal.find((j) => j.kind === 'bank_deposit');
+  check('the books move it from the bag to the bank, and nowhere else',
+    !!bj && near(lineOf2(bj, '1020').debit, 100) && near(lineOf2(bj, '1030').credit, 100)
+    && bj.lines.length === 2, JSON.stringify(bj));
+  check('the books still balance', books2.trialBalance.balanced === true);
+  check('it is not a sale, a cost or a drawer movement',
+    near(req('/api/reports', {}, { session: rcAdm, params: { from: day, to: day } }).data.summary.banked, 100)
+    && near(req('/api/reports', {}, { session: rcAdm, params: { from: day, to: day } }).data.summary.grossSales, rep1.grossSales));
+  check('net income is untouched by banking money - it earns and costs nothing',
+    near(books2.pnl.netIncome, booksPreBank.pnl.netIncome)
+    && near(books2.pnl.expenses, booksPreBank.pnl.expenses),
+    JSON.stringify([booksPreBank.pnl.netIncome, books2.pnl.netIncome]));
+  check('the day export says what was banked',
+    req('/api/drive/export', { date: day }, { session: rcAdm }).ok
+    && driveFiles[driveFiles.length - 1].content.indexOf(',,BANKED,,100') >= 0);
+  check('banking is audited', req('/api/audit', {}, { session: rcAdm, params: { action: 'cash.banked' } }).data.entries.length === 1);
+
+  check('only an admin voids a deposit', req('/api/banking/void', { id: deposited.data.id, reason: 'x' }, { session: rcMgr }).status === 403);
+  check('the admin voids it, and the money is carried again',
+    req('/api/banking/void', { id: deposited.data.id, reason: 'Slip was for another shop' }, { session: rcAdm }).ok === true
+    && near(banking().inTransit, before.inTransit));
+  check('a voided deposit is out of the books',
+    !req('/api/accounting', {}, { session: rcAdm, params: { from: day, to: day } }).data.journal.some((j) => j.kind === 'bank_deposit'));
+  check('voiding twice is refused', req('/api/banking/void', { id: deposited.data.id, reason: 'again' }, { session: rcAdm }).status === 409);
 }
 {
   section('setup() deploy entry point (v1.35.1)');

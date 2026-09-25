@@ -32,6 +32,8 @@ export const DESTINATIONS = [
   { id: 'payout', label: N_('Paid Out'), screen: 'dashboard', roles: MANAGER, dialog: 'payout', group: 'cash' },
   { id: 'pickup', label: N_('Cash Pick Up'), screen: 'dashboard', roles: MANAGER, dialog: 'pickup', group: 'cash' },
   { id: 'expense', label: N_('Staff Expense'), screen: 'dashboard', roles: MANAGER, dialog: 'expense', group: 'cash' },
+  { id: 'expenses', label: N_('Running Costs'), screen: 'expenses', roles: MANAGER, group: 'cash' },
+  { id: 'banking', label: N_('Bank the Cash'), screen: 'dashboard', roles: MANAGER, dialog: 'banking', group: 'cash' },
   { id: 'customers', label: N_('Customers'), screen: 'customers', roles: MANAGER, group: 'stock' },
   { id: 'inventory', label: N_('Products'), screen: 'inventory', roles: MANAGER, group: 'stock' },
   { id: 'stockhealth', label: N_('Stock Health'), screen: 'stockhealth', roles: MANAGER, group: 'stock' },

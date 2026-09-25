@@ -90,6 +90,19 @@ check('the screen the waiting job needs is on the order that is coming',
   bench.parts.some((p) => p.sku === 'RP-SCR-IP12' && p.onOrder === 1 && p.shortfall === 0
     && p.tickets[0].status === 'awaiting_parts'), JSON.stringify(bench.parts.find((p) => p.sku === 'RP-SCR-IP12')));
 
+const bills = call(rt2, '/api/expenses', {}, tokens.manager, { from: day(31), to: day(-1) }).data;
+check('the demo shop pays real bills, in real categories',
+  bills.count === 5 && bills.categories[0].id === 'rent' && bills.total > 3700,
+  JSON.stringify(bills.categories.filter((c) => c.total > 0).map((c) => [c.id, c.total])));
+const banking = call(rt2, '/api/banking', {}, tokens.manager).data;
+check('and banks its cash, so nothing sits in transit for ever',
+  banking.banked === 200 && banking.inTransit >= 0, JSON.stringify(banking));
+check('the running costs reach net income',
+  (() => {
+    const b = call(rt2, '/api/accounting', {}, tokens.admin, { from: day(31), to: day(-1) }).data;
+    return b.pnl.expenses > 3700 && b.trialBalance.balanced === true;
+  })(), 'expected the bills in the P&L');
+
 const open = call(rt2, '/api/opening-balances', {}, tokens.admin).data;
 check('the demo shop says what it was already trading with',
   open.set === true && open.entry.cash === 300 && open.entry.bank === 14500 && open.entry.stockValue > 0,

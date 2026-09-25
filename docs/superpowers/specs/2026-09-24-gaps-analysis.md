@@ -60,16 +60,17 @@ likely), or is there an integrated reader? If standalone, the fix is a
 *card settlement* entry — "the acquirer deposited X for these days" — that
 clears 1010 to the bank, plus a report of unsettled card sales. Medium.
 
-### 3. Cash banking is a dead end
+### 3. Cash banking is a dead end — **built in v1.58.0**
 
 A cash pick-up debits 1030 *Cash in transit* and nothing clears it. There is
 no "deposited at the bank" step. Over a year, 1030 is the sum of every pick-up
 ever made and the books show a large imaginary asset in a bag.
 
-**What it takes:** a bank-deposit entry that clears 1030 to 1020, with the
-slip reference. Small, and it pairs naturally with the card settlement above.
+**Shipped in v1.58.0.** A deposit clears 1030 to 1020 against its paying-in
+slip, what is in transit is derived from pick-ups less deposits, and the shop
+cannot bank more than it is carrying.
 
-### 4. Real operating expenses cannot be recorded
+### 4. Real operating expenses cannot be recorded — **built in v1.58.0**
 
 The only money-out reasons are *Paid out*, *Staff expense* and *Cash pick-up*,
 and the only expense accounts are 6000 Paid out, 6100 Staff expenses and 5100
@@ -81,9 +82,9 @@ by bank transfer rather than out of the till.
 So the P&L reads: revenue, cost of goods, and petty cash. Net income is
 fiction, and the shop cannot tell whether it made money last month.
 
-**What it takes:** expense categories against real accounts, an expense entry
-that takes any payment method (not just cash from the drawer), and optionally
-a payee. Medium, and it is the single biggest hole in the accounting.
+**Shipped in v1.58.0.** Ten categories with their own accounts (6300-6390), a
+payee, any payment method, per-category totals and CSV. Recurring bills that
+post themselves are deliberately still not modelled.
 
 ---
 

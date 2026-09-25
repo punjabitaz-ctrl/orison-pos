@@ -7,7 +7,46 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.57.0 — the books start where the shop did
+## Latest: v1.58.0 — what the shop spends, and what it banks
+
+**2026-09-25.**
+
+Two of the three remaining Tier-0 gaps, closed together because they are one
+story: the profit and loss and the cash position both stop being fiction.
+
+- **Running costs.** Rent, power, the phone bill, the accountant, bank
+  charges — ten categories, each with its own account in the books. Paid in
+  cash from the till, by transfer or by cheque, with who was paid and the
+  reference. Cash comes off the drawer; a transfer does not.
+  - Totals by category for any period, a full list, and a CSV export.
+  - An admin can void one entered twice.
+  - **The till's petty cash is untouched** — *Paid out* and *Staff expense*
+    still mean exactly what they meant.
+- **Banking the cash.** A pick-up used to move notes into a bag and leave them
+  there for ever: *Cash in transit* only ever grew, and the balance sheet
+  carried a bag of money that had been at the bank for months. Now a deposit
+  says the bag arrived, against the paying-in slip — and the shop cannot bank
+  more than it is actually carrying.
+- **Net income finally means something.** Revenue, less cost of goods, less
+  wages, less every bill the shop pays.
+
+**Validation:** backend-sim **PASS 1346 / FAIL 0** · client units **PASS 619 /
+FAIL 0** · demo **PASS 41 / FAIL 0**.
+- Seven mutations confirm the tests bite, including two that first slipped
+  through: a cost whose category no longer exists posting to nothing, and a
+  voided cost still counted in the list totals.
+- A second thing the tests caught: two costs recorded in the same second
+  sorted arbitrarily, so the list reshuffled itself between loads. The order
+  is now deterministic.
+
+### Deploying
+
+**Backend redeploy required.** Nothing to run: the new `category` column is
+added on first use, and the ten expense accounts come with the code.
+
+---
+
+## v1.57.0 — the books start where the shop did
 
 **2026-09-24.**
 

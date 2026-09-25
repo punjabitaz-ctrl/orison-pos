@@ -77,6 +77,10 @@ function dispatch_(action, session, payload, params) {
     case '/api/shifts':          return shifts_(session, params);
     case '/api/shifts/open':     return shiftOpen_(session, payload);
     case '/api/shifts/close':    return shiftClose_(session, payload);
+    case '/api/banking':         return banking_(session, payload, params);
+    case '/api/banking/void':    return bankDepositVoid_(session, payload);
+    case '/api/expenses':        return expenses_(session, payload, params);
+    case '/api/expenses/void':   return expenseVoid_(session, payload);
     case '/api/opening-balances': return openingBalances_(session, payload, params);
     case '/api/opening-balances/void': return openingBalancesVoid_(session, payload);
     case '/api/payroll':         return payroll_(session, payload, params);
@@ -374,7 +378,7 @@ var PAYRUN_HEADERS  = ['id', 'store_id', 'period_from', 'period_to', 'status', '
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable', 'warranty_days'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at', 'cost', 'source', 'created_at'];
-var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by', 'tax_inclusive', 'tax_rate', 'supplier_id', 'po_id'];
+var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by', 'tax_inclusive', 'tax_rate', 'supplier_id', 'po_id', 'category'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at', 'credit_limit', 'trn'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status', 'closed_by'];
 var CONFLICT_HEADERS = ['id', 'store_id', 'type', 'serial_number', 'device_id', 'loser_client_tx', 'winner_tx_id', 'summary', 'status', 'created_at', 'reviewed_at', 'reviewed_by', 'dedupe_key'];
@@ -2578,7 +2582,7 @@ function indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows) {
 var CASH_OUT_KINDS = { payout: 'Paid out', pickup: 'Cash pick-up', expense: 'Staff expense' };
 
 /* Ledger kinds that only the server writes. Never accepted from a device. */
-var SERVER_ONLY_KINDS = { deposit: 1, deposit_refund: 1, tradein: 1, supplier_payment: 1, wages: 1 };
+var SERVER_ONLY_KINDS = { deposit: 1, deposit_refund: 1, tradein: 1, supplier_payment: 1, wages: 1, opex: 1, bank_deposit: 1 };
 
 function hasDepositTender_(tenders) {
   if (!Array.isArray(tenders)) return false;
@@ -4005,7 +4009,7 @@ function reports_(session, params) {
   var byCustomerTx = Object.create(null);
   var byChannel = Object.create(null);
   var byHour = Object.create(null);
-  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0, discounts: 0, approvedDiscounts: 0, tradeIns: 0, tradeInCount: 0, supplierPayments: 0, supplierPaymentCount: 0, wages: 0, wageRuns: 0 };
+  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0, discounts: 0, approvedDiscounts: 0, tradeIns: 0, tradeInCount: 0, supplierPayments: 0, supplierPaymentCount: 0, wages: 0, wageRuns: 0, runningCosts: 0, runningCostCount: 0, runningCostsByCategory: Object.create(null), banked: 0, bankedCount: 0 };
 
   function costOf_(t) {
     var items = itobjs_(t.items_json);
@@ -4156,6 +4160,23 @@ function reports_(session, params) {
         dje.amount -= num_(tenders[dj].amount);
         dje.count += 1;
       }
+    } else if (kind === 'bank_deposit') {
+      /* moving the shop's own money from the bag to the bank: not a sale, not
+         a cost, and the drawer was emptied when it was picked up */
+      summary.banked += num_(t.grand_total);
+      summary.bankedCount += 1;
+    } else if (kind === 'opex') {
+      /* rent, power, the accountant: a running cost, whoever it was paid to
+         and however it was paid */
+      summary.runningCosts += num_(t.grand_total);
+      summary.runningCostCount += 1;
+      var opexCat = String(t.category || 'other');
+      summary.runningCostsByCategory[opexCat] = round2_((summary.runningCostsByCategory[opexCat] || 0) + num_(t.grand_total));
+      for (var ox = 0; ox < tenders.length; ox++) {
+        var oxe = byTender[String(tenders[ox].type || 'cash')] || (byTender[String(tenders[ox].type || 'cash')] = { amount: 0, count: 0 });
+        oxe.amount -= num_(tenders[ox].amount);
+        oxe.count += 1;
+      }
     } else if (kind === 'wages') {
       /* paying the team: an expense of its own, never a sale and never cash out
          of the till unless it was actually paid in cash */
@@ -4254,6 +4275,11 @@ function reports_(session, params) {
       supplierPaymentCount: summary.supplierPaymentCount,
       wages: round2_(summary.wages),
       wageRuns: summary.wageRuns,
+      runningCosts: round2_(summary.runningCosts),
+      runningCostCount: summary.runningCostCount,
+      banked: round2_(summary.banked),
+      bankedCount: summary.bankedCount,
+      runningCostsByCategory: summary.runningCostsByCategory,
       netRevenue: summary.grossSales - summary.refunds - summary.payouts - summary.pickups - summary.expenses,
       salesCount: summary.salesCount,
       units: summary.units,
@@ -4310,6 +4336,16 @@ var CHART_OF_ACCOUNTS = [
   { code: '6000', name: 'Paid out', type: 'expense' },
   { code: '6100', name: 'Staff expenses', type: 'expense' },
   { code: '6200', name: 'Wages', type: 'expense' },
+  { code: '6300', name: 'Rent', type: 'expense' },
+  { code: '6310', name: 'Utilities', type: 'expense' },
+  { code: '6320', name: 'Phone and internet', type: 'expense' },
+  { code: '6330', name: 'Marketing', type: 'expense' },
+  { code: '6340', name: 'Transport and delivery', type: 'expense' },
+  { code: '6350', name: 'Insurance and licences', type: 'expense' },
+  { code: '6360', name: 'Professional fees', type: 'expense' },
+  { code: '6370', name: 'Repairs and maintenance', type: 'expense' },
+  { code: '6380', name: 'Bank charges', type: 'expense' },
+  { code: '6390', name: 'Other running costs', type: 'expense' },
   { code: '6900', name: 'Rounding', type: 'expense' },
 ];
 
@@ -4488,6 +4524,18 @@ function accounting_(session, params) {
       e = entry(t.created_at, 'supplier_payment', String(t.external_ref || ref), 'Paid ' + String(t.counterparty || 'supplier'));
       post(e, '2300', grossC);
       tenders(e, t, -1, grossC);
+    } else if (kind === 'bank_deposit') {
+      /* the bag reached the bank: cash in transit becomes money in the bank */
+      e = entry(t.created_at, 'bank_deposit', String(t.external_ref || ref), 'Banked ' + String(t.counterparty || ''));
+      post(e, '1020', grossC);
+      post(e, '1030', -grossC);
+    } else if (kind === 'opex') {
+      /* a running cost: the category says which expense account, the tender
+         says where the money came from */
+      e = entry(t.created_at, 'opex', String(t.external_ref || ref),
+        expenseLabel_(t.category) + (t.counterparty ? ' · ' + String(t.counterparty) : ''));
+      post(e, expenseAccount_(t.category), grossC);
+      tenders(e, t, -1, grossC);
     } else if (kind === 'wages') {
       /* the pay run is the expense; the tender is where the money came from */
       e = entry(t.created_at, 'wages', String(t.external_ref || ref), String(t.counterparty || 'Wages'));
@@ -4585,10 +4633,15 @@ function accounting_(session, params) {
      gross profit. Summed from the chart rather than a list, so an account
      added later cannot go quietly missing from net income. */
   var expC = 0;
+  var expenseLines = [];
   for (var xa = 0; xa < CHART_OF_ACCOUNTS.length; xa++) {
     var acct = CHART_OF_ACCOUNTS[xa];
     if (acct.type !== 'expense' || acct.code === '5000') continue;
-    expC += dr(acct.code);
+    var acctC = dr(acct.code);
+    expC += acctC;
+    /* every expense account that moved, named, so the screen never has to
+       keep its own list of what a cost can be */
+    if (acctC !== 0) expenseLines.push({ code: acct.code, name: acct.name, amount: acctC / 100 });
   }
 
   var movements = ['1000', '1010', '1020', '1030', '1100', '1150', '1200', '2000', '2100', '2200', '2300', '3000'].map(function (code) {
@@ -4611,6 +4664,7 @@ function accounting_(session, params) {
       staffExpenses: staffC / 100,
       wages: wagesC / 100,
       rounding: roundC / 100,
+      expenseLines: expenseLines,
       expenses: expC / 100,
       netIncome: (gpC - expC) / 100,
     },
@@ -8294,7 +8348,7 @@ function shiftExpectedCash_(shift, allTxRows) {
         for (var dq = 0; dq < tenders.length; dq++) {
           if (String(tenders[dq].type || '') === 'cash') expected += num_(tenders[dq].amount);
         }
-      } else if (kind === 'supplier_payment' || kind === 'wages') {
+      } else if (kind === 'supplier_payment' || kind === 'wages' || kind === 'opex') {
         /* a supplier - or the team - paid in cash from the till */
         for (var sq = 0; sq < tenders.length; sq++) {
           if (String(tenders[sq].type || '') === 'cash') expected -= num_(tenders[sq].amount);
@@ -8553,6 +8607,308 @@ function timeClock_(session, params) {
 }
 
 
+
+
+
+/* ------------------------------------------------------------------ *
+ *  Banking the cash (v1.59.0)
+ *
+ *  A cash pick-up takes notes out of the till and puts them in a bag: the
+ *  books move them from Cash to Cash in transit. Until now nothing ever moved
+ *  them on, so 1030 grew for ever and the balance sheet showed a large
+ *  imaginary asset sitting in a bag that had actually been banked months ago.
+ *
+ *  A deposit closes that loop: the bag reached the bank, so Cash in transit
+ *  becomes money in the bank, against the paying-in slip.
+ *
+ *  What is in transit is derived, never stored: every pick-up, less every
+ *  deposit that has not been voided. The shop cannot bank more than it is
+ *  carrying, because that would mean somebody counted twice.
+ * ------------------------------------------------------------------ */
+
+function bankingBook_() {
+  var store = getStore_();
+  var rows = readRows_('Transactions', TX_HEADERS);
+  var pickedUpC = 0, bankedC = 0;
+  var deposits = [];
+  for (var i = 0; i < rows.length; i++) {
+    var t = rows[i];
+    if (String(t.store_id) !== store.id) continue;
+    if (String(t.status) !== 'COMPLETED') continue;
+    var kind = String(t.kind || '');
+    if (kind === 'pickup') pickedUpC += cents_(t.grand_total);
+    else if (kind === 'bank_deposit') {
+      bankedC += cents_(t.grand_total);
+      deposits.push({
+        id: String(t.id),
+        amount: num_(t.grand_total),
+        at: String(t.created_at || ''),
+        reference: String(t.external_ref || ''),
+        bank: String(t.counterparty || ''),
+        note: String(t.note || ''),
+        by: auditName_(String(t.user_id || '')),
+      });
+    }
+  }
+  deposits.sort(function (a, b) { return String(b.at).localeCompare(String(a.at)); });
+  return { pickedUpC: pickedUpC, bankedC: bankedC, inTransitC: pickedUpC - bankedC, deposits: deposits };
+}
+
+function banking_(session, payload, params) {
+  requireRole_(session, ['admin', 'manager']);
+  if (payload && Object.keys(payload).length) return bankDeposit_(session, payload);
+  var book = bankingBook_();
+  return {
+    pickedUp: book.pickedUpC / 100,
+    banked: book.bankedC / 100,
+    inTransit: book.inTransitC / 100,
+    deposits: book.deposits.slice(0, 200),
+  };
+}
+
+function bankDeposit_(session, payload) {
+  var amountC = cents_(payload.amount);
+  var reference = String(payload.reference || '').trim().slice(0, 60);
+  var bank = String(payload.bank || '').trim().slice(0, 80);
+  if (!(amountC > 0)) throw statusError_(400, 'Enter what was banked');
+  if (!reference) throw statusError_(400, 'A deposit needs its paying-in slip or reference');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var book = bankingBook_();
+    if (amountC > book.inTransitC) {
+      throw statusError_(409, 'Only ' + (book.inTransitC / 100).toFixed(2) + ' has been picked up and not yet banked');
+    }
+    var now = new Date().toISOString();
+    var txId = Utilities.getUuid();
+    var amount = amountC / 100;
+    appendRows_('Transactions', TX_HEADERS, [{
+      id: txId, store_id: getStore_().id, user_id: String(session.uid || ''), device_id: 'server',
+      client_tx_id: 'bank-' + txId.slice(0, 8), kind: 'bank_deposit', original_client_tx: '',
+      counterparty: bank, grand_total: amount, status: 'COMPLETED',
+      tenders_json: '[]', items_json: '[]',
+      note: String(payload.note || '').slice(0, 200), created_at: now,
+      subtotal: '', tax_amount: '', discount_pct: '', customer_id: '',
+      receipt_no: '', channel: 'in_store', external_ref: reference, supplier_id: '', po_id: '', category: '',
+    }]);
+    logAudit_(session, 'cash.banked', 'banking', txId,
+      'Banked ' + amount + (bank ? ' at ' + bank : '') + ' (' + reference + ')', payload.deviceId);
+    return { id: txId, amount: amount, inTransit: (book.inTransitC - amountC) / 100 };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function bankDepositVoid_(session, payload) {
+  requireRole_(session, ['admin']);
+  payload = payload || {};
+  var id = String(payload.id || '');
+  var reason = String(payload.reason || '').trim().slice(0, 200);
+  if (!reason) throw statusError_(400, 'A void needs a reason');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var rows = readRows_('Transactions', TX_HEADERS);
+    var row = null;
+    for (var i = 0; i < rows.length; i++) if (String(rows[i].id) === id) { row = rows[i]; break; }
+    if (!row || String(row.kind) !== 'bank_deposit') throw statusError_(404, 'Deposit not found');
+    if (String(row.status) === 'VOIDED') throw statusError_(409, 'That deposit is already voided');
+    applyPatches_('Transactions', TX_HEADERS, 'id', {
+      [id]: { status: 'VOIDED', note: 'VOIDED: ' + reason },
+    });
+    logAudit_(session, 'cash.banked_void', 'banking', id,
+      'Deposit of ' + num_(row.grand_total) + ' voided: ' + reason, payload.deviceId);
+    return { id: id, status: 'VOIDED' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Running costs (v1.58.0)
+ *
+ *  Rent, power, the phone bill, the accountant, bank charges. Until now the
+ *  only money-out this system knew was petty cash from the till - paid out
+ *  and staff expenses - so the profit and loss read revenue, cost of goods,
+ *  and pocket money. Net income was fiction: the shop could not tell whether
+ *  it made money last month.
+ *
+ *  A running cost is a category, an amount, who it was paid to, and how it
+ *  was paid - cash from the till, a bank transfer or a cheque. The category
+ *  picks the expense account, so the profit and loss reads like a real one
+ *  and the accountant gets a chart they recognise.
+ *
+ *  It is deliberately NOT the petty-cash flow. 'payout' and 'expense' stay
+ *  exactly as they are: the till's own small movements, cash only, posted to
+ *  Paid out and Staff expenses. A running cost is the business paying a bill,
+ *  whichever pocket it came from.
+ *
+ *  Not modelled on purpose: recurring bills that post themselves. A bill the
+ *  shop has not looked at is a bill nobody checked, and a POS that invents
+ *  transactions is worse than one that waits to be told.
+ * ------------------------------------------------------------------ */
+
+var EXPENSE_CATEGORIES = [
+  { id: 'rent', code: '6300', label: 'Rent' },
+  { id: 'utilities', code: '6310', label: 'Utilities' },
+  { id: 'phone', code: '6320', label: 'Phone and internet' },
+  { id: 'marketing', code: '6330', label: 'Marketing' },
+  { id: 'transport', code: '6340', label: 'Transport and delivery' },
+  { id: 'insurance', code: '6350', label: 'Insurance and licences' },
+  { id: 'professional', code: '6360', label: 'Professional fees' },
+  { id: 'maintenance', code: '6370', label: 'Repairs and maintenance' },
+  { id: 'bank', code: '6380', label: 'Bank charges' },
+  { id: 'other', code: '6390', label: 'Other running costs' },
+];
+
+var EXPENSE_PAY_METHODS = { cash: 'Cash from the till', bank: 'Bank transfer', cheque: 'Cheque' };
+
+function expenseCategory_(id) {
+  for (var i = 0; i < EXPENSE_CATEGORIES.length; i++) {
+    if (EXPENSE_CATEGORIES[i].id === String(id || '')) return EXPENSE_CATEGORIES[i];
+  }
+  return null;
+}
+
+/* An unknown category still has to land somewhere the books can see: a row
+   written by an older version, or a category retired later, becomes Other
+   rather than vanishing from the profit and loss. */
+function expenseAccount_(id) {
+  var cat = expenseCategory_(id);
+  return cat ? cat.code : '6390';
+}
+
+function expenseLabel_(id) {
+  var cat = expenseCategory_(id);
+  return cat ? cat.label : 'Other running costs';
+}
+
+function expenseRow_(row) {
+  var tenders = [];
+  try { tenders = JSON.parse(row.tenders_json || '[]'); } catch (_) {}
+  return {
+    id: String(row.id),
+    category: String(row.category || 'other'),
+    categoryLabel: expenseLabel_(row.category),
+    account: expenseAccount_(row.category),
+    amount: num_(row.grand_total),
+    payee: String(row.counterparty || ''),
+    method: String((tenders[0] || {}).type || 'cash'),
+    reference: String(row.external_ref || ''),
+    note: String(row.note || ''),
+    at: String(row.created_at || ''),
+    by: auditName_(String(row.user_id || '')),
+    status: String(row.status || 'COMPLETED'),
+  };
+}
+
+function expenses_(session, payload, params) {
+  requireRole_(session, ['admin', 'manager']);
+  if (payload && Object.keys(payload).length) return expenseCreate_(session, payload);
+
+  var store = getStore_();
+  var tzMin = num_(store.tzOffsetMin);
+  var from = String((params && params.from) || '');
+  var to = String((params && params.to) || '');
+  var fromIso = from ? dateOnlyToIso_(from, tzMin, false) : '';
+  var toIso = to ? dateOnlyToIso_(to, tzMin, true) : '';
+  var wantCat = String((params && params.category) || '');
+
+  var rows = readRows_('Transactions', TX_HEADERS).filter(function (t) {
+    if (String(t.kind) !== 'opex') return false;
+    if (String(t.store_id) !== store.id) return false;
+    var at = String(t.created_at || '');
+    if (fromIso && at < fromIso) return false;
+    if (toIso && at > toIso) return false;
+    if (wantCat && String(t.category || 'other') !== wantCat) return false;
+    return true;
+  });
+  /* newest first, and when two were recorded in the same second the one
+     written later wins - so the list does not reshuffle itself between loads */
+  for (var r = 0; r < rows.length; r++) rows[r].__seq = r;
+  rows.sort(function (a, b) {
+    return String(b.created_at).localeCompare(String(a.created_at)) || (b.__seq - a.__seq);
+  });
+
+  var byCategory = Object.create(null);
+  var total = 0;
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].status) !== 'COMPLETED') continue;
+    var cat = String(rows[i].category || 'other');
+    byCategory[cat] = round2_((byCategory[cat] || 0) + num_(rows[i].grand_total));
+    total += num_(rows[i].grand_total);
+  }
+  var categories = EXPENSE_CATEGORIES.map(function (c) {
+    return { id: c.id, label: c.label, code: c.code, total: round2_(byCategory[c.id] || 0) };
+  }).sort(function (a, b) { return b.total - a.total; });
+
+  return {
+    expenses: rows.slice(0, 300).map(expenseRow_),
+    categories: categories,
+    total: round2_(total),
+    count: rows.filter(function (r) { return String(r.status) === 'COMPLETED'; }).length,
+    methods: Object.keys(EXPENSE_PAY_METHODS),
+  };
+}
+
+function expenseCreate_(session, payload) {
+  var cat = expenseCategory_(payload.category);
+  if (!cat) throw statusError_(400, 'Pick what the money was spent on');
+  var method = String(payload.method || 'cash');
+  if (!Object.prototype.hasOwnProperty.call(EXPENSE_PAY_METHODS, method)) throw statusError_(400, 'Pay by cash, bank transfer or cheque');
+  var amountC = cents_(payload.amount);
+  if (!(amountC > 0)) throw statusError_(400, 'Enter the amount');
+  var reference = String(payload.reference || '').trim().slice(0, 60);
+  if (method !== 'cash' && !reference) throw statusError_(400, 'A bank transfer or cheque needs its reference');
+  var payee = String(payload.payee || '').trim().slice(0, 80);
+  if (!payee) throw statusError_(400, 'Say who was paid');
+
+  var amount = amountC / 100;
+  var now = new Date().toISOString();
+  var txId = Utilities.getUuid();
+  appendRows_('Transactions', TX_HEADERS, [{
+    id: txId, store_id: getStore_().id, user_id: String(session.uid || ''), device_id: 'server',
+    client_tx_id: 'opex-' + txId.slice(0, 8), kind: 'opex', original_client_tx: '',
+    counterparty: payee, grand_total: amount, status: 'COMPLETED',
+    tenders_json: JSON.stringify([{ type: method, amount: amount }]), items_json: '[]',
+    note: String(payload.note || '').slice(0, 200), created_at: now,
+    subtotal: '', tax_amount: '', discount_pct: '', customer_id: '',
+    receipt_no: '', channel: 'in_store', external_ref: reference, supplier_id: '', po_id: '',
+    category: cat.id,
+  }]);
+  logAudit_(session, 'expense.record', 'expense', txId,
+    cat.label + ' ' + amount + ' to ' + payee + ' by ' + EXPENSE_PAY_METHODS[method]
+    + (reference ? ' (' + reference + ')' : ''), payload.deviceId);
+  return { id: txId, category: cat.id, amount: amount, method: method, account: cat.code };
+}
+
+function expenseVoid_(session, payload) {
+  requireRole_(session, ['admin']);
+  payload = payload || {};
+  var id = String(payload.id || '');
+  var reason = String(payload.reason || '').trim().slice(0, 200);
+  if (!reason) throw statusError_(400, 'A void needs a reason');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var rows = readRows_('Transactions', TX_HEADERS);
+    var row = null;
+    for (var i = 0; i < rows.length; i++) if (String(rows[i].id) === id) { row = rows[i]; break; }
+    if (!row || String(row.kind) !== 'opex') throw statusError_(404, 'Running cost not found');
+    if (String(row.status) === 'VOIDED') throw statusError_(409, 'That is already voided');
+    applyPatches_('Transactions', TX_HEADERS, 'id', {
+      [id]: { status: 'VOIDED', note: 'VOIDED: ' + reason },
+    });
+    logAudit_(session, 'expense.void', 'expense', id,
+      expenseLabel_(row.category) + ' ' + num_(row.grand_total) + ' voided: ' + reason, payload.deviceId);
+    return { id: id, status: 'VOIDED' };
+  } finally {
+    lock.releaseLock();
+  }
+}
 
 /* ------------------------------------------------------------------ *
  *  Opening balances (v1.57.0)
@@ -9809,7 +10165,7 @@ function driveExport_(session, payload, params) {
   var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note' + (isStore ? ',cost,gross_profit' : '') + '\n';
   var sales = 0, refunds = 0, payouts = 0, pickups = 0, expenses = 0, collections = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
   var cashDrawer = 0, cardTotal = 0;
-  var depositsIn = 0, depositsApplied = 0, depositsRefunded = 0, tradeIns = 0, supplierPaid = 0, wagesPaid = 0;
+  var depositsIn = 0, depositsApplied = 0, depositsRefunded = 0, tradeIns = 0, supplierPaid = 0, wagesPaid = 0, runningCosts = 0, banked = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
     var k = String(t.kind || 'sale');
@@ -9824,6 +10180,8 @@ function driveExport_(session, payload, params) {
     else if (k === 'tradein') tradeIns += v;
     else if (k === 'supplier_payment') supplierPaid += v;
     else if (k === 'wages') wagesPaid += v;
+    else if (k === 'opex') runningCosts += v;
+    else if (k === 'bank_deposit') banked += v;
     else if (k !== 'purchase') sales += v;
 
     /* What the drawer should actually hold is a TENDER question, not a kind
@@ -9836,7 +10194,7 @@ function driveExport_(session, payload, params) {
       if (dty === 'card') cardTotal += (k === 'refund' || k === 'deposit_refund' ? -dta : dta);
       if (dty === 'deposit' && k === 'sale') depositsApplied += dta;
       if (dty !== 'cash') continue;
-      if (k === 'refund' || k === 'deposit_refund' || k === 'tradein' || k === 'supplier_payment' || k === 'wages') cashDrawer -= dta;
+      if (k === 'refund' || k === 'deposit_refund' || k === 'tradein' || k === 'supplier_payment' || k === 'wages' || k === 'opex') cashDrawer -= dta;
       else if (k === 'sale' || k === 'payment' || k === 'deposit') cashDrawer += dta;
     }
     if (isCashOutKind_(k)) cashDrawer -= v;
@@ -9895,6 +10253,8 @@ function driveExport_(session, payload, params) {
   csv += ',,TRADE-INS BOUGHT,,' + String(round2_(tradeIns)) + ',\n';
   csv += ',,SUPPLIERS PAID,,' + String(round2_(supplierPaid)) + ',\n';
   csv += ',,WAGES PAID,,' + String(round2_(wagesPaid)) + ',\n';
+  csv += ',,RUNNING COSTS,,' + String(round2_(runningCosts)) + ',\n';
+  csv += ',,BANKED,,' + String(round2_(banked)) + ',\n';
   csv += ',,CARD,,' + String(round2_(cardTotal)) + ',\n';
   csv += ',,CASH IN DRAWER,,' + String(round2_(cashDrawer)) + ',\n';
   csv += ',,NET CASH,,' + String(net) + ',\n';

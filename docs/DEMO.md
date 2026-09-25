@@ -49,6 +49,8 @@ The guide's **Sign in** buttons switch account in one tap. When a cashier needs 
 
 **As the manager (Sarah)**
 1. Record paid out, a cash pick-up or a staff expense.
+2. Menu → **Running Costs**: the rent, the power bill and the rest, with totals by category and a CSV export. Record one of your own.
+3. Menu → **Bank the Cash**: what has been picked up and not yet banked, and the deposit that took $200 of it to the bank.
 2. Close a till shift and count the drawer. Amara's shift is open.
 3. Open Purchases and look at **The bench is waiting for**: the Pixel charge port nobody has ordered. *Order what is short* raises the order and marks that job as on order.
 4. Receive the purchase order that is on its way. It is on 5% trade terms with tax on the invoice, so the dialog shows the stock and the tax separately and what the delivery will be owed — and the receipt names the bench job it frees. Open that ticket and **Fit it**.

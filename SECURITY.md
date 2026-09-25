@@ -214,6 +214,8 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/repairs/needs` (the bench's own list) | admin, manager, cashier |
 | `/api/payroll`, `/detail`, `/line`, `/pay`, `/void` | **admin only** |
 | `/api/opening-balances`, `/void` | **admin only** |
+| `/api/expenses`, `/api/banking` (record and read) | admin, manager |
+| `/api/expenses/void`, `/api/banking/void` | **admin only** |
 
 Pay rates are admin-only end to end: `/api/admin/users/list` returns `payType`
 and `payRate` **only** to an admin, and only an admin can set them.

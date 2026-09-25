@@ -198,6 +198,19 @@ export function seedDemo(rt, { now = new Date() } = {}) {
     cash: 300, bank: 14500, note: 'Counted with the owner on the day we switched',
   });
 
+  /* the bills a shop actually pays, so the profit and loss is a real one */
+  const bills = [
+    { category: 'rent', amount: 3200, payee: 'Main Street Holdings', method: 'bank', reference: 'TRF-88120', note: 'September' },
+    { category: 'utilities', amount: 286.4, payee: 'City Power', method: 'bank', reference: 'DD-0914' },
+    { category: 'phone', amount: 119, payee: 'Etisalat Business', method: 'bank', reference: 'DD-0915' },
+    { category: 'marketing', amount: 150, payee: 'Local paper', method: 'cash' },
+    { category: 'bank', amount: 22.5, payee: 'First National', method: 'bank', reference: 'FEE-09' },
+  ];
+  for (const bill of bills) req(mgr, '/api/expenses', bill);
+
+  /* and the week's takings went to the bank */
+  req(mgr, '/api/banking', { amount: 200, reference: 'PIS-77120', bank: 'First National', note: 'Friday run' });
+
   /* what the team is paid, so a pay run can be drafted straight away */
   const team = req(adm, '/api/admin/users/list', {}).users;
   const rateFor = { admin: ['monthly', 6500], manager: ['monthly', 4200], cashier: ['hourly', 18] };

@@ -135,6 +135,8 @@ export const screen = {
           ${sum.tradeInCount ? `<p class="muted rep-sub">${esc($t('Trade-ins bought: {amount} · {n} devices', { amount: money(sum.tradeIns), n: sum.tradeInCount }))}</p>` : ''}
           ${sum.supplierPaymentCount ? `<p class="muted rep-sub">${esc($t('Suppliers paid: {amount} · {n} payments', { amount: money(sum.supplierPayments), n: sum.supplierPaymentCount }))}</p>` : ''}
           ${sum.wageRuns ? `<p class="muted rep-sub">${esc($t('Wages paid: {amount} · {n} runs', { amount: money(sum.wages), n: sum.wageRuns }))}</p>` : ''}
+          ${sum.runningCostCount ? `<p class="muted rep-sub">${esc($t('Running costs: {amount} · {n} bills', { amount: money(sum.runningCosts), n: sum.runningCostCount }))}</p>` : ''}
+          ${sum.bankedCount ? `<p class="muted rep-sub">${esc($t('Banked: {amount} · {n} deposits', { amount: money(sum.banked), n: sum.bankedCount }))}</p>` : ''}
         </section>
 
         ${(data.byHour || []).length ? `
@@ -303,6 +305,8 @@ function exportCsv(data, range) {
   lines.push(['trade_ins_bought', money(s.tradeIns || 0)].join(','));
   lines.push(['suppliers_paid', money(s.supplierPayments || 0)].join(','));
   lines.push(['wages_paid', money(s.wages || 0)].join(','));
+  lines.push(['running_costs', money(s.runningCosts || 0)].join(','));
+  lines.push(['banked', money(s.banked || 0)].join(','));
   lines.push(['net_revenue', money(s.netRevenue)].join(','));
   lines.push(['sales_count', String(s.salesCount)].join(','));
   lines.push(['units', String(s.units)].join(','));

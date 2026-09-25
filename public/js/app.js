@@ -28,11 +28,12 @@ import { screen as repairs } from './screens/repairs.js';
 import { screen as stockhealth } from './screens/stockhealth.js';
 import { screen as serialtrace } from './screens/serialtrace.js';
 import { screen as payroll } from './screens/payroll.js';
+import { screen as expenses } from './screens/expenses.js';
 import { primaryTabs, menuTiles, navGroups, isRestricted } from './nav.js';
 import { navButton, appHeaderHtml } from './components.js';
 import { $t, $tn, setLanguage, resolveLanguage, loadChoice, setStoreLanguage, dateLocale } from './lang.js';
 
-const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff, menu, audit, accounts, tradein, salesreport, repairs, stockhealth, serialtrace, payroll };
+const SCREENS = { dashboard, login, register, checkout, history, customers, reports, purchases, inventory, settings, alerts, staff, menu, audit, accounts, tradein, salesreport, repairs, stockhealth, serialtrace, payroll, expenses };
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -140,6 +141,10 @@ function renderNav() {
       const hit = tiles.find((d) => d.id === tab.dataset.tab);
       if (hit && hit.dialog === 'drawer') {
         import('./drawer-dialog.js').then((m) => m.openDrawerDialog(ctx));
+        return;
+      }
+      if (hit && hit.dialog === 'banking') {
+        import('./banking-dialog.js').then((m) => m.openBankingDialog(ctx));
         return;
       }
       if (hit && hit.dialog === 'external') {

@@ -38,6 +38,7 @@ export const screen = {
       if (!hit) return;
       if (hit.dialog === 'external') { openExternalSaleDialog(ctx); return; }
       if (hit.dialog === 'drawer') { openDrawerDialog(ctx); return; }
+      if (hit.dialog === 'banking') { import('../banking-dialog.js').then((m) => m.openBankingDialog(ctx)); return; }
       if (hit.dialog) { openCashOutDialog(ctx, hit.dialog); return; }
       router.show(hit.screen);
     };

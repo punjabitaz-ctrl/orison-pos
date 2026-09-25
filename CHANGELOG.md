@@ -5,6 +5,57 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.58.0] — 2026-09-25
+
+Two Tier-0 gaps in one release, because they are one story: the profit and
+loss and the cash position both stop being fiction.
+
+### Added
+
+- **Running costs** (Menu → Running Costs, manager and admin). Rent, power,
+  the phone bill, the accountant, bank charges. Until now the only money-out
+  this system knew was petty cash from the till, so the P&L read revenue,
+  cost of goods and pocket money, and net income was fiction.
+  - Ten categories, each with its own account in the books (6300 Rent through
+    6390 Other running costs), so an accountant gets a chart they recognise.
+  - Paid by **cash from the till, bank transfer or cheque** — cash comes off
+    the drawer count, a transfer does not touch it.
+  - Who was paid, the reference, a note. Listed newest first with totals by
+    category for any period, filterable, exportable as CSV.
+  - An admin can **void** one with a reason; it stays on record and leaves
+    every total and the books.
+  - Reports gains *Running costs* with a per-category split; the day export
+    gains a **RUNNING COSTS** line.
+  - **Petty cash is untouched:** *Paid out* and *Staff expense* stay exactly
+    as they are — the till's own small movements.
+- **Banking the cash** (Menu → Bank the Cash, manager and admin). A cash
+  pick-up moved notes from the till into a bag and the books called it *Cash
+  in transit* — then nothing ever moved them on, so that account grew for ever
+  and the balance sheet showed a large imaginary asset.
+  - A deposit says the bag reached the bank: Cash in transit becomes money in
+    the bank, against the paying-in slip.
+  - **What is in transit is derived, never stored**: every pick-up less every
+    deposit that has not been voided. The shop cannot bank more than it is
+    carrying.
+  - Reports gains *Banked*; the day export gains a **BANKED** line. An admin
+    can void a deposit, and the money is carried again.
+- **Demo:** the sample shop now pays rent, power, phone, marketing and bank
+  charges, and banks $200 of its takings.
+
+### Fixed
+
+- **The profit and loss listed a fixed set of expense lines**, so the ten new
+  accounts would have been inside the total and invisible on the screen — the
+  same shape of bug that hid Wages in v1.56.0. The books now return every
+  expense account that moved in the period, and the screen renders whatever it
+  is given.
+
+### Note
+
+Recurring bills that post themselves are deliberately not modelled. A bill
+nobody looked at is a bill nobody checked, and a POS that invents transactions
+is worse than one that waits to be told.
+
 ## [1.57.0] — 2026-09-24
 
 ### Added
