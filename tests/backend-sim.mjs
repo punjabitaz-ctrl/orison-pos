@@ -5589,8 +5589,8 @@ check('statement carries the changer/cashier',
   check('profile summaries what they spent and net of refunds',
     prof.summary.totalSpent === 840 && prof.summary.refunds === 10 && Math.abs(prof.summary.netOfRefunds - 830) < 0.001,
     JSON.stringify(prof.summary));
-  check('visits count every completed transaction and drive the average sale',
-    prof.summary.visits === 3 && prof.summary.averageSale === 280, JSON.stringify({ v: prof.summary.visits, a: prof.summary.averageSale }));
+  check('visits count every completed transaction; average sale divides by sales only',
+    prof.summary.visits === 3 && prof.summary.averageSale === 420, JSON.stringify({ v: prof.summary.visits, a: prof.summary.averageSale }));
   check('profile mirrors the ledger money',
     prof.summary.balance === prof.ledger.balance && prof.summary.owes === prof.ledger.account && prof.summary.storeCredit === prof.ledger.credit,
     JSON.stringify({ s: prof.summary, l: prof.ledger }));

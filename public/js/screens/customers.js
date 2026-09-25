@@ -375,8 +375,7 @@ export const screen = {
     function shortDate(iso) {
       if (!iso) return '';
       const d = new Date(iso);
-      if (isNaN(d)) return iso;
-      return d.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' });
+      return isNaN(d) ? '' : d.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' });
     }
 
     /* Repair status shown to a customer standing with staff. Matches the

@@ -13,7 +13,7 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.55.0** — lifecycle reminders: a read-only Dashboard panel for admin/manager showing warranties expiring within 30 days, repairs ready with deposit, customers whose brand-new devices sold 24+ months ago are upgrade candidates, and store credit still outstanding — all derived from existing data (`2026-09-24`) |
+| Current version | **v1.55.1** — review pass on the lifecycle sprints: a cross-sprint audit of v1.51.0 → v1.55.0 found no security issues and corrected two figures (the serial trace no longer renders VOIDED transactions as real steps; the profile's average sale divides by sales only), plus client hardening (trace search races its debounce no longer, repair statuses localize, malformed dates fall back cleanly). v1.55.0 shipped the lifecycle reminders Dashboard panel (`2026-09-24`) |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
 | Validation bar | `backend-sim` **PASS 1205 / FAIL 0** · client units **PASS 572 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~9,444 lines) |
@@ -127,6 +127,16 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.55.1** Review pass before the merge to `main`: two figures corrected and
+  client hardening. The serial trace excludes VOIDED transactions (a void no
+  longer renders as a real step); the Customer 360 profile's `averageSale`
+  divides by sales only, matching the Sales report's count; the trace search
+  reads the input at press time instead of racing its 200ms debounce (barcode
+  Enter raced it); repair statuses on the trace reuse the Repairs screen labels
+  instead of the raw server slug; malformed dates fall back cleanly instead of
+  throwing or leaking raw HTML (`shortDate` guard); profile maps are
+  null-prototype, the bootstrap serial path stamps `created_at`, and two dead
+  variables were removed.
 - **v1.55.0** Lifecycle reminders (`/api/reminders`, admin/manager, read-only):
   one Dashboard **Reminders** panel for the owner or manager opening the day —
   warranties expiring within 30 days (customer, device, expiry), repairs ready

@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.55.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.55.1** (review pass on v1.51.0 → v1.55.0: no security issues; the serial trace no longer renders VOIDED transactions as real steps and the profile's average sale divides by sales only, plus client hardening — full detail in [`RELEASE_NOTES.md`](RELEASE_NOTES.md#latest-v1551--review-pass-on-the-lifecycle-sprints)). **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 

@@ -5,6 +5,31 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.55.1] — 2026-09-24
+
+### Fixed
+
+- **Serial trace no longer falsifies a device's life.** VOIDED transactions
+  are excluded from the timeline instead of rendering as real steps, so a
+  void doesn't look like a sale that happened.
+- **Average sale divides by sales only.** The Customer 360 profile's
+  `averageSale` counted every completed transaction (refunds, payments and
+  trade-ins) as a "sale the customer made"; it now divides by sales the way
+  the Sales report does, so one refund can't drag the average toward the
+  wrong number.
+- **The trace search can't run on a stale query.** Pressing Enter (a barcode
+  scanner's keystroke) raced the 200ms debounce and searched the previous
+  value; the button now reads the input at press time.
+- **Repair statuses translate on the trace.** The status slug from the server
+  was used as a translation key and fell back to English; the trace now uses
+  the same labels as the Repairs screen.
+- **Malformed dates can't blank the trace or leak raw HTML.** `date()` threw
+  on unparseable input and `shortDate()` returned the raw string unescaped;
+  both now guard and fall back cleanly.
+- **Hardenings in the review pass:** profile maps use null-prototype objects,
+  the seeded serial-insert path stamps `created_at`, and two dead variables
+  were removed.
+
 ## [1.55.0] — 2026-09-24
 
 ### Added

@@ -1452,6 +1452,7 @@ function seed_() {
         status: 'IN_STOCK',
         tx_id: '',
         updated_at: now,
+        created_at: now,
       });
     }
   }
@@ -3414,8 +3415,10 @@ function customerProfile_(session, params) {
   /* the profile's summary uses transaction totals, matching the printed
      receipt and the Sales report's gross/refunds split. A visit is any
      completed transaction that named the customer (a trade-in or a payment
-     counts as a visit too). */
-  var gross = 0, refunds = 0, visits = 0, firstVisit = '', lastVisit = '';
+     counts as a visit too). The average sale is gross over sales only —
+     the same salesCount the Sales report divides by — so a refund or a
+     payment can't drag it toward the wrong number. */
+  var gross = 0, refunds = 0, visits = 0, salesCount = 0, firstVisit = '', lastVisit = '';
   for (var v = 0; v < txRows.length; v++) {
     var tv = txRows[v];
     var kind = String(tv.kind || 'sale');
@@ -3423,21 +3426,19 @@ function customerProfile_(session, params) {
     visits++;
     if (!firstVisit || tvDate < firstVisit) firstVisit = tvDate;
     if (tvDate > lastVisit) lastVisit = tvDate;
-    if (kind === 'sale') gross += num_(tv.grand_total);
+    if (kind === 'sale') { salesCount++; gross += num_(tv.grand_total); }
     else if (kind === 'refund') refunds += num_(tv.grand_total);
   }
 
   /* serialized devices they bought, with the same warranty answer the
      Warranty screen gives (refunded units covered nothing) */
   var refundedSerials = Object.create(null);
-  var refundedQty = Object.create(null);
   for (var rf = 0; rf < txRows.length; rf++) {
     var rt = txRows[rf];
     if (String(rt.kind || '') !== 'refund') continue;
     var ritems = itobjs_(rt.items_json);
     for (var ri = 0; ri < ritems.length; ri++) {
       if (ritems[ri].serialNumber) refundedSerials[String(ritems[ri].serialNumber)] = true;
-      else refundedQty[String(ritems[ri].productId)] = (refundedQty[String(ritems[ri].productId)] || 0) + (ritems[ri].quantity || 1);
     }
   }
   var now = Date.now();
@@ -3503,7 +3504,7 @@ function customerProfile_(session, params) {
       netOfRefunds: round2_(gross - refunds),
       refunds: round2_(refunds),
       visits: visits,
-      averageSale: visits ? round2_(gross / visits) : 0,
+      averageSale: salesCount ? round2_(gross / salesCount) : 0,
       balance: money.balance,
       owes: money.account,
       storeCredit: money.credit,
@@ -5317,7 +5318,7 @@ function inventoryVelocity_(session, params) {
 
   /* units and AED sold / refunded, units received (purchase rows), and the
      cost-at-sale for gross profit - the same money the Sales report computes. */
-  var soldU = {}, refundU = {}, soldRev = {}, refundRev = {}, received = {}, cost = {};
+  var soldU = Object.create(null), refundU = Object.create(null), soldRev = Object.create(null), refundRev = Object.create(null), received = Object.create(null), cost = Object.create(null);
   var add = function (map, key, n) { map[key] = (map[key] || 0) + n; };
   var txRows = readRows_('Transactions', TX_HEADERS);
   for (var t = 0; t < txRows.length; t++) {
@@ -5358,7 +5359,7 @@ function inventoryVelocity_(session, params) {
     }
   }
 
-  var serialCount = {};
+  var serialCount = Object.create(null);
   var serRows = readRows_('Serials', SERIAL_HEADERS);
   for (var s = 0; s < serRows.length; s++) {
     if (String(serRows[s].status) !== 'IN_STOCK') continue;
@@ -5366,7 +5367,7 @@ function inventoryVelocity_(session, params) {
     serialCount[spid] = (serialCount[spid] || 0) + 1;
   }
 
-  var probe = {};
+  var probe = Object.create(null);
   for (var pr = 0; pr < prods.length; pr++) {
     probe[String(prods[pr].id)] = 1;
   }
@@ -6767,6 +6768,11 @@ function serialsTrace_(session, params) {
 
   for (var t = 0; t < txs.length; t++) {
     var tx = txs[t];
+    /* A VOIDED row (a conflicted sale, or a refund that was rejected and
+       counter-paid) never happened on the book: it must not show on the
+       timeline as a sale that stood, or a restock that never returned the
+       unit. Same filter every other report applies. */
+    if (String(tx.status || '') !== 'COMPLETED') continue;
     var items = [];
     try { items = JSON.parse(String(tx.items_json || '[]')); } catch (e) { items = []; }
     var hit = null, lineValue = null;
@@ -6833,11 +6839,10 @@ function serialsTrace_(session, params) {
 
   var productId = String(serial.product_id || '');
   var products = readRows_('Products', PRODUCT_HEADERS);
-  var productName = '', serialized = '';
+  var productName = '';
   for (var p = 0; p < products.length; p++) {
     if (String(products[p].id) === productId) {
       productName = String(products[p].name || '');
-      serialized = String(products[p].sku || '');
       break;
     }
   }

@@ -12,6 +12,7 @@ import { $t, $tn, N_ } from '../lang.js';
 import { idb } from '../db.js';
 import { api } from '../api.js';
 import { screenHead, sectionHead, dataTable } from '../components.js';
+import { statusLabel } from './repairs.js';
 import { fmt, esc, toast } from '../ui.js';
 
 export function stepLabel(s) {
@@ -52,7 +53,11 @@ export const screen = {
     let error = null;
 
     function money(v) { return v == null ? '' : fmt(v); }
-    function date(v) { return v ? new Date(v).toLocaleDateString() : $t('—'); }
+    function date(v) {
+      if (!v) return $t('—');
+      const d = new Date(v);
+      return isNaN(d) ? $t('—') : d.toLocaleDateString();
+    }
 
     async function search() {
       const needle = q.trim();
@@ -85,7 +90,7 @@ export const screen = {
         detail.push(`<div class="muted">${$t('Refunded & restocked')} · ${esc(s.customer || '')}</div>`);
         detail.push(`<div class="num">${money(s.money)}</div>`);
       } else if (s.kind === 'repair') {
-        detail.push(`<div class="muted">${$t('Repair')} ${esc(s.ticket || '')} · ${esc($t(s.repaired || ''))}</div>`);
+        detail.push(`<div class="muted">${$t('Repair')} ${esc(s.ticket || '')} · ${esc(statusLabel(s.repaired))}</div>`);
         detail.push(`<div class="num">${esc(s.issue || '')}</div>`);
       } else if (s.kind === 'tradein') {
         detail.push(`<div class="muted">${$t('Buy-back from')} ${esc(s.seller || '')}</div>`);
@@ -158,7 +163,11 @@ export const screen = {
         <div class="empty"><p>${$t('No serial found for')} <b>${esc(traced)}</b>.</p></div>`}
         ` : ''}`;
 
-      const go = () => search();
+      const go = () => {
+        const input = root.querySelector('#stInput');
+        if (input) q = input.value;
+        search();
+      };
       root.querySelector('#stGo')?.addEventListener('click', go);
       const input = root.querySelector('#stInput');
       if (input) {

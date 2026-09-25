@@ -7,7 +7,34 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.55.0 — lifecycle reminders
+## Latest: v1.55.1 — review pass on the lifecycle sprints
+
+**2026-09-24.**
+
+- **A cross-sprint review (v1.51.0 → v1.55.0) found no security issues and
+  two figures worth correcting before the merge to `main`.**
+  - The serial trace now excludes VOIDED transactions, so a void can't render
+    as a real step on a device's timeline.
+  - The Customer 360 profile's *average sale* divides by sales only (the same
+    count the Sales report uses), not by every completed transaction — a
+    refund or a payment can no longer drag the figure toward the wrong number.
+  - The trace search reads the input at press time instead of racing its
+    200ms debounce, so an Enter keystroke (barcode scanner) always searches
+    what was typed.
+  - Repair statuses on the trace use the Repairs screen's localized labels
+    instead of the raw server slug; malformed dates fall back cleanly instead
+    of throwing or leaking raw HTML.
+- Everything else came back clean: role gates, money rules, refunds, warranty
+  and repair logic, serial conflict handling, and the client screens.
+
+**Validation:** backend-sim **PASS 1205 / FAIL 0** · client units **PASS 572 /
+FAIL 0** · demo **PASS 32 / FAIL 0** · pdf-smoke **NOT RUN** here.
+- The profile sim section's average-sale assertion now expects 420 (two sales
+  of 810 and 30 split by a 10 refund) to lock in the corrected semantics.
+
+---
+
+## v1.55.0 — lifecycle reminders
 
 **2026-09-24.**
 
