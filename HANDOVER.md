@@ -13,11 +13,11 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.50.0** — parts a job is waiting for: ticket → purchase order → back to the bench (`2026-09-22`) |
+| Current version | **v1.55.1** — review pass on the lifecycle sprints: a cross-sprint audit of v1.51.0 → v1.55.0 found no security issues and corrected two figures (the serial trace no longer renders VOIDED transactions as real steps; the profile's average sale divides by sales only), plus client hardening (trace search races its debounce no longer, repair statuses localize, malformed dates fall back cleanly). v1.55.0 shipped the lifecycle reminders Dashboard panel (`2026-09-24`) |
 | Gaps analysis | `docs/superpowers/specs/2026-09-24-gaps-analysis.md` — what a trading shop needs that v1.50.0 does not have, in the order I would build it |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
-| Validation bar | `backend-sim` **PASS 1126 / FAIL 0** · client units **PASS 557 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
-| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
+| Validation bar | `backend-sim` **PASS 1205 / FAIL 0** · client units **PASS 572 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~9,444 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
 
@@ -128,6 +128,46 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.55.1** Review pass before the merge to `main`: two figures corrected and
+  client hardening. The serial trace excludes VOIDED transactions (a void no
+  longer renders as a real step); the Customer 360 profile's `averageSale`
+  divides by sales only, matching the Sales report's count; the trace search
+  reads the input at press time instead of racing its 200ms debounce (barcode
+  Enter raced it); repair statuses on the trace reuse the Repairs screen labels
+  instead of the raw server slug; malformed dates fall back cleanly instead of
+  throwing or leaking raw HTML (`shortDate` guard); profile maps are
+  null-prototype, the bootstrap serial path stamps `created_at`, and two dead
+  variables were removed.
+- **v1.55.0** Lifecycle reminders (`/api/reminders`, admin/manager, read-only):
+  one Dashboard **Reminders** panel for the owner or manager opening the day —
+  warranties expiring within 30 days (customer, device, expiry), repairs ready
+  with days waiting and deposit held (one tap to Repairs), customers whose
+  brand-new device sold 24+ months ago is an upgrade candidate (grouped with
+  what they own), and store credit still outstanding. Backend derives all four
+  lists (each capped at 25) from existing Transactions/Repairs rows, reusing
+  the Sales-report money rules and the Warranty expiry math; refunded serials
+  are excluded per sale. Panel shows only for online admin/manager sessions and
+  hides offline rather than hanging a till.
+- **v1.54.0** Customer 360 profile (`/api/customers/profile`, admin/manager):
+  everything one customer is on one screen — summary on the Sales-report money
+  rules (total spent, net of refunds, visits, average sale, first/last visit,
+  balance/owes/store credit/credit limit), the serialized devices they bought
+  with their warranty cover (same answer as the Warranty screen, refunded
+  units excluded), open and collected repairs joined on the repair's customer,
+  and the same ledger with aging a manager sees. Customers → *Ledger* loads
+  the full profile.
+- **v1.53.0** Serial lifecycle trace (`/api/serials/trace`, admin/manager): one
+  IMEI or serial, its whole working life on one timeline - intake (PO or
+  trade-in, at the value paid), the sales that carried that exact unit,
+  refunds/restocks, repair tickets, and trade-ins where the store bought it
+  back. Serials gain an immutable `created_at` intake stamp on every intake
+  path (PO receive, trade-in, manual add); a bought-back serial keeps its
+  original stamp, so it is one intake, not two. New Serial Trace screen in
+  Stock & customers, read-only.
+- **v1.52.0** Inventory velocity: sell-through, turnover and buy-again signals
+  on the stock-health window (read-only).
+- **v1.51.0** Stock health: shelf value at retail and cost, per-product
+  movement, slow/dead flags (read-only).
 - **v1.50.0** Parts a job is waiting for (repairs → purchase orders → bench).
   - Repairs column `needs_json`; `/api/repairs/needs` (board with no payload,
     add/remove with one), `repairNeedsBoard_` / `repairNeedsWithStock_` /

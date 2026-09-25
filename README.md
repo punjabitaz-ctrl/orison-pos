@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.50.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.55.1** (review pass on v1.51.0 → v1.55.0: no security issues; the serial trace no longer renders VOIDED transactions as real steps and the profile's average sale divides by sales only, plus client hardening — full detail in [`RELEASE_NOTES.md`](RELEASE_NOTES.md#latest-v1551--review-pass-on-the-lifecycle-sprints)). **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -33,7 +33,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Till shifts**: open with a float, close with a count in the store's own notes and coins, and see *declared / expected / over-or-short*.
 - **Cash out by reason**: Paid Out, Cash Pick Up and Staff Expense are separate kinds, and each is split in reports and the export.
 - **Refunds**: validated against the original sale and any earlier refunds, with stock returned, for what the customer actually paid. A cashier refunds with a manager's approval.
-- **Customers**: Net-30 accounts with optional credit limits, a per-customer ledger, collections, receivables with 30/60/90+ day aging, and printable or CSV statements. Any cashier can add a customer at checkout and see what they owe before charging to account; going past a credit limit needs a manager's approval.
+- **Customers**: Net-30 accounts with optional credit limits, a per-customer ledger, collections, receivables with 30/60/90+ day aging, and printable or CSV statements. Any cashier can add a customer at checkout and see what they owe before charging to account; going past a credit limit needs a manager's approval. **Customer 360 profile** (v1.54.0): Customers → *Ledger* shows everything about one customer on one screen — what they've spent and net of refunds, visits and average sale, the serialized devices they bought with their warranty cover, open and collected repairs, and the same ledger with aging (admin, manager).
 - **Audit log** (admin only): append-only, filterable, exportable. It covers refunds and cash-outs, stock adjustments with a reason, product and price edits, purchase orders, staff and PIN changes, sign-ins and lockouts, repairs and drawer opens.
 
 ### Stock
@@ -50,10 +50,13 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
   - Code 128 shelf labels
   - a reorder worksheet built from sales velocity
 - **Aging and alerts**: 0–30 / 31–60 / 61–90 / 90+ day buckets, plus out-of-stock, low, locked and slow-moving items.
+- **Stock health** (v1.51.0): what the shelf is worth at retail and at cost, and how fast each product actually sells — units sold and revenue from the ledger over a 30/90/180/365-day window. *Slow* (cover > 180 days or ≤ 1 sold in the window) and *dead* (nothing sold in 180 days) are reported, and KPIs, category and movement filters, and a CSV export point a manager at what is tying up cash. Read-only: nothing is ever auto-hidden or discounted.
+- **Inventory velocity** (v1.52.0): sell-through and turnover on the health window — per-day units and revenue, days of cover, and turnover against the average shelf value of each line and category. A product is flagged *buy again* only when it genuinely out-sold what came back in and the shelf is running low (nothing on hand, or cover shorter than the window). The screen toggles Health ↔ Velocity, each with its own CSV export. Read-only like health.
+- **Serial lifecycle trace** (v1.53.0): one IMEI or serial number, its whole working life on one timeline — the intake that brought it in (PO or trade-in, at the value paid), every sale that carried that exact unit, refunds that returned it to stock, repair tickets, and trade-ins where the store bought it back. An immutable intake stamp (`created_at`) is recorded on every intake path; buying back a unit already sold keeps the original stamp, so a bought-back serial is one serial, not two. The Serial Trace screen (admin, manager) is read-only.
 
 ### Reporting and the business
 
-- **Dashboard**: KPIs with trend chips, today by hour, and top sellers with margin. Cashiers see their own day.
+- **Dashboard**: KPIs with trend chips, today by hour, and top sellers with margin. Cashiers see their own day. **Reminders** (v1.55.0, admin and manager): one read-only panel opens the day with the four things to act on — warranties expiring within 30 days, repairs ready for collection (deposit held, days waiting), customers whose brand-new devices sold 24+ months ago are due an upgrade, and store credit still outstanding — each row a tap away from the Sales report, Repairs, Warranty lookup or Customers screen.
 - **Reports**: gross sales, refunds, cash out by reason, collections, deposits, net revenue, gross profit at the cost captured at sale, and average ticket. Broken down by day, hour, category, staff member (average sale, items per sale, refunds, margin), tender and channel, with CSV export.
 - **Sales report**: filter by period, staff member, category, product, payment, channel and customer; group by day, hour, staff member, category, product, payment, channel or customer; list every sale with its lines, cost and profit. Exports a summary CSV, a line-level CSV, or a printed page. Cashiers see their own sales.
 - **Trade-ins**: buy a used device from a customer for cash or store credit, with the ID check recorded. The device joins stock at what was paid for it and is resold with 30 days of warranty. Cashiers need a manager's approval.

@@ -4722,6 +4722,29 @@ check('statement carries the changer/cashier',
     const e = req('/api/audit', {}, { session: tAdm, params: { action: 'tradein.create' } }).data.entries;
     return e.length === 3 && e.some((x) => /approved by/.test(x.summary));
   })());
+
+  /* serial lifecycle trace (v1.53.0) */
+  const tr1 = req('/api/serials/trace', {}, { session: tAdm, params: { q: 'TI-IMEI-1' } }).data;
+  check('trace finds the serial and lists its legs oldest to newest',
+    tr1.found === true
+    && tr1.steps.length >= 2
+    && tr1.steps[0].kind === 'intake'
+    && tr1.steps[0].source === 'tradein'
+    && tr1.steps.some((s) => s.kind === 'sale')
+    && tr1.steps.every((s, i) => i === 0 || new Date(tr1.steps[i - 1].date).getTime() <= new Date(s.date).getTime()),
+    JSON.stringify(tr1.steps));
+  check('the trade-in intake carries the value the shop paid',
+    tr1.steps[0].kind === 'intake' && tr1.steps[0].money === 180, JSON.stringify(tr1.steps[0]));
+  check('a bought-back serial is still one serial: no re-intake leg appears',
+    (() => {
+      const tr2 = req('/api/serials/trace', {}, { session: tAdm, params: { q: 'TI-NEW-1' } }).data;
+      return tr2.found === true && tr2.steps.filter((s) => s.kind === 'intake').length === 1
+        && tr2.steps.some((s) => s.kind === 'sale') && tr2.steps.some((s) => s.kind === 'tradein')
+        && tr2.steps.some((s) => s.kind === 'restock');
+    })(), 'steps for TI-NEW-1');
+  check('trace needs three characters to look for', req('/api/serials/trace', {}, { session: tAdm, params: { q: 'TI' } }).status === 400);
+  check('a cashier cannot trace a serial', req('/api/serials/trace', {}, { session: tCash, params: { q: 'TI-IMEI-1' } }).status === 403);
+  check('an unknown serial is reported as not found', req('/api/serials/trace', {}, { session: tAdm, params: { q: 'TI-IMEI-9' } }).data.found === false);
 }
 {
   section('sales report (v1.47.0)');
@@ -5290,6 +5313,419 @@ check('statement carries the changer/cashier',
   sandbox.marketplaceImport();
   check('the scheduled run imports new rows on its own', /^Imported/.test(status(10)), status(10));
   req('/api/admin/store', { taxRate: 0 }, { session: kAdm });
+}
+{
+  section('inventory health (v1.51.0)');
+
+  const hAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const hMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const hCash = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const hUsers = req('/api/admin/users/list', {}, { session: hAdm }).data.users;
+  const hCashId = hUsers.find((u) => u.email === 'diego@example.com').id;
+
+  check('stock health is manager/admin only',
+    req('/api/inventory/health', {}, { session: hCash }).status === 403
+    && req('/api/inventory/health', {}, { session: hAdm }).ok === true
+    && req('/api/inventory/health', {}, { session: hMgr }).ok === true);
+
+  const hMk = (name, sku, extra) => req('/api/admin/products', Object.assign({
+    name, sku, category: 'SH Fixtures', costPrice: 20, retailPrice: 40, onHand: 0,
+  }, extra || {}), { session: hAdm }).data.id;
+
+  const fast = hMk('SH Fast Mover', 'SH-FAST-01', { costPrice: 30, retailPrice: 60, onHand: 90 });
+  const slow = hMk('SH Slow Mover', 'SH-SLOW-01', { costPrice: 20, retailPrice: 40, onHand: 100 });
+  const ser = hMk('SH Serialized', 'SH-SER-01', { costPrice: 50, retailPrice: 90, isSerialized: true, onHand: 0 });
+  req('/api/admin/serials', { productId: ser, serialNumbers: ['SH-SN-A', 'SH-SN-B'] }, { session: hAdm });
+  const oldSale = hMk('SH Old Sale', 'SH-OLD-01', { costPrice: 10, retailPrice: 25, onHand: 8 });
+  const recentSale = hMk('SH Recent Sale', 'SH-REC-01', { costPrice: 10, retailPrice: 25, onHand: 6 });
+  const svc = hMk('SH Service', 'SH-SVC-01', { itemType: 'service' });
+
+  const sellHealth = (txId, productId, qty, unitPrice, createdAtIso) => req('/api/sync/push', {
+    deviceId: 'dev-health-1',
+    batch: [{
+      clientTxId: txId, userId: hCashId, kind: 'sale',
+      grandTotal: unitPrice * qty, createdAt: createdAtIso,
+      tenders: [{ type: 'cash', amount: unitPrice * qty }],
+      items: [{ productId, quantity: qty, unitPrice }],
+    }],
+  }, { session: hCash });
+
+  sellHealth('tx-sh-1', fast, 60, 60, new Date().toISOString());
+  sellHealth('tx-sh-2', slow, 1, 40, new Date().toISOString());
+  sellHealth('tx-sh-3', oldSale, 5, 25, new Date(Date.now() - 200 * 86400000).toISOString());
+  sellHealth('tx-sh-4', recentSale, 2, 25, new Date(Date.now() - 100 * 86400000).toISOString());
+
+  const h = req('/api/inventory/health', {}, { session: hAdm, params: { days: 90 } }).data;
+  const row = (sku) => h.items.find((i) => i.sku === sku);
+  const f = row('SH-FAST-01');
+  const sl = row('SH-SLOW-01');
+  const se = row('SH-SER-01');
+  const od = row('SH-OLD-01');
+  const rc = row('SH-REC-01');
+
+  check('the window defaults to 90 days and the dead rule to 180', h.window.days === 90 && h.rules.deadDays === 180 && h.rules.slowCoverDays === 180);
+  check('valuation: units × shelf price at retail', f && f.retailValue === 1800 && sl && Math.abs(sl.retailValue - sl.onHand * sl.retailPrice) < 0.001 && Math.abs(f.retailValue - f.onHand * f.retailPrice) < 0.001);
+  check('valuation: units × the PO-received weighted cost', f && Math.abs(f.costValue - 30 * 30) < 0.001 && f.costPrice === 30);
+  check('serialized stock values each serial, falling back to the product cost', se && se.onHand === 2 && Math.abs(se.costValue - 100) < 0.001, JSON.stringify(se));
+  check('services never appear on a stock health report', h.items.every((i) => i.sku !== 'SH-SVC-01'));
+  check('a product with no stock is not valued', !h.items.some((i) => i.sku === 'SH-SVC-01') && !h.items.some((i) => i.sku.startsWith('SH-') && i.onHand === 0));
+
+  const near = (a, b) => Math.abs(a - b) < 0.001;
+  check('days of cover is units on hand ÷ the window average', f && near(f.perDay, Math.round((60 / 90) * 100) / 100) && near(f.daysOfCover, 30 / (60 / 90)), JSON.stringify(f && { perDay: f.perDay, cover: f.daysOfCover }));
+  check('a product selling through fast is classified fast', f && f.movement === 'fast');
+  check('≤ 1 unit sold in the window is slow, however deep the cover', sl && sl.movement === 'slow' && sl.soldUnits === 1);
+  check('nothing sold in 180 days is dead', od && od.movement === 'dead' && od.soldUnits === 0);
+  check('a sale older than the window but newer than 180 days is slow, not dead', rc && rc.movement === 'slow' && rc.soldUnits === 0);
+  check('the refund sign is respected net of the window (fast moved 60 out, none back)', f && f.soldUnits === 60);
+
+  const sumRetail = h.items.reduce((n, x) => n + x.retailValue, 0);
+  const sumCost = h.items.reduce((n, x) => n + x.costValue, 0);
+  const sumUnits = h.items.reduce((n, x) => n + x.onHand, 0);
+  check('summary totals reconcile with the items list',
+    h.summary.products === h.items.length
+    && h.summary.units === sumUnits
+    && near(h.summary.retailValue, sumRetail)
+    && near(h.summary.costValue, sumCost),
+    JSON.stringify(h.summary));
+  check('slow and dead counts reconcile with the items list',
+    h.summary.slowCount === h.items.filter((i) => i.movement === 'slow').length
+    && h.summary.deadCount === h.items.filter((i) => i.movement === 'dead').length,
+    JSON.stringify({ s: h.summary.slowCount, d: h.summary.deadCount }));
+  check('category totals reconcile with the items list',
+    near(h.categories.reduce((n, c) => n + c.costValue, 0), sumCost)
+    && near(h.categories.reduce((n, c) => n + c.retailValue, 0), sumRetail)
+    && near(h.categories.reduce((n, c) => n + c.units, 0), sumUnits),
+    JSON.stringify(h.categories));
+  check('categories and items lead with the most money stuck', (() => {
+    const cats = h.categories.map((c) => c.costValue);
+    const sorted = cats.every((v, i) => i === 0 || cats[i - 1] >= v);
+    const itemsSorted = h.items.every((v, i) => i === 0 || h.items[i - 1].costValue >= v.costValue);
+    return sorted && itemsSorted;
+  })());
+  const h10 = req('/api/inventory/health', {}, { session: hAdm, params: { days: 999999 } }).data;
+  check('a hostile days param clamps to the 365-day cap', h10.window.days === 365 && h10.items.some((i) => i.sku === 'SH-FAST-01'), String(h10.window.days));
+}
+{
+  section('inventory velocity (v1.52.0)');
+
+  const vAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const vMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const vCash = req('/api/login', { email: 'diego@example.com', pin: CREDS['diego@example.com'] }).data.token;
+  const vUsers = req('/api/admin/users/list', {}, { session: vAdm }).data.users;
+  const vCashId = vUsers.find((u) => u.email === 'diego@example.com').id;
+
+  const vMk = (name, sku, extra) => req('/api/admin/products', Object.assign({
+    name, sku, category: 'VL Fixtures', costPrice: 20, retailPrice: 40, onHand: 0,
+  }, extra || {}), { session: vAdm }).data.id;
+
+  const vFast = vMk('VL Fast Mover', 'VL-FAST-01', { costPrice: 40, retailPrice: 80, onHand: 10 });
+  const vRep = vMk('VL Replenished', 'VL-REPL-01', { costPrice: 10, retailPrice: 30, onHand: 5 });
+  const vOut = vMk('VL Sold Out', 'VL-SOLD-01', { costPrice: 25, retailPrice: 60, onHand: 8 });
+  const vDisc = vMk('VL Discounted', 'VL-DISC-01', { costPrice: 5, retailPrice: 20, onHand: 50 });
+  const vSer = vMk('VL Serialized', 'VL-SER-01', { costPrice: 100, retailPrice: 220, isSerialized: true, onHand: 0 });
+  req('/api/admin/serials', { productId: vSer, serialNumbers: ['VL-SN-1', 'VL-SN-2'] }, { session: vAdm });
+  const vIdle = vMk('VL Idle Shelf', 'VL-STATIC-01', { costPrice: 5, retailPrice: 15, onHand: 40 });
+  vMk('VL Service', 'VL-SVC-01', { itemType: 'service' });
+  const vOff = vMk('VL Inactive', 'VL-OFF-01', { onHand: 5 });
+  /* no API deactivates a product; the exclusion path is what this checks */
+  sandbox.applyPatches_('Products', sandbox.PRODUCT_HEADERS, 'id', { [vOff]: { active: 0 } });
+
+  const sellV = (txId, productId, qty, unitPrice, extra) => req('/api/sync/push', {
+    deviceId: 'dev-velocity-1',
+    batch: [Object.assign({
+      clientTxId: txId, userId: vCashId, kind: 'sale',
+      grandTotal: unitPrice * qty, createdAt: new Date().toISOString(),
+      tenders: [{ type: 'cash', amount: unitPrice * qty }],
+      items: [{ productId, quantity: qty, unitPrice }],
+    }, extra || {})],
+  }, { session: vCash });
+
+  sellV('tx-vl-1', vFast, 8, 80);
+  sellV('tx-vl-2', vRep, 10, 30);
+  sellV('tx-vl-3', vOut, 8, 60);
+  req('/api/sync/push', {
+    deviceId: 'dev-velocity-1',
+    batch: [{
+      clientTxId: 'tx-vl-4', userId: vCashId, kind: 'sale', grandTotal: 40,
+      tenders: [{ type: 'cash', amount: 40 }], createdAt: new Date().toISOString(),
+      items: [{ productId: vDisc, quantity: 4, unitPrice: 20, discountPct: 50 }],
+    }],
+  }, { session: vAdm }); // a 50% line is over a cashier's limit, so the admin applies it
+  sellV('tx-vl-5', vSer, 1, 220, { items: [{ productId: vSer, quantity: 1, unitPrice: 220, serialNumber: 'VL-SN-1' }] });
+
+  const refV = req('/api/sync/push', {
+    deviceId: 'dev-velocity-1',
+    batch: [{
+      clientTxId: 'tx-vl-1-rf', kind: 'refund', originalClientTx: 'tx-vl-1',
+      userId: vCashId, grandTotal: 160, tenders: [{ type: 'cash', amount: 160 }],
+      createdAt: new Date().toISOString(),
+      items: [{ productId: vFast, quantity: 2, unitPrice: 80 }],
+    }],
+  }, { session: vMgr });
+  check('the velocity fixture refund clears', refV.ok && refV.data.results[0].accepted === true, JSON.stringify(refV));
+
+  /* a purchase-order receipt lands a purchase row in the window, so
+     replenishment counts against sell-through (the "buy again" rule) */
+  const vSup = req('/api/suppliers', { name: 'Velocity Wholesale', paymentTerms: 'Net 30' }, { session: vAdm }).data.id;
+  const vPo = req('/api/purchase-orders', { supplierId: vSup, status: 'ORDERED', lines: [{ productId: vRep, quantity: 30, unitCost: 10 }] }, { session: vMgr }).data;
+  const vRec = req('/api/purchase-orders/receive', { id: vPo.id, lines: [{ productId: vRep, quantity: 30 }] }, { session: vAdm });
+  check('the velocity fixture purchase receipt clears', vRec.ok, JSON.stringify(vRec));
+
+  const near2 = (a, b) => Math.abs(a - b) < 0.001;
+  const v = req('/api/inventory/health', {}, { session: vAdm, params: { view: 'velocity' } }).data;
+  const vrow = (sku) => v.items.find((i) => i.sku === sku);
+  const vf = vrow('VL-FAST-01');
+  const vr = vrow('VL-REPL-01');
+  const vo = vrow('VL-SOLD-01');
+  const vd = vrow('VL-DISC-01');
+  const vs = vrow('VL-SER-01');
+  const vi = vrow('VL-STATIC-01');
+
+  check('velocity is a 30-day sell-through view, manager/admin only',
+    v.view === 'velocity' && v.window.days === 30
+    && req('/api/inventory/health', {}, { session: vCash, params: { view: 'velocity' } }).status === 403);
+
+  check('sold and refunded units are kept apart and netted', vf && vf.unitsSold === 8 && vf.unitsRefunded === 2 && vf.netUnits === 6, JSON.stringify(vf));
+  check('revenue uses the Sales-report money rules', vf && near2(vf.revenueSold, 640) && near2(vf.revenueRefunded, 160) && near2(vf.netRevenue, 480), JSON.stringify(vf));
+  check('gross profit is revenue minus cost-at-sale, margin follows', vf && near2(vf.grossProfit, 240) && near2(vf.margin, 50), JSON.stringify(vf && { gp: vf.grossProfit, margin: vf.margin }));
+  check('a discounted line nets its discount off the revenue', vd && vd.unitsSold === 4 && near2(vd.netRevenue, 40), JSON.stringify(vd));
+  check('serialized stock counts IN_STOCK serials and sells one', vs && vs.onHand === 1 && vs.unitsSold === 1 && near2(vs.netRevenue, 220), JSON.stringify(vs));
+
+  check('average shelf value is (begin + end) ÷ 2 × retail', vf && near2(vf.avgShelfValue, ((10 + 4) / 2) * 80), JSON.stringify(vf && { onHand: vf.onHand, net: vf.netUnits, recv: vf.receivedUnits, avg: vf.avgShelfValue }));
+  check('turnover is revenue ÷ average shelf value', vf && near2(vf.turnover, 480 / 560), JSON.stringify(vf && vf.turnover));
+  check('days of cover is on-hand ÷ the daily rate', vf && near2(vf.daysOfCover, 4 / (6 / 30)));
+
+  check('outpacing replenishment with thin cover is buy-again', vf && vf.buyAgain === true);
+  check('a sold-out product with demand is buy-again with zero cover', vo && vo.buyAgain === true && vo.onHand === 0 && vo.daysOfCover === 0);
+  check('a product replenished faster than it sells is not buy-again', vr && vr.buyAgain === false && vr.receivedUnits === 30, JSON.stringify(vr));
+  check('an idle shelf has no turnover and is not buy-again', vi && vi.buyAgain === false && vi.turnover === null, JSON.stringify(vi));
+  check('a serial with a full window of cover is not buy-again', vs && vs.buyAgain === false, JSON.stringify(vs));
+  check('services and disabled products never appear', v.items.every((i) => i.sku !== 'VL-SVC-01' && i.sku !== 'VL-OFF-01'),
+    JSON.stringify(v.items.map((i) => i.sku).filter((s) => s.indexOf('VL-') === 0)));
+
+  const sumR = v.items.reduce((n, x) => n + x.netRevenue, 0);
+  const sumG = v.items.reduce((n, x) => n + x.grossProfit, 0);
+  const sumA = v.items.reduce((n, x) => n + x.avgShelfValue, 0);
+  check('summary reconciles with the items list',
+    v.summary.products === v.items.length
+    && near2(v.summary.netRevenue, sumR)
+    && near2(v.summary.grossProfit, sumG)
+    && near2(v.summary.avgShelfValue, sumA)
+    && v.summary.buyAgainCount === v.buyAgain.length,
+    JSON.stringify(v.summary));
+  const catVL = v.categories.find((c) => c.category === 'VL Fixtures');
+  check('category totals reconcile with their items', catVL
+    && catVL.products === v.items.filter((i) => i.category === 'VL Fixtures').length
+    && near2(catVL.netRevenue, v.items.filter((i) => i.category === 'VL Fixtures').reduce((n, x) => n + x.netRevenue, 0))
+    && near2(catVL.avgShelfValue, v.items.filter((i) => i.category === 'VL Fixtures').reduce((n, x) => n + x.avgShelfValue, 0)));
+  check('the buy-again list holds exactly the flagged items', v.buyAgain.every((b) => b.buyAgain === true)
+    && v.buyAgain.some((b) => b.sku === 'VL-FAST-01') && v.buyAgain.some((b) => b.sku === 'VL-SOLD-01')
+    && !v.buyAgain.some((b) => b.sku === 'VL-REPL-01'), JSON.stringify(v.buyAgain.map((b) => b.sku)));
+
+  /* the Sales report on the same store must agree with velocity's revenue */
+  const vDay = new Date().toISOString().slice(0, 10);
+  const vRep2 = req('/api/reports', {}, { session: vAdm, params: { from: vDay, to: vDay } }).data;
+  const vCatVL = vRep2.byCategory.find((c) => c.category === 'VL Fixtures');
+  const vWantSold = v.items.filter((i) => i.category === 'VL Fixtures').reduce((n, x) => n + x.revenueSold, 0);
+  check('velocity sold revenue agrees with the Sales report category totals',
+    vCatVL && near2(vCatVL.sales, vWantSold) && near2(vCatVL.sales, 1680) && near2(vf.revenueRefunded, 160) && near2(vf.netRevenue, 480),
+    JSON.stringify(vCatVL));
+
+  const v90 = req('/api/inventory/health', {}, { session: vAdm, params: { view: 'velocity', days: 90 } }).data;
+  const v999 = req('/api/inventory/health', {}, { session: vAdm, params: { view: 'velocity', days: 999999 } }).data;
+  check('the 90-day sell-through window is honoured and days clamps at 365', v90.window.days === 90 && v999.window.days === 365);
+}
+{
+  section('customer 360 profile (v1.54.0)');
+
+  const pfAdmTok = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const pfCashTok = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const pfCashId = req('/api/admin/users/list', {}, { session: pfAdmTok }).data.users
+    .find((u) => u.email === 'amara@example.com').id;
+
+  const priya = req('/api/admin/customers', { name: 'Priya Shah', phone: '080-777-0001', creditLimit: 0 }, { session: pfAdmTok });
+  check('profile fixture customer created', priya.ok && priya.data.customer, JSON.stringify(priya));
+  const pfId = priya.data.customer.id;
+
+  const pfPhone = req('/api/admin/products', { name: 'Profile Phone', sku: 'PF-NEW', category: 'PF', costPrice: 500, retailPrice: 800, isSerialized: true, warrantyDays: 365 }, { session: pfAdmTok }).data.id;
+  req('/api/admin/serials', { productId: pfPhone, serialNumbers: ['PF-IMEI-1'] }, { session: pfAdmTok });
+  const pfCable = req('/api/products', {}, { session: pfAdmTok }).data.find((p) => p.sku === 'CB-USBC-1M');
+  req('/api/admin/store', { taxRate: 0 }, { session: pfAdmTok });
+
+  const pfPush = (batch) => req('/api/sync/push', { deviceId: 'dev-pf-1', batch }, { session: pfAdmTok });
+  check('profile phone sale accepted', pfPush([{
+    clientTxId: 'tx-pf-1', userId: pfCashId, customerId: pfId, grandTotal: 810,
+    tenders: [{ type: 'cash', amount: 810 }],
+    createdAt: new Date().toISOString(),
+    items: [{ productId: pfPhone, quantity: 1, unitPrice: 800, serialNumber: 'PF-IMEI-1' }, { productId: pfCable.id, quantity: 1, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+  check('profile account sale accepted', pfPush([{
+    clientTxId: 'tx-pf-2', userId: pfCashId, customerId: pfId, grandTotal: 30,
+    tenders: [{ type: 'net30', amount: 30 }],
+    createdAt: new Date().toISOString(),
+    items: [{ productId: pfCable.id, quantity: 3, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+  check('profile refund accepted', pfPush([{
+    clientTxId: 'tx-pf-rf', kind: 'refund', originalClientTx: 'tx-pf-1', userId: pfCashId, customerId: pfId, grandTotal: 10,
+    tenders: [{ type: 'store_credit', amount: 10 }],
+    createdAt: new Date().toISOString(),
+    items: [{ productId: pfCable.id, quantity: 1, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+
+  const pfRep = req('/api/repairs', {
+    customerId: pfId, customerName: 'Priya Shah', customerPhone: '080-777-0001',
+    deviceMake: 'Apple', deviceModel: 'iPhone 15', deviceSerial: 'PF-IMEI-1', reportedFault: 'No sound',
+  }, { session: pfCashTok });
+  check('profile customer books a repair with a customer id', pfRep.ok && !!pfRep.data.id, JSON.stringify(pfRep));
+
+  check('profile is admin and manager only',
+    req('/api/customers/profile', {}, { session: pfCashTok, params: { customerId: pfId } }).status === 403);
+  check('profile needs a customerId',
+    req('/api/customers/profile', {}, { session: pfAdmTok }).status === 400);
+  check('profile 404s unknown customers',
+    req('/api/customers/profile', {}, { session: pfAdmTok, params: { customerId: 'no-such-customer' } }).status === 404);
+
+  const prof = req('/api/customers/profile', {}, { session: pfAdmTok, params: { customerId: pfId } }).data;
+  check('profile summaries what they spent and net of refunds',
+    prof.summary.totalSpent === 840 && prof.summary.refunds === 10 && Math.abs(prof.summary.netOfRefunds - 830) < 0.001,
+    JSON.stringify(prof.summary));
+  check('visits count every completed transaction; average sale divides by sales only',
+    prof.summary.visits === 3 && prof.summary.averageSale === 420, JSON.stringify({ v: prof.summary.visits, a: prof.summary.averageSale }));
+  check('profile mirrors the ledger money',
+    prof.summary.balance === prof.ledger.balance && prof.summary.owes === prof.ledger.account && prof.summary.storeCredit === prof.ledger.credit,
+    JSON.stringify({ s: prof.summary, l: prof.ledger }));
+  check('balance nets account against store credit',
+    Math.abs(prof.ledger.balance - (prof.ledger.account - prof.ledger.credit)) < 0.001);
+  check('profile records every visit window',
+    prof.summary.firstVisit && prof.summary.lastVisit && prof.summary.firstVisit <= prof.summary.lastVisit);
+
+  check('profile lists the serialized device they bought with its warranty',
+    prof.devices.length === 1
+      && prof.devices[0].serialNumber === 'PF-IMEI-1'
+      && prof.devices[0].name === 'Profile Phone'
+      && prof.devices[0].price === 800
+      && prof.devices[0].warrantyDays === 365
+      && prof.devices[0].status === 'active',
+    JSON.stringify(prof.devices));
+  check('the refund did not touch the phone device',
+    prof.devices[0].expiresAt && prof.devices[0].receiptNo && prof.devices[0].daysLeft > 300);
+
+  const openRep = prof.repairsOpen;
+  check('the open repair shows on the profile with its tickets',
+    prof.repairsCollected.length === 0 && openRep.length === 1
+      && openRep[0].serial === 'PF-IMEI-1'
+      && openRep[0].device === 'Apple iPhone 15'
+      && /^Orison-R\d{6}$/.test(openRep[0].ticketNo),
+    JSON.stringify(openRep));
+  check('profile ledger carries the rows with their goods',
+    prof.ledger.transactions.length === 3
+      && prof.ledger.transactions.some((t) => t.clientTxId === 'tx-pf-2' && /^COPPER|Cable|CB-USBC/.test(t.items[0] || ''))
+      && prof.ledger.aging.current === 30, JSON.stringify({ txs: prof.ledger.transactions, aging: prof.ledger.aging }));
+
+  const joeAgain = req('/api/customers', {}, { session: pfAdmTok, params: { q: 'Joe' } }).data.customers[0];
+  const joeProf = req('/api/customers/profile', {}, { session: pfAdmTok, params: { customerId: joeAgain.id } }).data;
+  check('a second customer cross-checks against the seeded ledger numbers',
+    joeProf.summary.totalSpent === 48 && joeProf.summary.refunds === 12 && Math.abs(joeProf.summary.netOfRefunds - 36) < 0.001
+      && Math.abs(joeProf.ledger.balance - 36) < 0.001
+      && joeProf.ledger.credit === 12,
+    JSON.stringify({ summary: joeProf.summary, ledger: joeProf.ledger }));
+}
+{
+  section('lifecycle reminders (v1.55.0)');
+
+  const rmAdmTok = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const rmCashTok = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const rmMgrTok = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+
+  const rmCable = req('/api/products', {}, { session: rmAdmTok }).data.find((p) => p.sku === 'CB-USBC-1M');
+  const rmDay = 86400000;
+
+  const meera = req('/api/admin/customers', { name: 'Meera Remind', phone: '080-888-0001', creditLimit: 0 }, { session: rmAdmTok });
+  check('reminder fixture customer created', meera.ok && meera.data.customer, JSON.stringify(meera));
+  const rmCustId = meera.data.customer.id;
+
+  /* one brand-new device still inside its cover but expiring inside thirty days,
+     one the same customer bought over two years ago and is long out of cover */
+  const rmNew = req('/api/admin/products', { name: 'Reminder New', sku: 'RM-NEW-1', category: 'RM', costPrice: 600, retailPrice: 900, isSerialized: true, warrantyDays: 365 }, { session: rmAdmTok }).data.id;
+  const rmOld = req('/api/admin/products', { name: 'Reminder Old', sku: 'RM-OLD-1', category: 'RM', costPrice: 400, retailPrice: 650, isSerialized: true, warrantyDays: 365 }, { session: rmAdmTok }).data.id;
+  req('/api/admin/serials', { productId: rmNew, serialNumbers: ['RM-SN-NEW'] }, { session: rmAdmTok });
+  req('/api/admin/serials', { productId: rmOld, serialNumbers: ['RM-SN-OLD'] }, { session: rmAdmTok });
+  req('/api/admin/store', { taxRate: 0 }, { session: rmAdmTok });
+
+  const rmPush = (batch) => req('/api/sync/push', { deviceId: 'dev-rm-1', batch }, { session: rmAdmTok });
+  check('warranty-expiring sale accepted', rmPush([{
+    clientTxId: 'tx-rm-new', customerId: rmCustId, grandTotal: 900,
+    tenders: [{ type: 'cash', amount: 900 }],
+    createdAt: new Date(Date.now() - 345 * rmDay).toISOString(),
+    items: [{ productId: rmNew, quantity: 1, unitPrice: 900, serialNumber: 'RM-SN-NEW' }],
+  }]).data.results[0].accepted === true);
+  check('two-year-old sale accepted', rmPush([{
+    clientTxId: 'tx-rm-old', customerId: rmCustId, grandTotal: 650,
+    tenders: [{ type: 'cash', amount: 650 }],
+    createdAt: new Date(Date.now() - 760 * rmDay).toISOString(),
+    items: [{ productId: rmOld, quantity: 1, unitPrice: 650, serialNumber: 'RM-SN-OLD' }],
+  }]).data.results[0].accepted === true);
+
+  /* a job sitting at the collection counter with an unrefunded deposit */
+  const rmRep = req('/api/repairs', {
+    customerName: 'Meera Remind', customerPhone: '080-888-0001',
+    deviceMake: 'Orison', deviceModel: 'Note 5', deviceSerial: 'RM-SN-NEW', reportedFault: 'Won\'t turn on',
+  }, { session: rmCashTok });
+  check('repair for the ready list booked', rmRep.ok && !!rmRep.data.id, JSON.stringify(rmRep));
+  req('/api/repairs/deposit', { id: rmRep.data.id, amount: 30 }, { session: rmCashTok });
+  const rmReady = req('/api/repairs/status', { id: rmRep.data.id, status: 'ready' }, { session: rmCashTok });
+  check('ticket moved to ready', rmReady.ok && rmReady.data.status === 'ready', JSON.stringify(rmReady));
+
+  /* somebody sitting on store credit */
+  const fatima = req('/api/admin/customers', { name: 'Fatima Credit', phone: '080-888-0002', creditLimit: 0 }, { session: rmAdmTok });
+  const rmCreditId = fatima.data.customer.id;
+  check('credit fixture sale accepted', rmPush([{
+    clientTxId: 'tx-rm-credit', customerId: rmCreditId, grandTotal: 20,
+    tenders: [{ type: 'cash', amount: 20 }],
+    createdAt: new Date().toISOString(),
+    items: [{ productId: rmCable.id, quantity: 2, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+  check('credit refund accepted', rmPush([{
+    clientTxId: 'tx-rm-credit-rf', kind: 'refund', originalClientTx: 'tx-rm-credit',
+    customerId: rmCreditId, grandTotal: 20,
+    tenders: [{ type: 'store_credit', amount: 20 }],
+    createdAt: new Date().toISOString(),
+    items: [{ productId: rmCable.id, quantity: 2, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+
+  check('reminders are admin and manager only',
+    req('/api/reminders', {}, { session: rmCashTok }).status === 403);
+
+  const rem = req('/api/reminders', {}, { session: rmAdmTok }).data;
+  const remMgr = req('/api/reminders', {}, { session: rmMgrTok });
+  check('both admin and manager can read them', remMgr.ok === true && Array.isArray(remMgr.data.warrantyExpiring), JSON.stringify(remMgr));
+
+  const we = rem.warrantyExpiring.find((w) => w.serialNumber === 'RM-SN-NEW');
+  check('the expiring cover is listed with customer, device and expiry',
+    we && we.customer === 'Meera Remind' && we.device === 'Reminder New'
+      && we.daysLeft > 0 && we.daysLeft <= 30 && !!we.expiresAt,
+    JSON.stringify(we));
+  check('the long-sold device is not an expiring warranty',
+    !rem.warrantyExpiring.some((w) => w.serialNumber === 'RM-SN-OLD'));
+
+  const uc = rem.upgradeCandidates.find((u) => u.customerId === rmCustId);
+  check('the two-year-old buyer is an upgrade candidate owning their device',
+    uc && uc.customer === 'Meera Remind' && uc.devices.length === 1
+      && uc.devices[0].serialNumber === 'RM-SN-OLD' && uc.devices[0].device === 'Reminder Old',
+    JSON.stringify(uc));
+  check('the still-covered phone is not an upgrade candidate',
+    !rem.upgradeCandidates.some((u) => u.customerId === rmCustId && u.devices.length > 1));
+
+  const rr = rem.repairsReady.find((r) => r.ticketNo === rmRep.data.ticketNo);
+  check('the ready repair shows who, what and the deposit held',
+    rr && rr.customer === 'Meera Remind' && rr.device === 'Orison Note 5'
+      && rr.deposit === 30 && rr.daysWaiting >= 0,
+    JSON.stringify(rr));
+
+  const sc = rem.storeCreditLeft.find((s) => s.customerId === rmCreditId);
+  check('leftover store credit surfaces with the customer',
+    sc && sc.customer === 'Fatima Credit' && Math.abs(sc.storeCredit - 20) < 0.001,
+    JSON.stringify(sc));
 }
 {
   section('setup() deploy entry point (v1.35.1)');

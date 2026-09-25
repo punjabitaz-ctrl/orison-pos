@@ -1,0 +1,28 @@
+{
+ "#": "#",
+ "Buy-back from": "واپس خریداری",
+ "Enter at least three characters of an IMEI or serial": "آئی ایم ای آئی یا سیریل نمبر کے کم از کم تین حروف درج کریں",
+ "Enter at least three characters of the IMEI or serial.": "آئی ایم ای آئی یا سیریل نمبر کے کم از کم تین حروف درج کریں۔",
+ "IMEI / serial number, at least three characters…": "آئی ایم ای آئی / سیریل نمبر، کم از کم تین حروف…",
+ "Intake": "انٹیک",
+ "Intake, sales, refunds, repairs and trade-ins — any leg that touched this serial is listed oldest to newest.": "انٹیک، فروخت، ریفنڈ، مرمت اور تجارت — اس سیریل کو چھونے والا ہر مرحلہ قدیم سے جدید تک درج ہے۔",
+ "Lifecycle": "لائف سائیکل",
+ "No lifecycle recorded yet — the intake is missing its stamp, or this serial is brand new.": "ابھی تک کوئی لائف سائیکل درج نہیں — انٹیک کا سٹیمپ غائب ہے، یا یہ سیریل بالکل نیا ہے۔",
+ "No serial found for": "کے لیے کوئی سیریل نہیں ملا",
+ "One IMEI or serial, its whole life in one timeline.": "ایک آئی ایم ای آئی یا سیریل، اس کی پوری زندگی ایک ٹائم لائن میں۔",
+ "Refunded & restocked": "ریفنڈ کر کے سٹاک میں واپس",
+ "Repair": "مرمت",
+ "Serial": "سیریل نمبر",
+ "Serial Trace": "سیریل ٹریس",
+ "Step": "مرحلہ",
+ "Trace": "ٹریس",
+ "Trace failed": "ٹریس ناکام",
+ "Offline — trace needs the server": "آف لائن — ٹریس کے لیے سرور درکار ہے",
+ "Trade-in bought back": "تجارت پر واپس خریدا گیا",
+ "Value": "قیمت",
+ "{n} steps": {
+  "zero": "کوئی مرحلہ نہیں",
+  "one": "ایک مرحلہ",
+  "other": "{n} مراحل"
+ }
+}

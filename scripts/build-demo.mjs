@@ -35,7 +35,7 @@ copy(join(root, 'backend/Code.gs'), join(out, 'demo/Code.gs.txt'));
 
 function rewrite(file, pairs) {
   const p = join(out, file);
-  let s = readFileSync(p, 'utf8');
+  let s = readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
   for (const [from, to] of pairs) {
     if (!s.includes(from)) throw new Error(`${file}: expected to find ${JSON.stringify(from)}`);
     s = s.replace(from, to);

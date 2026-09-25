@@ -7,7 +7,186 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.50.0 — parts a job is waiting for
+## Latest: v1.55.1 — review pass on the lifecycle sprints
+
+**2026-09-24.**
+
+- **A cross-sprint review (v1.51.0 → v1.55.0) found no security issues and
+  two figures worth correcting before the merge to `main`.**
+  - The serial trace now excludes VOIDED transactions, so a void can't render
+    as a real step on a device's timeline.
+  - The Customer 360 profile's *average sale* divides by sales only (the same
+    count the Sales report uses), not by every completed transaction — a
+    refund or a payment can no longer drag the figure toward the wrong number.
+  - The trace search reads the input at press time instead of racing its
+    200ms debounce, so an Enter keystroke (barcode scanner) always searches
+    what was typed.
+  - Repair statuses on the trace use the Repairs screen's localized labels
+    instead of the raw server slug; malformed dates fall back cleanly instead
+    of throwing or leaking raw HTML.
+- Everything else came back clean: role gates, money rules, refunds, warranty
+  and repair logic, serial conflict handling, and the client screens.
+
+**Validation:** backend-sim **PASS 1205 / FAIL 0** · client units **PASS 572 /
+FAIL 0** · demo **PASS 32 / FAIL 0** · pdf-smoke **NOT RUN** here.
+- The profile sim section's average-sale assertion now expects 420 (two sales
+  of 810 and 30 split by a 10 refund) to lock in the corrected semantics.
+
+---
+
+## v1.55.0 — lifecycle reminders
+
+**2026-09-24.**
+
+- **What the shop should act on, surfaced on the Dashboard.** The owner or
+  manager opens the day to one read-only *Reminders* panel with four lists
+  derived from data the shop already captures — nothing new to fill in, no
+  schedules, no outside notifications:
+  - **Warranty expiring** — active warranties ending within the next 30 days,
+    with the customer, device and expiry.
+  - **Repairs ready** — every ticket at *Ready for collection*, days waiting,
+    customer and deposit held, one tap to the Repairs screen.
+  - **Upgrade candidates** — customers of serialized brand-new devices sold 24+
+    months ago with expired warranties, with what they own.
+  - **Store credit left** — customers still holding store credit and how much,
+    so it isn't forgotten as a liability.
+- Each list caps at the 25 most pressing entries and reuses the Sales-report
+  money rules and the Warranty screen's status answers; every row links into
+  the screen where the shop acts on it (Sales report, Repairs, Warranty
+  lookup, Customers).
+- The panel loads only for online admin/manager sessions and simply stays out
+  of the way offline, so a till never hangs on a reminders fetch.
+
+**Validation:** backend-sim **PASS 1205 / FAIL 0** · client units **PASS 572 /
+FAIL 0** · demo **PASS 32 / FAIL 0** · pdf-smoke **NOT RUN** here.
+- The reminders sim section sells a warranty expiring in weeks and a device
+  sold far past its cover, books a repair to *ready* with a deposit held, and
+  refunds a sale to store credit — then asserts each list's membership, exact
+  customer/device/deposit values, the 25-item cap, and the cashier/admin/
+  manager role guards. The Arabic and Urdu dictionaries gained the panel's 12
+  strings (6-form Arabic plurals, 2-form Urdu).
+
+---
+
+## v1.54.0 — customer 360 profile
+
+**2026-09-24.**
+
+- **Everything one customer is, on one screen.** Customers → *Ledger* is now
+  a full Customer 360 profile: total spent, net of refunds, visits, average
+  sale, first and last visit — alongside what they owe, their store credit,
+  and their credit limit.
+- **The devices they bought, and their warranty cover.** Every serialized
+  unit on their sales, priced at what they actually paid, with the same
+  warranty answer as the Warranty screen as of today — active, expired, or
+  refunded — plus the expiry date and days left.
+- **Their repairs, open and collected.** Tickets still on the bench (intake
+  through ready) and repairs they've collected with the final total, joined
+  on the repair's customer.
+- **The same ledger managers already see**, with aging buckets, behind the
+  same admin/manager gate as the ledger and statement.
+
+**Validation:** backend-sim **PASS 1190 / FAIL 0** · client units **PASS 572 /
+FAIL 0** · demo **PASS 32 / FAIL 0**.
+- The profile sim section sells a serialized warranty phone on account,
+  refunds part of it to store credit, and books a repair against the same
+  customer, then asserts the summary money, the device's active warranty, the
+  open repair ticket, the ledger rows and aging, the role and 404 guards, and
+  a second customer cross-checked against the seeded ledger numbers.
+
+---
+
+## v1.53.0 — serial lifecycle trace
+
+**2026-09-24.**
+
+- **One IMEI, its whole life in one timeline.** Serial Trace
+  (`/api/serials/trace`, admin and manager) takes a serial number or IMEI and
+  lists every leg that serial has walked — the intake that brought it in
+  (purchase order or trade-in, at the value actually paid), every sale that
+  carried that exact unit, refunds that returned it to stock, repair tickets
+  filed against that device, and trade-ins where the store bought it back —
+  oldest to newest.
+- **Immutable intake stamp.** Each serial now records when it entered the
+  store on every intake path (PO receive, trade-in intake, manual entry).
+  Buying back a unit this store already sold keeps the original intake stamp,
+  so a serial bought back is still one serial, not a second intake.
+- **Read-only, same guardrails as stock health.** The screen and timeline
+  never write a bookkeeping row; serialized stock still counts by serial, and
+  admin and manager only.
+
+**Validation:** backend-sim **PASS 1172 / FAIL 0** · client units **PASS 572 /
+FAIL 0** · demo **PASS 32 / FAIL 0**.
+- The trace sim section drives a full trade-in lifecycle (take in, resell,
+  buy back, resell, refund) and asserts the timeline shape, date ordering, the
+  single intake stamp on a bought-back serial, the min-length and role guards,
+  and the "not found" case.
+
+---
+
+## v1.52.0 — inventory velocity
+
+**2026-09-24.**
+
+- **How hard is the shelf working?** Velocity puts a movement number on each
+  product: units and revenue per day, days of cover, and turnover — net
+  revenue divided by the average value of the stock sitting on the shelf over
+  the window. A line that took 300 days to clear shows it; a fast mover with a
+  full shelf shows it.
+- **Buy again.** A product earns a buy-again when it genuinely out-sold what
+  came back in *and* the shelf is running low (nothing on hand, or cover
+  shorter than the 30/90-day window). Idle stock and refund-swamped lines
+  never qualify, so the reorder shortlist is not padded with last year's
+  mistakes.
+- **Health ↔ Velocity, one screen.** Toggle the two views without losing the
+  filters; each exports its own CSV (`orison-stock-health.csv` /
+  `orison-stock-velocity.csv`).
+- **Same guardrails as stock health.** Serialized stock is counted by serial,
+  services and inactive products are excluded, turnover is never negative, and
+  the report is read-only — it never writes a bookkeeping row.
+
+**Validation:** backend-sim **PASS 1166 / FAIL 0** · client units **PASS 572 /
+FAIL 0** · demo **PASS 32 / FAIL 0**.
+- Mutation cases confirm the velocity maths bites: net revenue netting off
+  refunds at what the customer actually paid, refund units not counted as sold,
+  a 50%-discount line pushing turnover to null rather than a negative number,
+  serialized lines valued by serial count, buy-again false when restock from a
+  purchase order outpaces sales, idle lines flat and profitless, services and
+  inactive products staying out of the count, and the 90-day window and 365-day
+  clamp.
+
+---
+
+## v1.51.0 — stock health
+
+**2026-09-24.**
+
+- **What is the shelf actually worth?** Stock Health values the whole catalog
+  at retail and at cost — serialized items at their known serial cost — so the
+  shopkeeper can see, in one number, how much cash is sitting on the shelf.
+- **Who is selling?** Over a 30/90/180/365-day window, each product shows what
+  actually left the door: units sold, revenue, days of cover. *Slow* (cover
+  over 180 days, or one unit or less sold) and *dead* (nothing sold in 180
+  days) are flagged.
+- **Reported, never auto-hidden.** The screen and the CSV point a manager at
+  what is tying up money; nothing gets hidden, held back or discounted by the
+  system.
+- **Admin and manager only**, read-only — the health report never writes a
+  bookkeeping row.
+
+**Validation:** backend-sim **PASS 1144 / FAIL 0** · client units **PASS 565 /
+FAIL 0** · demo **PASS 32 / FAIL 0**.
+- Eight mutation tests confirm the tests bite: category names that clobber
+  `Object.prototype` (like a category literally named `toString`) nulling out
+  of the JSON, every window being clamped, refund units not counting as sold,
+  stock with no cover being neither slow nor dead, serialized stock valued
+  wholesale outside the ledger, inactive and service lines reaching the count,
+  on-hand-of-zero items being reported, and the summary not reconciling with
+  the items it came from.
+
+---
+
+## v1.50.0 — parts a job is waiting for
 
 **2026-09-22.**
 

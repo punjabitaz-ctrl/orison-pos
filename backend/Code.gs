@@ -69,6 +69,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/customers':       return customers_(session, payload, params);
     case '/api/customers/ledger': return customerLedger_(session, params);
     case '/api/customers/statement': return customerStatement_(session, params);
+    case '/api/customers/profile': return customerProfile_(session, params);
     case '/api/customers/receivables': return receivables_(session);
     case '/api/reports':         return reports_(session, params);
     case '/api/accounting':      return accounting_(session, params);
@@ -121,9 +122,11 @@ function dispatch_(action, session, payload, params) {
     case '/api/repairs/deposit-refund': return repairDepositRefund_(session, payload);
     case '/api/tradein':         return tradeIn_(session, payload);
     case '/api/tradeins':        return tradeIns_(session, params);
+    case '/api/serials/trace':   return serialsTrace_(session, params);
     case '/api/drawer/open':     return drawerOpen_(session, payload);
     case '/api/approve':         return approve_(session, payload);
     case '/api/warranty':        return warrantyLookup_(session, params);
+    case '/api/reminders':       return reminders_(session, params);
     case '/api/marketplace/settings': return marketplaceSettings_(session, payload);
     case '/api/marketplace/import': return marketplaceImport_(session);
     case '/api/drive/export':    return driveExport_(session, payload, params);
@@ -134,6 +137,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/backup/status':   return backupStatus_(session);
     case '/api/backup/run':      return backupNow_(session);
     case '/api/inventory/reorder': return inventoryReorder_(session, params);
+    case '/api/inventory/health':  return inventoryHealth_(session, params);
     case '/api/admin/products/bulk-price': return adminBulkPrice_(session, payload);
     case '/api/admin/stock-take': return adminStockTake_(session, payload);
     default:
@@ -358,7 +362,7 @@ var META_HEADERS    = ['key', 'value'];
 var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at'];
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable', 'warranty_days'];
-var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at', 'cost', 'source'];
+var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at', 'cost', 'source', 'created_at'];
 var TX_HEADERS      = ['id', 'store_id', 'user_id', 'device_id', 'client_tx_id', 'kind', 'original_client_tx', 'counterparty', 'grand_total', 'status', 'tenders_json', 'items_json', 'note', 'created_at', 'subtotal', 'tax_amount', 'discount_pct', 'customer_id', 'receipt_no', 'channel', 'external_ref', 'approved_by', 'tax_inclusive', 'tax_rate', 'supplier_id', 'po_id'];
 var CUSTOMERS_HEADERS = ['id', 'store_id', 'name', 'phone', 'email', 'note', 'created_at', 'credit_limit', 'trn'];
 var SHIFTS_HEADERS    = ['id', 'store_id', 'user_id', 'device_id', 'opened_at', 'closed_at', 'opening_float', 'cash_expected', 'cash_declared', 'over_short', 'tenders_json', 'note', 'status', 'closed_by'];
@@ -1448,6 +1452,7 @@ function seed_() {
         status: 'IN_STOCK',
         tx_id: '',
         updated_at: now,
+        created_at: now,
       });
     }
   }
@@ -3385,6 +3390,153 @@ function customerStatement_(session, params) {
   };
 }
 
+/* Everything a customer is to the shop, on one screen: what they've spent and
+   net of refunds, how often they come in, what they hold (balance, limit,
+   store credit), the serialized devices they own with their warranty cover,
+   open and collected repairs, and the same ledger the manager sees. Money
+   figures follow the Sales-report rule: gross revenue is what completes at the
+   till, refunds reduce it, visits count sales, average sale divides sales by
+   count. Warranty status per device matches the Warranty screen's answer. */
+function customerProfile_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var cid = String((params && params.customerId) || '');
+  if (!cid) throw statusError_(400, 'customerId is required');
+  var cust = null;
+  var custRows = readRows_('Customers', CUSTOMERS_HEADERS);
+  for (var i = 0; i < custRows.length; i++) {
+    if (String(custRows[i].id) === cid) { cust = custRows[i]; break; }
+  }
+  if (!cust) throw statusError_(404, 'Customer not found');
+
+  var txRows = readRows_('Transactions', TX_HEADERS)
+    .filter(function (t) { return String(t.status) === 'COMPLETED' && String(t.customer_id) === cid; });
+  var money = customerMoney_(txRows, cid);
+
+  /* the profile's summary uses transaction totals, matching the printed
+     receipt and the Sales report's gross/refunds split. A visit is any
+     completed transaction that named the customer (a trade-in or a payment
+     counts as a visit too). The average sale is gross over sales only —
+     the same salesCount the Sales report divides by — so a refund or a
+     payment can't drag it toward the wrong number. */
+  var gross = 0, refunds = 0, visits = 0, salesCount = 0, firstVisit = '', lastVisit = '';
+  for (var v = 0; v < txRows.length; v++) {
+    var tv = txRows[v];
+    var kind = String(tv.kind || 'sale');
+    var tvDate = String(tv.created_at || '');
+    visits++;
+    if (!firstVisit || tvDate < firstVisit) firstVisit = tvDate;
+    if (tvDate > lastVisit) lastVisit = tvDate;
+    if (kind === 'sale') { salesCount++; gross += num_(tv.grand_total); }
+    else if (kind === 'refund') refunds += num_(tv.grand_total);
+  }
+
+  /* serialized devices they bought, with the same warranty answer the
+     Warranty screen gives (refunded units covered nothing) */
+  var refundedSerials = Object.create(null);
+  for (var rf = 0; rf < txRows.length; rf++) {
+    var rt = txRows[rf];
+    if (String(rt.kind || '') !== 'refund') continue;
+    var ritems = itobjs_(rt.items_json);
+    for (var ri = 0; ri < ritems.length; ri++) {
+      if (ritems[ri].serialNumber) refundedSerials[String(ritems[ri].serialNumber)] = true;
+    }
+  }
+  var now = Date.now();
+  var devices = [];
+  for (var s = 0; s < txRows.length; s++) {
+    var sale = txRows[s];
+    if (String(sale.kind || '') !== 'sale') continue;
+    var items = itobjs_(sale.items_json);
+    var soldMs = Date.parse(String(sale.created_at));
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k];
+      if (!it.serialNumber) continue;
+      var days = num_(it.warrantyDays);
+      var dp = num_(it.discountPct);
+      var price = it.unitPrice != null ? round2_(num_(it.unitPrice) * (1 - (dp > 0 ? dp : 0) / 100)) : round2_(num_(it.price) || 0);
+      var refunded = !!refundedSerials[String(it.serialNumber)];
+      var expiresMs = days > 0 && !isNaN(soldMs) ? soldMs + days * DAY_MS : NaN;
+      devices.push({
+        productId: String(it.productId || ''),
+        name: String(it.name || ''),
+        serialNumber: String(it.serialNumber),
+        soldAt: String(sale.created_at),
+        receiptNo: String(sale.receipt_no || ''),
+        price: price,
+        warrantyDays: days,
+        expiresAt: isNaN(expiresMs) ? '' : new Date(expiresMs).toISOString(),
+        daysLeft: isNaN(expiresMs) ? 0 : Math.max(0, Math.ceil((expiresMs - now) / DAY_MS)),
+        status: refunded ? 'refunded' : (days > 0 && !isNaN(expiresMs) && now > expiresMs ? 'expired' : (days > 0 ? 'active' : 'none')),
+      });
+    }
+  }
+  devices.sort(function (a, b) { return String(b.soldAt).localeCompare(String(a.soldAt)); });
+
+  /* repairs: what's still on the bench, and what was collected with its total */
+  var repairsOpen = [], repairsCollected = [];
+  var reps = readRows_('Repairs', REPAIR_HEADERS);
+  for (var rp = 0; rp < reps.length; rp++) {
+    var r = reps[rp];
+    if (String(r.customer_id || '') !== cid) continue;
+    var status = String(r.status || '');
+    var row = {
+      ticketNo: String(r.ticket_no || ''),
+      device: (String(r.device_make || '') + ' ' + String(r.device_model || '')).trim(),
+      serial: String(r.device_serial || ''),
+      status: status,
+      createdAt: String(r.created_at || ''),
+      promisedAt: String(r.promised_at || ''),
+      closedAt: String(r.closed_at || ''),
+      estimate: num_(r.estimate_total),
+      deposit: num_(r.deposit_total),
+      finalTotal: num_(r.final_total),
+    };
+    if (status === 'collected') repairsCollected.push(row);
+    else if (['intake', 'diagnosed', 'awaiting_parts', 'in_progress', 'ready'].indexOf(status) >= 0) repairsOpen.push(row);
+  }
+  repairsOpen.sort(function (a, b) { return String(a.createdAt).localeCompare(String(b.createdAt)); });
+  repairsCollected.sort(function (a, b) { return String(a.closedAt).localeCompare(String(b.closedAt)); });
+
+  return {
+    customer: customerDto_(cust),
+    summary: {
+      totalSpent: round2_(gross),
+      netOfRefunds: round2_(gross - refunds),
+      refunds: round2_(refunds),
+      visits: visits,
+      averageSale: salesCount ? round2_(gross / salesCount) : 0,
+      balance: money.balance,
+      owes: money.account,
+      storeCredit: money.credit,
+      creditLimit: num_(cust.credit_limit) > 0 ? num_(cust.credit_limit) : 0,
+      firstVisit: firstVisit,
+      lastVisit: lastVisit,
+    },
+    devices: devices,
+    repairsOpen: repairsOpen,
+    repairsCollected: repairsCollected,
+    ledger: {
+      credit: money.credit,
+      account: money.account,
+      balance: money.balance,
+      aging: agingBuckets_(txRows),
+      transactions: txRows.slice().sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); })
+        .slice(0, 100).map(function (t) {
+          var names = [];
+          try {
+            var arr = JSON.parse(t.items_json || '[]');
+            for (var q = 0; q < arr.length; q++) names.push(String(arr[q].name || ''));
+          } catch (_) {}
+          return {
+            id: String(t.id), clientTxId: String(t.client_tx_id || ''), kind: String(t.kind || 'sale'),
+            grandTotal: num_(t.grand_total), createdAt: String(t.created_at),
+            items: names.slice(0, 5),
+          };
+        }),
+    },
+  };
+}
+
 /* one aggregate for the Customers screen: every customer with a non-zero
    balance plus the total outstanding across the book. */
 function receivables_(session) {
@@ -5008,6 +5160,314 @@ function inventoryReorder_(session, params) {
   };
 }
 
+/* What the shelf is worth, and how long it lasts. Every active product is
+ * valued at retail (units × shelf price) and at cost (units × the
+ * PO-received weighted cost; serialized products value each serial at its
+ * own sticker cost, falling back to the product cost), shows its days of
+ * cover from the same velocity the reorder worksheet uses, and is classified
+ * fast / slow / dead by the program rules (D3). Slow and dead money is
+ * reported, never auto-hidden and never repriced. Read-only like Reports:
+ * admin and manager only, no write path here. */
+function inventoryHealth_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  if (String(params && params.view || '') === 'velocity') return inventoryVelocity_(session, params);
+  var days = parseInt(params && params.days, 10);
+  if (isNaN(days) || days < 1) days = 90;
+  days = Math.min(days, 365);
+  var deadDays = 180;
+  var slowCoverDays = 180;
+  var slowSoldMax = 1;
+  var nowMs = Date.now();
+  var dayMs = 86400000;
+  var sinceIso = new Date(nowMs - days * dayMs).toISOString();
+  var sinceDeadIso = new Date(nowMs - deadDays * dayMs).toISOString();
+
+  /* units sold per product over the window, and over the dead-stock window;
+     refunds give units back, exactly like the reorder worksheet. */
+  var sold = {}, soldDead = {};
+  var txRows = readRows_('Transactions', TX_HEADERS);
+  for (var t = 0; t < txRows.length; t++) {
+    var tx = txRows[t];
+    if (String(tx.status) !== 'COMPLETED') continue;
+    var kind = String(tx.kind || 'sale');
+    if (kind !== 'sale' && kind !== 'refund') continue;
+    var createdAt = String(tx.created_at || '');
+    var sign = kind === 'refund' ? -1 : 1;
+    var items = itobjs_(tx.items_json);
+    var inWindow = createdAt >= sinceIso;
+    var inDeadWindow = createdAt >= sinceDeadIso;
+    for (var i = 0; i < items.length; i++) {
+      var pid = String(items[i].productId || '');
+      if (!pid) continue;
+      var qty = sign * (num_(items[i].quantity) || 1);
+      if (inWindow) sold[pid] = (sold[pid] || 0) + qty;
+      if (inDeadWindow) soldDead[pid] = (soldDead[pid] || 0) + qty;
+    }
+  }
+
+  var serialCount = {}, serialCostKnown = {}, serialCostUnknown = {};
+  var serRows = readRows_('Serials', SERIAL_HEADERS);
+  for (var s = 0; s < serRows.length; s++) {
+    if (String(serRows[s].status) !== 'IN_STOCK') continue;
+    var spid = String(serRows[s].product_id);
+    serialCount[spid] = (serialCount[spid] || 0) + 1;
+    if (num_(serRows[s].cost) > 0) serialCostKnown[spid] = (serialCostKnown[spid] || 0) + num_(serRows[s].cost);
+    else serialCostUnknown[spid] = (serialCostUnknown[spid] || 0) + 1;
+  }
+
+  var summary = { products: 0, units: 0, retailValue: 0, costValue: 0, slowCount: 0, deadCount: 0 };
+  /* null prototype so a category name like 'toString' cannot hit Object.prototype */
+  var catMap = Object.create(null);
+  var items2 = [];
+  var prods = readRows_('Products', PRODUCT_HEADERS);
+  for (var p = 0; p < prods.length; p++) {
+    var prod = prods[p];
+    if (String(prod.item_type) === 'service' || String(prod.active) !== '1') continue;
+    var isSerialized = String(prod.is_serialized) === '1';
+    var onHand = isSerialized ? (serialCount[String(prod.id)] || 0) : num_(prod.on_hand);
+    if (onHand <= 0) continue;
+
+    var retailPrice = num_(prod.retail_price);
+    var retailValue = round2_(onHand * retailPrice);
+    var costValue = isSerialized
+      ? round2_((serialCostKnown[String(prod.id)] || 0) + (serialCostUnknown[String(prod.id)] || 0) * num_(prod.cost_price))
+      : round2_(onHand * num_(prod.cost_price));
+
+    var soldUnits = Math.max(0, sold[String(prod.id)] || 0);
+    var soldDeadUnits = Math.max(0, soldDead[String(prod.id)] || 0);
+    var perDay = soldUnits / days;
+    var cover = perDay > 0 ? onHand / perDay : null;
+    var movement = soldDeadUnits === 0 ? 'dead'
+      : (soldUnits <= slowSoldMax || (cover !== null && cover > slowCoverDays)) ? 'slow' : 'fast';
+
+    var category = String(prod.category || '');
+    var cat = catMap[category] || (catMap[category] = { category: category, units: 0, retailValue: 0, costValue: 0 });
+
+    items2.push({
+      id: String(prod.id),
+      name: String(prod.name || ''),
+      sku: String(prod.sku || ''),
+      category: category,
+      isSerialized: isSerialized,
+      onHand: onHand,
+      retailPrice: retailPrice,
+      /* the per-unit cost figure a serialized product shows is its weighted
+         on-the-shelf cost, because each serial may carry its own sticker. */
+      costPrice: isSerialized ? round2_(costValue / onHand) : num_(prod.cost_price),
+      retailValue: retailValue,
+      costValue: costValue,
+      soldUnits: soldUnits,
+      perDay: Math.round(perDay * 100) / 100,
+      daysOfCover: cover === null ? null : Math.round(cover * 10) / 10,
+      movement: movement,
+    });
+
+    summary.products += 1;
+    summary.units += onHand;
+    summary.retailValue += retailValue;
+    summary.costValue += costValue;
+    if (movement === 'slow') summary.slowCount += 1;
+    if (movement === 'dead') summary.deadCount += 1;
+    cat.units += onHand;
+    cat.retailValue += retailValue;
+    cat.costValue += costValue;
+  }
+
+  summary.retailValue = round2_(summary.retailValue);
+  summary.costValue = round2_(summary.costValue);
+  var categories = [];
+  for (var key in catMap) {
+    catMap[key].retailValue = round2_(catMap[key].retailValue);
+    catMap[key].costValue = round2_(catMap[key].costValue);
+    categories.push(catMap[key]);
+  }
+  /* the most money stuck in a category first. */
+  categories.sort(function (a, b) { return b.costValue - a.costValue; });
+  items2.sort(function (a, b) { return b.costValue - a.costValue; });
+
+  return {
+    asOf: new Date().toISOString(),
+    window: { days: days, since: sinceIso },
+    rules: { slowCoverDays: slowCoverDays, slowSoldMax: slowSoldMax, deadDays: deadDays },
+    summary: summary,
+    categories: categories,
+    items: items2,
+  };
+}
+
+/* Sell-through (v1.52.0): how fast things actually move, so buying has
+ * numbers behind it. Units and AED sold and refunded in the window (30 days
+ * for sell-through, D2; `days` clamps 1-365), per product and per category,
+ * using the Sales-report money rules: line price minus the line and order
+ * discounts, tax taken out of a tax-inclusive line. turnover is AED sold
+ * divided by the average shelf value over the period - the retail turnover
+ * ratio. buyAgain is the product already selling through faster than it is
+ * replacing (more units out than in, and the shelf would not last the
+ * window): a buying signal on screen, nothing auto-ordered. */
+function inventoryVelocity_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var days = parseInt(params && params.days, 10);
+  if (isNaN(days) || days < 1) days = 30;
+  days = Math.min(days, 365);
+  var nowMs = Date.now();
+  var sinceIso = new Date(nowMs - days * 86400000).toISOString();
+
+  var prodById = {};
+  var prods = readRows_('Products', PRODUCT_HEADERS);
+  for (var p = 0; p < prods.length; p++) prodById[String(prods[p].id)] = prods[p];
+
+  /* units and AED sold / refunded, units received (purchase rows), and the
+     cost-at-sale for gross profit - the same money the Sales report computes. */
+  var soldU = Object.create(null), refundU = Object.create(null), soldRev = Object.create(null), refundRev = Object.create(null), received = Object.create(null), cost = Object.create(null);
+  var add = function (map, key, n) { map[key] = (map[key] || 0) + n; };
+  var txRows = readRows_('Transactions', TX_HEADERS);
+  for (var t = 0; t < txRows.length; t++) {
+    var tx = txRows[t];
+    if (String(tx.status) !== 'COMPLETED') continue;
+    if (String(tx.created_at || '') < sinceIso) continue;
+    var kind = String(tx.kind || 'sale');
+    var items = itobjs_(tx.items_json);
+    if (kind === 'sale' || kind === 'refund') {
+      var sign = kind === 'refund' ? -1 : 1;
+      var orderPct = num_(tx.discount_pct);
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i] || {};
+        var pid = String(it.productId || '');
+        if (!pid) continue;
+        var qty = Math.max(1, num_(it.quantity) || 1);
+        var linePct = clampPct_(num_(it.discountPct));
+        var lineNetCents = round2_(num_(it.unitPrice) * 100 * qty * (1 - linePct / 100));
+        var revCents = round2_(lineNetCents * (100 - orderPct) / 100);
+        if (String(tx.tax_inclusive) === '1' && it.taxable !== false && num_(tx.tax_rate) > 0) {
+          revCents = revCents * 100 / (100 + num_(tx.tax_rate));
+        }
+        var lineRev = round2_(Math.round(revCents) / 100);
+        if (sign < 0) { add(refundU, pid, qty); add(refundRev, pid, lineRev); }
+        else { add(soldU, pid, qty); add(soldRev, pid, lineRev); }
+        var prod = prodById[pid];
+        var costPer = (typeof it.unitCost === 'number' && it.unitCost > 0) ? it.unitCost
+          : (prod ? num_(prod.cost_price) : 0);
+        add(cost, pid, sign * costPer * qty);
+      }
+    } else if (kind === 'purchase') {
+      for (var pi = 0; pi < items.length; pi++) {
+        var itp = items[pi] || {};
+        var pid2 = String(itp.productId || '');
+        if (!pid2) continue;
+        add(received, pid2, Math.max(1, num_(itp.quantity) || 1));
+      }
+    }
+  }
+
+  var serialCount = Object.create(null);
+  var serRows = readRows_('Serials', SERIAL_HEADERS);
+  for (var s = 0; s < serRows.length; s++) {
+    if (String(serRows[s].status) !== 'IN_STOCK') continue;
+    var spid = String(serRows[s].product_id);
+    serialCount[spid] = (serialCount[spid] || 0) + 1;
+  }
+
+  var probe = Object.create(null);
+  for (var pr = 0; pr < prods.length; pr++) {
+    probe[String(prods[pr].id)] = 1;
+  }
+  for (var mu in soldU) probe[mu] = 1;
+  for (var mr in refundU) probe[mr] = 1;
+  for (var mm in received) probe[mm] = 1;
+
+  var rows = [];
+  var catMap = Object.create(null);
+  var summary = { products: 0, units: 0, netRevenue: 0, grossProfit: 0, avgShelfValue: 0, buyAgainCount: 0, turnover: null };
+  var buyAgain = [];
+  for (var id in probe) {
+    var prod = prodById[id];
+    if (!prod || String(prod.item_type) === 'service' || String(prod.active) !== '1') continue;
+    var isSerialized = String(prod.is_serialized) === '1';
+    var onHand = isSerialized ? (serialCount[id] || 0) : Math.max(0, num_(prod.on_hand));
+    var unitsSold = soldU[id] || 0;
+    var unitsRefunded = refundU[id] || 0;
+    var netUnits = unitsSold - unitsRefunded;
+    var revenueSold = round2_(soldRev[id] || 0);
+    var revenueRefunded = round2_(refundRev[id] || 0);
+    var netRevenue = round2_(revenueSold - revenueRefunded);
+    var receivedUnits = received[id] || 0;
+    /* only rows that moved in the window or still sit on the shelf. */
+    if (netUnits === 0 && receivedUnits === 0 && onHand <= 0) continue;
+
+    var grossProfit = round2_(netRevenue - round2_(cost[id] || 0));
+    var margin = netRevenue ? Math.round(grossProfit * 1000 / netRevenue) / 10 : null;
+
+    /* average shelf value over the window: the shelf began where it is today
+       less what arrived, plus what left; at retail, because turnover is
+       revenue against the price on the labels. */
+    var beginUnits = Math.max(0, onHand + netUnits - receivedUnits);
+    var avgUnits = (beginUnits + onHand) / 2;
+    var avgShelfValue = round2_(avgUnits * num_(prod.retail_price));
+    var perDay = netUnits / days;
+    var cover = perDay > 0 ? round2_(onHand / perDay * 10) / 10 : null;
+    /* outpaces replacement, and the shelf would not last the window. */
+    var buy = netUnits > 0 && netUnits > receivedUnits && (onHand === 0 || (cover !== null && cover < days));
+
+    var category = String(prod.category || '');
+    var cat = catMap[category] || (catMap[category] = {
+      category: category, products: 0, units: 0, netRevenue: 0, grossProfit: 0, avgShelfValue: 0,
+    });
+
+    var row = {
+      id: id, name: String(prod.name || ''), sku: String(prod.sku || ''),
+      category: category, isSerialized: isSerialized, onHand: onHand,
+      unitsSold: unitsSold, unitsRefunded: unitsRefunded, netUnits: netUnits,
+      revenueSold: revenueSold, revenueRefunded: revenueRefunded, netRevenue: netRevenue,
+      avgShelfValue: avgShelfValue,
+      turnover: netRevenue > 0 && avgShelfValue > 0 ? round2_(netRevenue / avgShelfValue * 100) / 100 : null,
+      perDay: Math.round(perDay * 100) / 100,
+      daysOfCover: cover,
+      grossProfit: grossProfit, margin: margin,
+      receivedUnits: receivedUnits,
+      buyAgain: buy,
+    };
+    rows.push(row);
+    if (buy) buyAgain.push(row);
+
+    summary.products += 1;
+    summary.units += netUnits;
+    summary.netRevenue += netRevenue;
+    summary.grossProfit += grossProfit;
+    summary.avgShelfValue += avgShelfValue;
+    if (buy) summary.buyAgainCount += 1;
+    cat.products += 1;
+    cat.units += netUnits;
+    cat.netRevenue += netRevenue;
+    cat.grossProfit += grossProfit;
+    cat.avgShelfValue += avgShelfValue;
+  }
+
+  var categories = [];
+  for (var key in catMap) {
+    var c = catMap[key];
+    c.turnover = c.netRevenue > 0 && c.avgShelfValue > 0 ? round2_(c.netRevenue / c.avgShelfValue * 100) / 100 : null;
+    categories.push(c);
+  }
+  categories.sort(function (a, b) { return b.netRevenue - a.netRevenue; });
+  rows.sort(function (a, b) { return b.netRevenue - a.netRevenue; });
+  buyAgain.sort(function (a, b) { return b.netUnits - a.netUnits; });
+
+  summary.netRevenue = round2_(summary.netRevenue);
+  summary.grossProfit = round2_(summary.grossProfit);
+  summary.avgShelfValue = round2_(summary.avgShelfValue);
+  summary.turnover = summary.netRevenue > 0 && summary.avgShelfValue > 0 ? round2_(summary.netRevenue / summary.avgShelfValue * 100) / 100 : null;
+
+  return {
+    asOf: new Date().toISOString(),
+    view: 'velocity',
+    window: { days: days, since: sinceIso },
+    summary: summary,
+    categories: categories,
+    items: rows,
+    buyAgain: buyAgain,
+  };
+}
+
 /* Bulk reprice. The client sends a RULE, not prices: the server reads each
  * product under the lock and computes the new value itself, so a stale catalog
  * on the terminal can never write a price nobody chose. `preview: true`
@@ -5641,7 +6101,7 @@ function purchaseOrderReceive_(session, payload) {
       var netUnit = round2_(lineC / 100 / tk.qty);
       for (var sx = 0; sx < tk.serials.length; sx++) {
         serialNew.push({ id: Utilities.getUuid(), product_id: tk.pid, serial_number: tk.serials[sx], status: 'IN_STOCK',
-          tx_id: '', updated_at: stamp, cost: netUnit, source: 'po' });
+          tx_id: '', updated_at: stamp, cost: netUnit, source: 'po', created_at: stamp });
       }
       for (var tx = 0; tx < tk.qty; tx++) {
         txItems.push({ productId: tk.pid, name: String(tk.ordered.name || ''), quantity: 1, unitPrice: netUnit, unitCost: netUnit, taxable: !(String(tk.prod.taxable) === '0') });
@@ -6118,6 +6578,281 @@ function warrantyLookup_(session, params) {
   for (var i = 0; i < custs.length; i++) custName[String(custs[i].id)] = String(custs[i].name || '');
   matches.forEach(function (m) { m.customer = m.customerId ? (custName[m.customerId] || '') : ''; delete m.customerId; });
   return { query: q, matches: matches };
+}
+
+/* Snapshots of what the shop should act on, computed on read from the sheet:
+ * nothing is stored, nothing is scheduled. Every list comes from the same rows
+ * the matching screens show, so a number here can't disagree with the feature
+ * it links to. */
+var REMINDERS_MAX = 25;
+var UPGRADE_WINDOW_MS = 24 * 30 * DAY_MS; /* 24 months, 30-day months */
+
+function reminders_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var now = Date.now();
+  var txRows = readRows_('Transactions', TX_HEADERS);
+  var custs = readRows_('Customers', CUSTOMERS_HEADERS);
+  var custName = Object.create(null);
+  for (var c = 0; c < custs.length; c++) custName[String(custs[c].id)] = String(custs[c].name || '');
+
+  /* Refunds already consumed a cover: a serial that came back to the shop is not
+   * "expiring" to anyone. Same split warrantyMatches_ uses, keyed per sale. */
+  var refundsByOriginal = Object.create(null);
+  for (var i = 0; i < txRows.length; i++) {
+    var t = txRows[i];
+    if (String(t.status) !== 'COMPLETED' || String(t.kind || '') !== 'refund') continue;
+    var key = String(t.original_client_tx || '');
+    (refundsByOriginal[key] = refundsByOriginal[key] || []).push(t);
+  }
+
+  var warrantyExpiring = [];
+  var upgradeByCust = Object.create(null);
+
+  for (var s = 0; s < txRows.length; s++) {
+    var sale = txRows[s];
+    if (String(sale.status) !== 'COMPLETED' || String(sale.kind || '') !== 'sale') continue;
+    var soldMs = Date.parse(String(sale.created_at));
+    if (isNaN(soldMs)) continue;
+    var items = itobjs_(sale.items_json);
+
+    /* which serials this sale has already given back */
+    var refundedSerials = Object.create(null);
+    var rf = refundsByOriginal[String(sale.client_tx_id || '')] || [];
+    for (var r = 0; r < rf.length; r++) {
+      var ritems = itobjs_(rf[r].items_json);
+      for (var ri = 0; ri < ritems.length; ri++) {
+        if (ritems[ri].serialNumber) refundedSerials[String(ritems[ri].serialNumber)] = true;
+      }
+    }
+
+    var snap = null;
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k];
+      var days = num_(it.warrantyDays);
+      if (!(days > 0) || !it.serialNumber) continue;
+      if (refundedSerials[String(it.serialNumber)]) continue;
+      var expiresMs = soldMs + days * DAY_MS;
+      var cid = String(sale.customer_id || '');
+      var daysLeft = Math.ceil((expiresMs - now) / DAY_MS);
+
+      /* a brand-new serialized device (a full year of cover is the brand-new
+         identifier) sold long enough ago that its warranty is already gone —
+         these are the customers to nudge toward the new model. */
+      if (days >= 365 && now - soldMs >= UPGRADE_WINDOW_MS) {
+        if (!upgradeByCust[cid]) upgradeByCust[cid] = [];
+        upgradeByCust[cid].push({
+          device: String(it.name || ''),
+          serialNumber: String(it.serialNumber),
+          soldAt: String(sale.created_at),
+        });
+      }
+
+      if (daysLeft < 0 || daysLeft > 30) continue;
+      snap = {
+        customerId: cid,
+        customer: cid ? (custName[cid] || '') : '',
+        device: String(it.name || ''),
+        serialNumber: String(it.serialNumber),
+        receiptNo: String(sale.receipt_no || ''),
+        soldAt: String(sale.created_at),
+        expiresAt: new Date(expiresMs).toISOString(),
+        daysLeft: daysLeft,
+      };
+      warrantyExpiring.push(snap);
+    }
+  }
+  warrantyExpiring.sort(function (a, b) { return a.daysLeft - b.daysLeft; });
+
+  var upgradeCandidates = [];
+  for (var cid2 in upgradeByCust) {
+    var u = upgradeByCust[cid2];
+    if (!u || !u.length) continue;
+    upgradeCandidates.push({
+      customerId: cid2,
+      customer: cid2 ? (custName[cid2] || '') : '',
+      devices: u,
+    });
+  }
+  upgradeCandidates.sort(function (a, b) { return String(a.customer).localeCompare(String(b.customer)); });
+
+  var repRows = readRows_('Repairs', REPAIR_HEADERS);
+  var repairsReady = [];
+  for (var t = 0; t < repRows.length; t++) {
+    var rr2 = repRows[t];
+    if (String(rr2.status || '') !== 'ready') continue;
+    var createdMs = Date.parse(String(rr2.created_at));
+    repairsReady.push({
+      ticketNo: String(rr2.ticket_no || ''),
+      customerId: String(rr2.customer_id || ''),
+      customer: String(rr2.customer_name || ''),
+      device: (String(rr2.device_make || '') + ' ' + String(rr2.device_model || '')).trim(),
+      serialNumber: String(rr2.device_serial || ''),
+      deposit: num_(rr2.deposit_total),
+      daysWaiting: isNaN(createdMs) ? 0 : Math.max(0, Math.floor((now - createdMs) / DAY_MS)),
+    });
+  }
+  repairsReady.sort(function (a, b) { return b.daysWaiting - a.daysWaiting; });
+
+  /* money customers own for store credit, one pass over the sheet, same
+   * arithmetic as the customer profile (customerMoney_). */
+  var credit = Object.create(null);
+  for (var j = 0; j < txRows.length; j++) {
+    var tj = txRows[j];
+    if (String(tj.status) !== 'COMPLETED') continue;
+    var cj = String(tj.customer_id || '');
+    if (!cj) continue;
+    var kj = String(tj.kind || 'sale');
+    var tenders = [];
+    try { tenders = JSON.parse(tj.tenders_json || '[]'); } catch (_) {}
+    if (kj === 'sale') {
+      for (var m = 0; m < tenders.length; m++) {
+        if (String(tenders[m].type || '') === 'store_credit') {
+          credit[cj] = (credit[cj] || 0) - num_(tenders[m].amount);
+        }
+      }
+    } else if (kj === 'refund' || kj === 'tradein') {
+      for (var mm = 0; mm < tenders.length; mm++) {
+        if (String(tenders[mm].type || '') === 'store_credit') {
+          credit[cj] = (credit[cj] || 0) + num_(tenders[mm].amount);
+        }
+      }
+    }
+  }
+  var storeCreditLeft = [];
+  for (var csum in credit) {
+    if (round2_(credit[csum]) > 0) {
+      storeCreditLeft.push({
+        customerId: csum,
+        customer: csum ? (custName[csum] || '') : '',
+        storeCredit: round2_(credit[csum]),
+      });
+    }
+  }
+  storeCreditLeft.sort(function (a, b) { return b.storeCredit - a.storeCredit; });
+
+  return {
+    warrantyExpiring: warrantyExpiring.slice(0, REMINDERS_MAX),
+    repairsReady: repairsReady.slice(0, REMINDERS_MAX),
+    upgradeCandidates: upgradeCandidates.slice(0, REMINDERS_MAX),
+    storeCreditLeft: storeCreditLeft.slice(0, REMINDERS_MAX),
+  };
+}
+
+function serialsTrace_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var q = String((params && params.q) || '').trim().toUpperCase();
+  if (q.length < 3) throw statusError_(400, 'Enter at least three characters of an IMEI or serial');
+  var serials = readRows_('Serials', SERIAL_HEADERS)
+    .filter(function (r) { return String(r.serial_number).toUpperCase() === q; });
+  if (!serials.length) return { query: q, found: false, steps: [] };
+
+  var serial = serials[serials.length - 1];
+  var steps = [];
+
+  /* intake: the Serials row itself — created_at is the immutable intake stamp,
+   * source says po|tradein, cost is the intake value at the time. A bought-back
+   * serial keeps its original row (buy-back patches it, never re-adds). */
+  for (var s = 0; s < serials.length; s++) {
+    steps.push({
+      kind: 'intake',
+      date: String(serials[s].created_at || serials[s].updated_at || ''),
+      source: String(serials[s].source || ''),
+      money: num_(serials[s].cost) > 0 ? num_(serials[s].cost) : null,
+    });
+  }
+
+  var txs = readRows_('Transactions', TX_HEADERS);
+  var custs = readRows_('Customers', CUSTOMERS_HEADERS);
+  var custName = Object.create(null);
+  for (var c = 0; c < custs.length; c++) custName[String(custs[c].id)] = String(custs[c].name || '');
+
+  for (var t = 0; t < txs.length; t++) {
+    var tx = txs[t];
+    /* A VOIDED row (a conflicted sale, or a refund that was rejected and
+       counter-paid) never happened on the book: it must not show on the
+       timeline as a sale that stood, or a restock that never returned the
+       unit. Same filter every other report applies. */
+    if (String(tx.status || '') !== 'COMPLETED') continue;
+    var items = [];
+    try { items = JSON.parse(String(tx.items_json || '[]')); } catch (e) { items = []; }
+    var hit = null, lineValue = null;
+    for (var it = 0; it < items.length; it++) {
+      if (String(items[it].serialNumber || '').toUpperCase() === q) {
+        hit = items[it];
+        lineValue = num_(items[it].unitPrice) * num_(items[it].quantity || 1);
+        break;
+      }
+    }
+    if (!hit) continue;
+    var kind = String(tx.kind || '');
+    if (kind === 'sale') {
+      steps.push({
+        kind: 'sale',
+        date: String(tx.created_at || ''),
+        money: lineValue,
+        receipt: String(tx.receipt_no || ''),
+        customer: tx.customer_id ? (custName[String(tx.customer_id)] || '') : String(tx.counterparty || ''),
+        transaction: String(tx.id || ''),
+      });
+    } else if (kind === 'refund' || kind === 'return') {
+      steps.push({
+        kind: 'restock',
+        date: String(tx.created_at || ''),
+        money: lineValue,
+        receipt: String(tx.receipt_no || ''),
+        customer: tx.customer_id ? (custName[String(tx.customer_id)] || '') : String(tx.counterparty || ''),
+        transaction: String(tx.id || ''),
+      });
+    }
+  }
+
+  var repairs = readRows_('Repairs', REPAIR_HEADERS)
+    .filter(function (r) { return String(r.device_serial).toUpperCase() === q; });
+  for (var r = 0; r < repairs.length; r++) {
+    steps.push({
+      kind: 'repair',
+      date: String(repairs[r].created_at || repairs[r].updated_at || ''),
+      ticket: String(repairs[r].ticket_no || ''),
+      repaired: String(repairs[r].status || ''),
+      issue: String(repairs[r].reported_fault || ''),
+    });
+  }
+
+  var tradeIns = readRows_('TradeIns', TRADEIN_HEADERS)
+    .filter(function (r) { return String(r.serial_number).toUpperCase() === q; });
+  for (var ti = 0; ti < tradeIns.length; ti++) {
+    steps.push({
+      kind: 'tradein',
+      date: String(tradeIns[ti].created_at || ''),
+      money: num_(tradeIns[ti].amount) > 0 ? num_(tradeIns[ti].amount) : null,
+      seller: String(tradeIns[ti].seller_name || ''),
+    });
+  }
+
+  steps.sort(function (a, b) {
+    var ta = new Date(a.date).getTime();
+    var tb = new Date(b.date).getTime();
+    if (isNaN(ta)) ta = 0;
+    if (isNaN(tb)) tb = 0;
+    return ta - tb;
+  });
+
+  var productId = String(serial.product_id || '');
+  var products = readRows_('Products', PRODUCT_HEADERS);
+  var productName = '';
+  for (var p = 0; p < products.length; p++) {
+    if (String(products[p].id) === productId) {
+      productName = String(products[p].name || '');
+      break;
+    }
+  }
+
+  return {
+    query: q,
+    found: true,
+    serial: { id: String(serial.id || ''), serialNumber: String(serial.serial_number || ''), status: String(serial.status || ''), productId: productId, productName: productName },
+    steps: steps,
+  };
 }
 
 var REPAIR_ROLES_ANY = ['admin', 'manager', 'cashier'];
@@ -7277,7 +8012,7 @@ function tradeIn_(session, payload) {
       applyPatches_('Serials', SERIAL_HEADERS, 'id', { [String(existing.id)]: serialFields });
       serialNumber = String(existing.serial_number);
     } else {
-      appendRows_('Serials', SERIAL_HEADERS, [Object.assign({ id: Utilities.getUuid(), serial_number: serialNumber }, serialFields)]);
+      appendRows_('Serials', SERIAL_HEADERS, [Object.assign({ id: Utilities.getUuid(), serial_number: serialNumber, created_at: now }, serialFields)]);
     }
     applyPatches_('Products', PRODUCT_HEADERS, 'id', { [productId]: { updated_at: now } });
 
@@ -8254,6 +8989,7 @@ function adminSerials_(session, payload) {
         status: 'IN_STOCK',
         tx_id: '',
         updated_at: now,
+        created_at: now,
       });
     }
     appendRows_('Serials', SERIAL_HEADERS, newRows);

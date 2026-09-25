@@ -5,6 +5,162 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.55.1] — 2026-09-24
+
+### Fixed
+
+- **Serial trace no longer falsifies a device's life.** VOIDED transactions
+  are excluded from the timeline instead of rendering as real steps, so a
+  void doesn't look like a sale that happened.
+- **Average sale divides by sales only.** The Customer 360 profile's
+  `averageSale` counted every completed transaction (refunds, payments and
+  trade-ins) as a "sale the customer made"; it now divides by sales the way
+  the Sales report does, so one refund can't drag the average toward the
+  wrong number.
+- **The trace search can't run on a stale query.** Pressing Enter (a barcode
+  scanner's keystroke) raced the 200ms debounce and searched the previous
+  value; the button now reads the input at press time.
+- **Repair statuses translate on the trace.** The status slug from the server
+  was used as a translation key and fell back to English; the trace now uses
+  the same labels as the Repairs screen.
+- **Malformed dates can't blank the trace or leak raw HTML.** `date()` threw
+  on unparseable input and `shortDate()` returned the raw string unescaped;
+  both now guard and fall back cleanly.
+- **Hardenings in the review pass:** profile maps use null-prototype objects,
+  the seeded serial-insert path stamps `created_at`, and two dead variables
+  were removed.
+
+## [1.55.0] — 2026-09-24
+
+### Added
+
+- **Lifecycle reminders** (`/api/reminders`, admin and manager): what the shop
+  should act on, derived from data already captured — no new settings, no
+  schedules, no notifications outside the app.
+  - **Warranty expiring.** Every active warranty ending within the next 30
+    days, with the customer, the device and its expiration date.
+  - **Repairs ready.** Every ticket at *Ready for collection*, with days
+    waiting, the customer and the deposit held.
+  - **Upgrade candidates.** Customers of serialized brand-new devices
+    (`warrantyDays` covering at least a year) sold 24+ months ago, whose
+    warranty has since expired — grouped by customer with what they own.
+  - **Store credit left.** Customers still holding store credit and how much,
+    so a liability isn't forgotten.
+  - Each list is capped at the 25 most pressing entries; every figure reuses
+    the Sales-report money rules and the Warranty screen's status answers.
+- **Reminders panel on the Dashboard.** A single read-only panel for admin
+  and manager, loading when an online staff tab opens the Dashboard, with one
+  tap into the Sales report, Repairs, Warranty lookup and Customers screens.
+  The panel simply hides when the remotes feed is unreachable, so an offline
+  till still opens.
+- **Demo & tests:** the sim seeds two reminder customers and a ready repair
+  (a warranty expiring in weeks, a device sold far past its cover, a deposit-
+  held repair, and a store-credit refund) and asserts list membership, exact
+  customer/device/deposit values, the 25-item cap, and the cashier/admin/
+  manager role guards. All reminder figures share the profile's derivation.
+
+## [1.54.0] — 2026-09-24
+
+### Added
+
+- **Customer 360 profile** (`/api/customers/profile`, admin and manager):
+  everything the shop knows about one customer on one screen.
+  - **Who they are and what they're worth.** Total spent, net of refunds,
+    visits (every completed transaction that named them), average sale, first
+    and last visit, what they owe on account, what they hold in store credit,
+    their overall balance, and their credit limit — money figures following
+    the same rule as the Sales report (gross completes at the till, refunds
+    reduce it).
+  - **The devices they bought, with their warranty cover.** Every serialized
+    unit on their completed sales, priced what they paid, with the same
+    warranty answer as the Warranty screen — active/expired/refunded, the
+    expiry date and days left. Refunded units are covered nothing.
+  - **Their repairs.** Open tickets on the bench (intake through ready) and
+    collected repairs with what they cost, joined on the repair's customer.
+  - **The ledger they see.** The same credit/account/balance plus aging
+    buckets and the last 100 transactions — behind the same admin/manager
+    gate as the ledger and statement.
+- **Profile screen on the client.** Customers → *Ledger* now loads the full
+  profile: summary grid, balance with aging chips and actions, the devices
+  list, open and collected repairs, and the ledger — instead of just the
+  numbers.
+- **Demo & tests:** the sim drives a full profile (serialized warranty sale,
+  account sale, store-credit refund, a repair booked to the customer) and
+  asserts the summary, the device warranty status, repairs, ledger rows and
+  aging; plus the role and 404 guards and a second-customer cross-check
+  against the seeded ledger numbers.
+
+## [1.53.0] — 2026-09-24
+
+### Added
+
+- **Serial / IMEI lifecycle trace** (`/api/serials/trace`, admin and manager):
+  one IMEI or serial number, and its whole working life on one timeline.
+  - **Every leg a serial has walked.** Intake (PO or trade-in, with the value
+    paid), the sales that carried that exact unit, refunds that brought it
+    back into stock, repair tickets filed against that device, and trade-ins
+    where the store bought it back — ordered oldest to newest from the ledger.
+  - **Immutable intake stamp.** Each serial now records when it entered the
+    store (`created_at`) on every intake path — PO receive, trade-in intake,
+    and manual serial entry. Buy-back of a unit already sold here keeps the
+    original intake stamp, so a bought-back serial is one serial, not two.
+  - **Screen and export.** The new Serial Trace screen (Stock & customers)
+    traces by IMEI or serial with a read-only step table; no bookkeeping
+    mutation, same role guard as stock health.
+- **Demo & tests:** the trade-in sim section now traces serials and asserts
+  the timeline shape, ordering, a single intake stamp, and the role guard.
+
+## [1.52.0] — 2026-09-24
+
+### Added
+
+- **Inventory velocity** (`view=velocity` on `/api/inventory/health`, admin
+  and manager): how fast each line actually sells through, how hard the money
+  tied up in it is working, and when its next reorder makes sense.
+  - **Sell-through and turnover.** Ledger units and revenue against the
+    on-hand now on the shelf: `perDay`, `daysOfCover`, and `turnover` (net
+    revenue ÷ average shelf value over the window; `null` at ≤ 0 revenue) give
+    a movement number for every product and category. `avgShelfValue` uses the
+    absorbed cost this shelf is carrying, so turnover is money-driven, not
+    unit-driven.
+  - **Buy again.** A line is a buy-again when it actually out-sold what came
+    back in (`netUnits > receivedUnits`), and the shelf now needs the restock
+    (`onHand === 0`, or current cover is shorter than the window). Idle or
+    refund-swamped lines are never buy-agains.
+  - **Window and view.** `days` (1–365) is clamped like the health view, and
+    the client adds a 90-day preset. The screen toggles Health ↔ Velocity
+    without losing its filters, and CSV export gains a velocity layout
+    (`orison-stock-velocity.csv`).
+  - **Same guardrails as health.** Serialized lines count serials in stock,
+    services and inactive products are excluded, turnover is never negative,
+    and no client or server code ever hides or discounts a product.
+- **Demo:** velocity exercises the existing health fixtures (the sim health
+  section's products double as velocity shops).
+
+## [1.51.0] — 2026-09-24
+
+### Added
+
+- **Stock Health** (`/api/inventory/health`, admin and manager): what the whole
+  shelf is worth at retail and at cost, and how fast each product actually
+  sells. This is the first delivery of the inventory-and-customer-lifecycle
+  program; plan in
+  `docs/superpowers/plans/2026-09-24-inventory-and-customer-lifecycle-program.md`.
+  - **Valuation is on the ledger, not the cache.** Units sold and revenue come
+    from `Transactions`; on-hand comes from the catalog; serialized stock is
+    valued at known serial costs with unallocated units at the product cost.
+  - **A manager picks the window** (30/90/180/365 days, default 90). `perDay`
+    is ledger units against window days, and `daysOfCover` is current on-hand
+    divided by that. Movement is reported, never applied: `slow` (cover > 180
+    days, or ≤ 1 unit sold in the window) and `dead` (0 units sold in 180 days)
+    appear on the screen and in the CSV, and no client or server code ever
+    hides or discounts them.
+  - **Screen** (Menu → Stock Health, admin/manager): KPI tiles (cost value,
+    retail value, units, slow, dead), per-category aggregation, product table
+    sorted by cost value, movement chips, and CSV export with stable English
+    columns and spreadsheet-safe quoting.
+- **Demo:** no changes this version (stock health reads the existing ledger).
+
 ## [1.50.0] — 2026-09-22
 
 ### Added

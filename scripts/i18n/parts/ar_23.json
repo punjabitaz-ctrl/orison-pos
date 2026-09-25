@@ -1,0 +1,14 @@
+{
+ "Collected repairs": "إصلاحات مُنجَزة",
+ "Covered until {date}": "التغطية حتى {date}",
+ "Devices they bought": "الأجهزة التي اشتروها",
+ "Failed to load profile": "تعذّر تحميل الملف الشخصي",
+ "First visit": "أول زيارة",
+ "Last visit": "آخر زيارة",
+ "Ledger": "الدفتر",
+ "Net of refunds": "الصافي بعد المرتجعات",
+ "Open repairs": "إصلاحات قيد التنفيذ",
+ "Total spent": "إجمالي الإنفاق",
+ "Visits": "الزيارات",
+ "{amount} deposit": "{amount} عربون"
+}

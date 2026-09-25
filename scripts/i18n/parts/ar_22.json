@@ -1,0 +1,31 @@
+{
+ "#": "#",
+ "Buy-back from": "تم الشراء مرة أخرى من",
+ "Enter at least three characters of an IMEI or serial": "أدخل ثلاثة أحرف على الأقل من IMEI أو الرقم التسلسلي",
+ "Enter at least three characters of the IMEI or serial.": "أدخل ثلاثة أحرف على الأقل من الرقم التسلسلي أو IMEI.",
+ "IMEI / serial number, at least three characters…": "رقم IMEI / الرقم التسلسلي، ثلاثة أحرف على الأقل…",
+ "Intake": "الاستلام",
+ "Intake, sales, refunds, repairs and trade-ins — any leg that touched this serial is listed oldest to newest.": "الاستلام والبيع والاسترجاع والإصلاح والاستبدال — كل مرحلة لمست هذا الرقم التسلسلي تظهر من الأقدم إلى الأحدث.",
+ "Lifecycle": "دورة الحياة",
+ "No lifecycle recorded yet — the intake is missing its stamp, or this serial is brand new.": "لا توجد دورة حياة مسجلة بعد — إما أن الاستلام بدون ختم، أو أن هذا الرقم التسلسلي جديد تماماً.",
+ "No serial found for": "لا يوجد رقم تسلسلي مطابق لـ",
+ "One IMEI or serial, its whole life in one timeline.": "رقم IMEI أو تسلسلي واحد، وحياته كلها في خط زمني واحد.",
+ "Refunded & restocked": "تم الاسترجاع وإعادته للمخزون",
+ "Repair": "إصلاح",
+ "Serial": "الرقم التسلسلي",
+ "Serial Trace": "تتبع الرقم التسلسلي",
+ "Step": "المرحلة",
+ "Trace": "تتبع",
+ "Trace failed": "فشل التتبع",
+ "Offline — trace needs the server": "غير متصل — التتبع يحتاج إلى الخادم",
+ "Trade-in bought back": "استبدال أعيد شراؤه",
+ "Value": "القيمة",
+ "{n} steps": {
+  "zero": "لا خطوات",
+  "one": "خطوة واحدة",
+  "two": "خطوتان",
+  "few": "{n} خطوات",
+  "many": "{n} خطوة",
+  "other": "{n} خطوة"
+ }
+}
