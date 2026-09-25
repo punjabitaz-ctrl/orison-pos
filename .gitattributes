@@ -1,0 +1,12 @@
+# One line ending in the repository, whatever the checkout does locally.
+# Windows checkouts get CRLF in the working tree; git stores LF. Without this
+# a Windows commit can flip a whole file to CRLF and show 3,000 changed lines
+# for a two-line edit (it happened to public/css/style.css in v1.51.0).
+* text=auto
+
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.pdf  binary
+*.woff binary
+*.woff2 binary
