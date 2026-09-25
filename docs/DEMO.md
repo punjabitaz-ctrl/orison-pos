@@ -70,6 +70,10 @@ The guide's **Sign in** buttons switch account in one tap. When a cashier needs 
 
 **Anyone:** switch the language to العربية or اردو on the sign-in screen.
 
+**Anyone with access to a screen:** press **Export CSV** on it. Every list in
+the app exports the same way, and the column headers stay English so the files
+can be joined together in a spreadsheet.
+
 ## Different from the real install
 
 - **Drive export** opens the CSV in a new tab instead of saving to Google Drive.

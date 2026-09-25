@@ -42,6 +42,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Suppliers and purchase orders**: draft → ordered → partial/received, or cancelled. Receiving posts weighted-average cost and takes serials unit by unit.
 - **Parts a job is waiting for**: a repair ticket records the parts it needs and where each one is (on the shelf, on order with its due date, or unordered); Purchases shows the whole bench grouped by part and raises an order for the shortfall; receiving names the jobs it frees. Nothing is reserved from the shop floor.
 - **What a delivery costs and owes**: an order's discount is part of the cost of the stock (weighted average, and per serial); its tax is owed to the supplier but reclaimed rather than capitalised; a part delivery carries its share of both, and the deliveries add up to the order's own total.
+- **Export CSV from every screen**: customers, purchases, repairs, products, trade-ins, the time clock, a pay run, running costs, reports, the sales report, stock health, the books and the audit log — one builder, one file-name shape, English column headers.
 - **Running costs**: rent, power, phone, marketing, professional fees and the rest, each in its own account, paid by cash from the till, transfer or cheque — with per-category totals, CSV export and admin void.
 - **Banking the cash**: a deposit moves a pick-up out of Cash in transit into the bank against its paying-in slip, and the shop cannot bank more than it is carrying.
 - **Opening balances** (admin only): what the shop had in the till, in the bank and on the shelf on the day it started keeping books here, posted against Opening balance equity so the balance sheet does not begin at zero.
@@ -171,7 +172,7 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 
 ```bash
 npm test              # backend logic vs an in-memory Apps Script mock (1346 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (619 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (633 checks)
 npm run test:demo     # the demo: emulator, sample shop, site build (41 checks)
 npm run build:demo    # build the demo site into dist/demo-site
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)

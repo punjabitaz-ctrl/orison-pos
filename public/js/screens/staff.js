@@ -11,6 +11,7 @@ import { $t, $tn, N_, arrow, dateLocale } from '../lang.js';
 import { api } from '../api.js';
 import { roleLabel, screenHead, sectionHead, statRow, dataTable, rankList } from '../components.js';
 import { fmt, esc, toast, beep, skeleton, emptyState, openModal, closeModal, denomLabel } from '../ui.js';
+import { exportCsv } from '../csv.js';
 import { getDeviceId, SYNC_EVENT, queuePunch } from '../sync.js';
 import { hoursFromEntries, fmtDuration, shiftDayKey, dayKey } from '../stats.js';
 
@@ -188,6 +189,7 @@ export const screen = {
       return `
         <section class="dash-section">
           <h3>${$t('Team')}</h3>
+          <button class="btn btn-ghost btn-sm" id="stCsv" type="button">${$t('Export CSV')}</button>
           ${dataTable({
             head: [{ label: $t('Name') }, { label: $t('Role') }, ...(isAdmin ? [{ label: $t('Pay') }] : []), { label: '' }],
             bodyHtml: team.filter((u) => u.active).map((u) => {
@@ -326,6 +328,15 @@ export const screen = {
           toast($t('{email} can sign in again', { email: b.dataset.unlock }), 'ok'); beep('ok');
         } catch (err) { toast((err && err.message) || $t('Could not unlock'), 'warn'); }
       }));
+      body.querySelector('#stCsv')?.addEventListener('click', () => {
+        const n = (v) => (v == null ? '' : String(v));
+        exportCsv('time-clock', {
+          title: 'Time clock',
+          columns: ['name', 'clock_in', 'clock_out', 'minutes', 'hours', 'status', 'corrected', 'note'],
+          rows: (clock.entries || []).map((e) => [e.userName, e.clockIn, e.clockOut, n(e.minutes),
+            n(e.minutes == null ? '' : Math.round((e.minutes / 60) * 100) / 100), e.status, e.corrected ? 'yes' : 'no', e.note]),
+        });
+      });
       body.querySelectorAll('[data-pin]').forEach((b) => b.addEventListener('click', () => pinDialog(b.dataset.pin, b.dataset.name)));
       body.querySelectorAll('[data-pay]').forEach((b) => b.addEventListener('click', () => {
         const person = team.find((u) => String(u.id) === b.dataset.pay);

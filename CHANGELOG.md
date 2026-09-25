@@ -5,6 +5,30 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.59.0] — 2026-09-25
+
+### Added
+
+- **Export CSV, everywhere.** Reports, the Sales report, the books and Stock
+  health already exported; now so does everything else the shop can look at:
+  - **Customers** (balances, store credit, credit limits — the statement
+    export was already there)
+  - **Purchases** (what is owed to each supplier, then every order with what
+    has arrived against it)
+  - **Repairs** (every ticket, its money, and what it waits on)
+  - **Products** (stock, cost, retail, reorder point, warranty, last sold)
+  - **Trade-ins** (the register, with the ID checked and who took it)
+  - **Time clock** (every punch, with hours)
+  - **A pay run** (one row per person, plus the summary — payslip data)
+  - **Running costs** (shipped with them in v1.58.0)
+  - The Audit log already exported.
+- **One way to build them all** (`public/js/csv.js`): the same quoting, the
+  same defence against a cell that looks like a spreadsheet formula, and the
+  same file name shape — `orison-<what>-<when>.csv`.
+- **Column headers stay in English** in every export, on purpose. A CSV goes
+  to a spreadsheet, an accountant or an importer; a column called one thing in
+  Arabic and another in English cannot be joined to last month's file.
+
 ## [1.58.0] — 2026-09-25
 
 Two Tier-0 gaps in one release, because they are one story: the profit and

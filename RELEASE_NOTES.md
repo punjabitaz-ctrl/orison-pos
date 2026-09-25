@@ -7,7 +7,37 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.58.0 — what the shop spends, and what it banks
+## Latest: v1.59.0 — export anything you can see
+
+**2026-09-25.**
+
+Every screen that shows data now has an **Export CSV** button, not just the
+four that had one.
+
+- **Customers, Purchases, Repairs, Products, Trade-ins, the Time clock and a
+  pay run** all export now. Reports, the Sales report, the books, Stock health,
+  Running costs and the Audit log already did.
+- **They all behave the same**: the same quoting, the same file-name shape
+  (`orison-repairs-2026-09-25.csv`), and the same defence against a cell that
+  looks like a spreadsheet formula — a customer called `=cmd|calc` cannot run
+  anything when the file is opened.
+- **Column headers are always English**, whatever language the shop is using,
+  so this month's file can be joined to last month's.
+
+**Validation:** backend-sim **PASS 1346 / FAIL 0** · client units **PASS 633 /
+FAIL 0** · demo **PASS 41 / FAIL 0**.
+- Checked in the browser: six exports driven from the real screens, each
+  producing its file, with no console errors.
+- The offline-shell guard caught the new module missing from the service
+  worker before it could ship.
+
+### Deploying
+
+**No backend change.** Push the client; the service worker picks it up.
+
+---
+
+## v1.58.0 — what the shop spends, and what it banks
 
 **2026-09-25.**
 

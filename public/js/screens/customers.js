@@ -10,6 +10,7 @@ import { idb } from '../db.js';
 import { api } from '../api.js';
 import { screenHead } from '../components.js';
 import { fmt, esc, openModal, closeModal, toast, beep, csvRows, downloadCsv, currencySymbol } from '../ui.js';
+import { exportCsv } from '../csv.js';
 import { createCollection, kindInfo } from '../money.js';
 
 export const screen = {
@@ -31,6 +32,15 @@ export const screen = {
     let totalOut = 0;
     let loaded = false;
 
+    function receivablesCsvRows() {
+      const n = (v) => (v == null ? '' : String(v));
+      return {
+        title: 'Customer balances',
+        columns: ['customer', 'phone', 'email', 'balance', 'store_credit', 'credit_limit', 'oldest_unpaid'],
+        rows: (list || []).map((c) => [c.name, c.phone, c.email, n(c.balance), n(c.storeCredit), n(c.creditLimit), c.oldestAt || '']),
+      };
+    }
+
     async function loadReceivables() {
       try {
         const res = await api.get('/api/customers/receivables');
@@ -48,7 +58,7 @@ export const screen = {
         ${screenHead({
           title: $t('Customers'),
           subHtml: `${esc($tn('{n} with activity', '{n} with activity', list.length))} · ${$t('total outstanding')} <strong class="gp">${fmt(totalOut)}</strong>`,
-          actions: `<button class="icon-btn" id="custRefresh" aria-label="${$t('Refresh')}">⟳</button>`,
+          actions: `<span class="btn-row"><button class="btn btn-ghost btn-sm" id="custCsv" type="button">${$t('Export CSV')}</button><button class="icon-btn" id="custRefresh" aria-label="${$t('Refresh')}">⟳</button></span>`,
         })}
         <div class="cust-toolbar">
           <input id="custQ" class="field" placeholder="${$t('Search name, phone, email…')}" autocomplete="off">
@@ -70,6 +80,7 @@ export const screen = {
         </div>`;
 
       root.querySelector('#custRefresh').addEventListener('click', loadReceivables);
+      root.querySelector('#custCsv')?.addEventListener('click', () => exportCsv('customers', receivablesCsvRows()));
 
       const q = root.querySelector('#custQ');
       let t = null;

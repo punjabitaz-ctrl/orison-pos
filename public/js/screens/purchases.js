@@ -12,6 +12,7 @@ import { idb } from '../db.js';
 import { api } from '../api.js';
 import { screenHead } from '../components.js';
 import { fmt, esc, toast, beep, openModal, closeModal } from '../ui.js';
+import { exportCsv } from '../csv.js';
 
 const STATUS_META = {
   DRAFT: { label: N_('Draft'), cls: 'draft' },
@@ -61,6 +62,22 @@ export function receiptOwed(order, taking) {
   const goodsC = net(cumC) - net(prevC);
   const taxShareC = taxOf(cumC) - taxOf(prevC);
   return { goods: goodsC / 100, tax: taxShareC / 100, owed: (goodsC + taxShareC) / 100, closes };
+}
+
+/* Everything Purchases knows, as one spreadsheet: what is owed to whom, and
+   every order with what has arrived against it. */
+export function purchasesCsv({ payables, orders }) {
+  const n = (v) => (v == null ? '' : String(v));
+  return {
+    extra: [{
+      title: 'Owed to suppliers',
+      columns: ['supplier', 'terms', 'received', 'paid', 'owed', 'overdue'],
+      rows: ((payables && payables.suppliers) || []).map((s) => [s.name, s.paymentTerms, n(s.received), n(s.paid), n(s.balance), n(s.overdue)]),
+    }],
+    columns: ['po_number', 'supplier', 'status', 'ordered_date', 'expected_date', 'lines', 'ordered_qty', 'received_qty', 'total', 'note'],
+    rows: (orders || []).map((o) => [o.poNumber, o.supplierName, o.status, String(o.orderDate || '').slice(0, 10),
+      o.expectedDate, n(o.itemCount), n(o.orderedQty), n(o.receivedQty), n(o.total), o.note]),
+  };
 }
 
 export function benchOrderLines(board) {
@@ -154,6 +171,7 @@ export const screen = {
           sub: $t('Suppliers and stock-in orders'),
           actions: `<div class="scr-actions">
             ${isAdmin ? `<button class="btn btn-sm" id="poAddSupplier">${$t('+ Supplier')}</button>` : ''}
+            <button class="btn btn-sm btn-ghost" id="poCsv">${$t('Export CSV')}</button>
             <button class="btn btn-sm btn-primary" id="poNew">${$t('New PO')}</button>
           </div>`,
         })}
@@ -229,6 +247,10 @@ export const screen = {
 
       const newBtn = root.querySelector('#poNew');
       if (newBtn) newBtn.addEventListener('click', () => newPoModal(false));
+      root.querySelector('#poCsv')?.addEventListener('click', () => {
+        const built = purchasesCsv({ payables, orders });
+        exportCsv('purchases', { title: 'Purchases', ...built });
+      });
       const benchBtn = root.querySelector('#poBenchOrder');
       if (benchBtn) benchBtn.addEventListener('click', () => newPoModal(false, benchOrderLines(bench)));
       const addBtn = root.querySelector('#poAddSupplier');

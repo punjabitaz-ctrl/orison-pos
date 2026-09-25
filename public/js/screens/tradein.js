@@ -16,6 +16,7 @@ import { idb } from '../db.js';
 import { api } from '../api.js';
 import { screenHead } from '../components.js';
 import { fmt, esc, toast, beep, openModal, closeModal } from '../ui.js';
+import { exportCsv } from '../csv.js';
 import { pull } from '../sync.js';
 
 export const CONDITIONS = [
@@ -84,6 +85,7 @@ export const screen = {
       ${isManager ? `
       <section class="dash-section">
         <h3>${$t('Trade-in register')}</h3>
+        <button class="btn btn-ghost btn-sm" id="tiCsv" type="button">${$t('Export CSV')}</button>
         <div class="field"><input id="tiSearch" type="search" placeholder="${$t('Number, seller, IMEI or product…')}" autocomplete="off" spellcheck="false"></div>
         <div id="tiList"><p class="muted">${$t('Loading…')}</p></div>
       </section>` : ''}`;
@@ -106,6 +108,15 @@ export const screen = {
     }
 
     root.querySelector('#tiNew').addEventListener('click', () => openTradeInDialog(ctx, user, () => load()));
+    root.querySelector('#tiCsv')?.addEventListener('click', () => {
+      const n = (v) => (v == null ? '' : String(v));
+      exportCsv('trade-ins', {
+        title: 'Trade-in register',
+        columns: ['number', 'date', 'seller', 'product', 'serial', 'condition', 'paid', 'paid_by', 'id_checked', 'id_ref', 'taken_by', 'notes'],
+        rows: (rows || []).map((r) => [r.number || r.receiptNo, r.createdAt, r.customerName, r.productName, r.serialNumber,
+          r.condition, n(r.amount), r.paidBy, r.idType, r.idRef, r.takenBy || r.by, r.notes]),
+      });
+    });
     const search = root.querySelector('#tiSearch');
     if (search) {
       let d = null;

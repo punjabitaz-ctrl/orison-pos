@@ -13,6 +13,7 @@ import { api } from '../api.js';
 import { idb } from '../db.js';
 import { screenHead, sectionHead } from '../components.js';
 import { fmt, esc, toast, beep, openModal, closeModal } from '../ui.js';
+import { exportCsv } from '../csv.js';
 
 export const PAY_METHODS = [
   { id: 'cash', label: N_('Cash from the till') },
@@ -54,6 +55,19 @@ export function payProblem({ method, reference, grossTotal }) {
   if (method !== 'cash' && !String(reference || '').trim()) return $t('A bank transfer or cheque needs its reference');
   if (!(Number(grossTotal) > 0)) return $t('There is nothing to pay on this run');
   return '';
+}
+
+/* A pay run as a spreadsheet: one row per person, which is what a payslip
+   run or an accountant's journal actually needs. */
+export function payRunCsv(run) {
+  const n = (v) => (v == null ? '' : String(v));
+  return {
+    title: `Pay run ${run.periodFrom} to ${run.periodTo} (${run.status})`,
+    columns: ['name', 'paid', 'rate', 'hours', 'base_pay', 'adjustment', 'adjustment_reason', 'gross'],
+    rows: (run.lines || []).map((l) => [l.name, l.payType, n(l.rate), n(l.hours), n(l.basePay), n(l.adjustment), l.adjustmentNote, n(l.gross)]),
+    extra: [{ title: 'Summary', columns: ['people', 'gross_total', 'method', 'reference', 'paid_at'],
+      rows: [[n((run.lines || []).length), n(run.grossTotal), run.method, run.reference, run.paidAt]] }],
+  };
 }
 
 export function runTotal(lines) {
@@ -228,6 +242,7 @@ export const screen = {
         ${run.note ? `<p class="muted">${esc(run.note)}</p>` : ''}
         <div class="modal-actions">
           <button class="btn btn-ghost" data-close>${$t('Close')}</button>
+          <button class="btn btn-ghost" id="pyCsv">${$t('Export CSV')}</button>
           ${run.status === 'DRAFT' ? `<button class="btn btn-primary" id="pyPay">${$t('Pay this run')}</button>` : ''}
           ${run.status !== 'VOIDED' ? `<button class="btn btn-danger-ghost" id="pyVoid">${$t('Void')}</button>` : ''}
         </div>`}
@@ -238,6 +253,9 @@ export const screen = {
         const line = run.lines.find((l) => l.userId === b.dataset.adjust);
         if (line) adjustModal(run, line);
       }));
+      m.querySelector('#pyCsv')?.addEventListener('click', () => {
+        exportCsv('pay-run', { ...payRunCsv(run), range: { from: run.periodFrom, to: run.periodTo } });
+      });
       const payBtn = m.querySelector('#pyPay');
       if (payBtn) payBtn.addEventListener('click', () => payModal(run));
       const voidBtn = m.querySelector('#pyVoid');

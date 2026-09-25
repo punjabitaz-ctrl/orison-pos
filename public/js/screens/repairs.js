@@ -20,6 +20,7 @@ import { $t, $tn, N_, dateLocale } from '../lang.js';
 import { api } from '../api.js';
 import { idb } from '../db.js';
 import { fmt, esc, toast, beep, skeleton, emptyState, openModal, closeModal } from '../ui.js';
+import { exportCsv } from '../csv.js';
 import { screenHead, sectionHead, dataTable } from '../components.js';
 import { receiptDoc } from '../receipt-doc.js';
 import { receiptContext } from '../receipt-labels.js';
@@ -39,6 +40,16 @@ export const REPAIR_FLOW = [
 
 const CLOSED = new Set(['collected', 'cancelled', 'unrepairable', 'voided']);
 const OPEN_ORDER = ['intake', 'diagnosed', 'awaiting_parts', 'in_progress', 'ready'];
+
+/* The bench as a spreadsheet: every ticket, what it is worth, and where it is. */
+export function repairsCsv(rows) {
+  const n = (v) => (v == null ? '' : String(v));
+  return {
+    columns: ['ticket', 'status', 'customer', 'phone', 'device', 'serial', 'fault', 'booked_in', 'promised', 'parts', 'labour', 'total', 'deposit', 'waiting_on_parts'],
+    rows: (rows || []).map((t) => [t.ticketNo, t.status, t.customerName, t.customerPhone, t.device, t.deviceSerial,
+      t.reportedFault, t.createdAt, t.promisedAt, n(t.partsTotal), n(t.labourTotal), n(t.total), n(t.depositTotal), n(t.needsCount || 0)]),
+  };
+}
 
 export function needState(need) {
   const n = need || {};
@@ -106,7 +117,7 @@ export const screen = {
       ${screenHead({
     title: $t('Repairs'),
     sub: $t('Devices in for repair'),
-    actions: `<span class="btn-row"><button class="btn btn-ghost" id="rpWarranty" type="button">${$t('Check warranty')}</button><button class="btn" id="rpNew" type="button">${$t('Book in a repair')}</button></span>`,
+    actions: `<span class="btn-row"><button class="btn btn-ghost btn-sm" id="rpCsv" type="button">${$t('Export CSV')}</button><button class="btn btn-ghost" id="rpWarranty" type="button">${$t('Check warranty')}</button><button class="btn" id="rpNew" type="button">${$t('Book in a repair')}</button></span>`,
   })}
       <div class="seg seg-sm rp-filters" id="rpFilters"></div>
       <div class="field"><input id="rpSearch" type="search" placeholder="${$t('Ticket number, customer, phone or IMEI…')}" autocomplete="off" spellcheck="false"></div>
@@ -759,6 +770,7 @@ export const screen = {
 
     root.querySelector('#rpNew').addEventListener('click', intakeDialog);
     root.querySelector('#rpWarranty').addEventListener('click', () => openWarrantyLookup(''));
+    root.querySelector('#rpCsv')?.addEventListener('click', () => exportCsv('repairs', { title: 'Repairs', ...repairsCsv(rows) }));
     let timer = null;
     search.addEventListener('input', () => {
       clearTimeout(timer);
