@@ -5631,6 +5631,103 @@ check('statement carries the changer/cashier',
     JSON.stringify({ summary: joeProf.summary, ledger: joeProf.ledger }));
 }
 {
+  section('lifecycle reminders (v1.55.0)');
+
+  const rmAdmTok = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const rmCashTok = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const rmMgrTok = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+
+  const rmCable = req('/api/products', {}, { session: rmAdmTok }).data.find((p) => p.sku === 'CB-USBC-1M');
+  const rmDay = 86400000;
+
+  const meera = req('/api/admin/customers', { name: 'Meera Remind', phone: '080-888-0001', creditLimit: 0 }, { session: rmAdmTok });
+  check('reminder fixture customer created', meera.ok && meera.data.customer, JSON.stringify(meera));
+  const rmCustId = meera.data.customer.id;
+
+  /* one brand-new device still inside its cover but expiring inside thirty days,
+     one the same customer bought over two years ago and is long out of cover */
+  const rmNew = req('/api/admin/products', { name: 'Reminder New', sku: 'RM-NEW-1', category: 'RM', costPrice: 600, retailPrice: 900, isSerialized: true, warrantyDays: 365 }, { session: rmAdmTok }).data.id;
+  const rmOld = req('/api/admin/products', { name: 'Reminder Old', sku: 'RM-OLD-1', category: 'RM', costPrice: 400, retailPrice: 650, isSerialized: true, warrantyDays: 365 }, { session: rmAdmTok }).data.id;
+  req('/api/admin/serials', { productId: rmNew, serialNumbers: ['RM-SN-NEW'] }, { session: rmAdmTok });
+  req('/api/admin/serials', { productId: rmOld, serialNumbers: ['RM-SN-OLD'] }, { session: rmAdmTok });
+  req('/api/admin/store', { taxRate: 0 }, { session: rmAdmTok });
+
+  const rmPush = (batch) => req('/api/sync/push', { deviceId: 'dev-rm-1', batch }, { session: rmAdmTok });
+  check('warranty-expiring sale accepted', rmPush([{
+    clientTxId: 'tx-rm-new', customerId: rmCustId, grandTotal: 900,
+    tenders: [{ type: 'cash', amount: 900 }],
+    createdAt: new Date(Date.now() - 345 * rmDay).toISOString(),
+    items: [{ productId: rmNew, quantity: 1, unitPrice: 900, serialNumber: 'RM-SN-NEW' }],
+  }]).data.results[0].accepted === true);
+  check('two-year-old sale accepted', rmPush([{
+    clientTxId: 'tx-rm-old', customerId: rmCustId, grandTotal: 650,
+    tenders: [{ type: 'cash', amount: 650 }],
+    createdAt: new Date(Date.now() - 760 * rmDay).toISOString(),
+    items: [{ productId: rmOld, quantity: 1, unitPrice: 650, serialNumber: 'RM-SN-OLD' }],
+  }]).data.results[0].accepted === true);
+
+  /* a job sitting at the collection counter with an unrefunded deposit */
+  const rmRep = req('/api/repairs', {
+    customerName: 'Meera Remind', customerPhone: '080-888-0001',
+    deviceMake: 'Orison', deviceModel: 'Note 5', deviceSerial: 'RM-SN-NEW', reportedFault: 'Won\'t turn on',
+  }, { session: rmCashTok });
+  check('repair for the ready list booked', rmRep.ok && !!rmRep.data.id, JSON.stringify(rmRep));
+  req('/api/repairs/deposit', { id: rmRep.data.id, amount: 30 }, { session: rmCashTok });
+  const rmReady = req('/api/repairs/status', { id: rmRep.data.id, status: 'ready' }, { session: rmCashTok });
+  check('ticket moved to ready', rmReady.ok && rmReady.data.status === 'ready', JSON.stringify(rmReady));
+
+  /* somebody sitting on store credit */
+  const fatima = req('/api/admin/customers', { name: 'Fatima Credit', phone: '080-888-0002', creditLimit: 0 }, { session: rmAdmTok });
+  const rmCreditId = fatima.data.customer.id;
+  check('credit fixture sale accepted', rmPush([{
+    clientTxId: 'tx-rm-credit', customerId: rmCreditId, grandTotal: 20,
+    tenders: [{ type: 'cash', amount: 20 }],
+    createdAt: new Date().toISOString(),
+    items: [{ productId: rmCable.id, quantity: 2, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+  check('credit refund accepted', rmPush([{
+    clientTxId: 'tx-rm-credit-rf', kind: 'refund', originalClientTx: 'tx-rm-credit',
+    customerId: rmCreditId, grandTotal: 20,
+    tenders: [{ type: 'store_credit', amount: 20 }],
+    createdAt: new Date().toISOString(),
+    items: [{ productId: rmCable.id, quantity: 2, unitPrice: 10 }],
+  }]).data.results[0].accepted === true);
+
+  check('reminders are admin and manager only',
+    req('/api/reminders', {}, { session: rmCashTok }).status === 403);
+
+  const rem = req('/api/reminders', {}, { session: rmAdmTok }).data;
+  const remMgr = req('/api/reminders', {}, { session: rmMgrTok });
+  check('both admin and manager can read them', remMgr.ok === true && Array.isArray(remMgr.data.warrantyExpiring), JSON.stringify(remMgr));
+
+  const we = rem.warrantyExpiring.find((w) => w.serialNumber === 'RM-SN-NEW');
+  check('the expiring cover is listed with customer, device and expiry',
+    we && we.customer === 'Meera Remind' && we.device === 'Reminder New'
+      && we.daysLeft > 0 && we.daysLeft <= 30 && !!we.expiresAt,
+    JSON.stringify(we));
+  check('the long-sold device is not an expiring warranty',
+    !rem.warrantyExpiring.some((w) => w.serialNumber === 'RM-SN-OLD'));
+
+  const uc = rem.upgradeCandidates.find((u) => u.customerId === rmCustId);
+  check('the two-year-old buyer is an upgrade candidate owning their device',
+    uc && uc.customer === 'Meera Remind' && uc.devices.length === 1
+      && uc.devices[0].serialNumber === 'RM-SN-OLD' && uc.devices[0].device === 'Reminder Old',
+    JSON.stringify(uc));
+  check('the still-covered phone is not an upgrade candidate',
+    !rem.upgradeCandidates.some((u) => u.customerId === rmCustId && u.devices.length > 1));
+
+  const rr = rem.repairsReady.find((r) => r.ticketNo === rmRep.data.ticketNo);
+  check('the ready repair shows who, what and the deposit held',
+    rr && rr.customer === 'Meera Remind' && rr.device === 'Orison Note 5'
+      && rr.deposit === 30 && rr.daysWaiting >= 0,
+    JSON.stringify(rr));
+
+  const sc = rem.storeCreditLeft.find((s) => s.customerId === rmCreditId);
+  check('leftover store credit surfaces with the customer',
+    sc && sc.customer === 'Fatima Credit' && Math.abs(sc.storeCredit - 20) < 0.001,
+    JSON.stringify(sc));
+}
+{
   section('setup() deploy entry point (v1.35.1)');
 
   const usersBefore = sandbox.readRows_('Users', sandbox.USER_HEADERS).length;

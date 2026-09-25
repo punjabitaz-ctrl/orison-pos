@@ -126,6 +126,7 @@ function dispatch_(action, session, payload, params) {
     case '/api/drawer/open':     return drawerOpen_(session, payload);
     case '/api/approve':         return approve_(session, payload);
     case '/api/warranty':        return warrantyLookup_(session, params);
+    case '/api/reminders':       return reminders_(session, params);
     case '/api/marketplace/settings': return marketplaceSettings_(session, payload);
     case '/api/marketplace/import': return marketplaceImport_(session);
     case '/api/drive/export':    return driveExport_(session, payload, params);
@@ -6576,6 +6577,164 @@ function warrantyLookup_(session, params) {
   for (var i = 0; i < custs.length; i++) custName[String(custs[i].id)] = String(custs[i].name || '');
   matches.forEach(function (m) { m.customer = m.customerId ? (custName[m.customerId] || '') : ''; delete m.customerId; });
   return { query: q, matches: matches };
+}
+
+/* Snapshots of what the shop should act on, computed on read from the sheet:
+ * nothing is stored, nothing is scheduled. Every list comes from the same rows
+ * the matching screens show, so a number here can't disagree with the feature
+ * it links to. */
+var REMINDERS_MAX = 25;
+var UPGRADE_WINDOW_MS = 24 * 30 * DAY_MS; /* 24 months, 30-day months */
+
+function reminders_(session, params) {
+  requireRole_(session, ['admin', 'manager']);
+  var now = Date.now();
+  var txRows = readRows_('Transactions', TX_HEADERS);
+  var custs = readRows_('Customers', CUSTOMERS_HEADERS);
+  var custName = Object.create(null);
+  for (var c = 0; c < custs.length; c++) custName[String(custs[c].id)] = String(custs[c].name || '');
+
+  /* Refunds already consumed a cover: a serial that came back to the shop is not
+   * "expiring" to anyone. Same split warrantyMatches_ uses, keyed per sale. */
+  var refundsByOriginal = Object.create(null);
+  for (var i = 0; i < txRows.length; i++) {
+    var t = txRows[i];
+    if (String(t.status) !== 'COMPLETED' || String(t.kind || '') !== 'refund') continue;
+    var key = String(t.original_client_tx || '');
+    (refundsByOriginal[key] = refundsByOriginal[key] || []).push(t);
+  }
+
+  var warrantyExpiring = [];
+  var upgradeByCust = Object.create(null);
+
+  for (var s = 0; s < txRows.length; s++) {
+    var sale = txRows[s];
+    if (String(sale.status) !== 'COMPLETED' || String(sale.kind || '') !== 'sale') continue;
+    var soldMs = Date.parse(String(sale.created_at));
+    if (isNaN(soldMs)) continue;
+    var items = itobjs_(sale.items_json);
+
+    /* which serials this sale has already given back */
+    var refundedSerials = Object.create(null);
+    var rf = refundsByOriginal[String(sale.client_tx_id || '')] || [];
+    for (var r = 0; r < rf.length; r++) {
+      var ritems = itobjs_(rf[r].items_json);
+      for (var ri = 0; ri < ritems.length; ri++) {
+        if (ritems[ri].serialNumber) refundedSerials[String(ritems[ri].serialNumber)] = true;
+      }
+    }
+
+    var snap = null;
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k];
+      var days = num_(it.warrantyDays);
+      if (!(days > 0) || !it.serialNumber) continue;
+      if (refundedSerials[String(it.serialNumber)]) continue;
+      var expiresMs = soldMs + days * DAY_MS;
+      var cid = String(sale.customer_id || '');
+      var daysLeft = Math.ceil((expiresMs - now) / DAY_MS);
+
+      /* a brand-new serialized device (a full year of cover is the brand-new
+         identifier) sold long enough ago that its warranty is already gone —
+         these are the customers to nudge toward the new model. */
+      if (days >= 365 && now - soldMs >= UPGRADE_WINDOW_MS) {
+        if (!upgradeByCust[cid]) upgradeByCust[cid] = [];
+        upgradeByCust[cid].push({
+          device: String(it.name || ''),
+          serialNumber: String(it.serialNumber),
+          soldAt: String(sale.created_at),
+        });
+      }
+
+      if (daysLeft < 0 || daysLeft > 30) continue;
+      snap = {
+        customerId: cid,
+        customer: cid ? (custName[cid] || '') : '',
+        device: String(it.name || ''),
+        serialNumber: String(it.serialNumber),
+        receiptNo: String(sale.receipt_no || ''),
+        soldAt: String(sale.created_at),
+        expiresAt: new Date(expiresMs).toISOString(),
+        daysLeft: daysLeft,
+      };
+      warrantyExpiring.push(snap);
+    }
+  }
+  warrantyExpiring.sort(function (a, b) { return a.daysLeft - b.daysLeft; });
+
+  var upgradeCandidates = [];
+  for (var cid2 in upgradeByCust) {
+    var u = upgradeByCust[cid2];
+    if (!u || !u.length) continue;
+    upgradeCandidates.push({
+      customerId: cid2,
+      customer: cid2 ? (custName[cid2] || '') : '',
+      devices: u,
+    });
+  }
+  upgradeCandidates.sort(function (a, b) { return String(a.customer).localeCompare(String(b.customer)); });
+
+  var repRows = readRows_('Repairs', REPAIR_HEADERS);
+  var repairsReady = [];
+  for (var t = 0; t < repRows.length; t++) {
+    var rr2 = repRows[t];
+    if (String(rr2.status || '') !== 'ready') continue;
+    var createdMs = Date.parse(String(rr2.created_at));
+    repairsReady.push({
+      ticketNo: String(rr2.ticket_no || ''),
+      customerId: String(rr2.customer_id || ''),
+      customer: String(rr2.customer_name || ''),
+      device: (String(rr2.device_make || '') + ' ' + String(rr2.device_model || '')).trim(),
+      serialNumber: String(rr2.device_serial || ''),
+      deposit: num_(rr2.deposit_total),
+      daysWaiting: isNaN(createdMs) ? 0 : Math.max(0, Math.floor((now - createdMs) / DAY_MS)),
+    });
+  }
+  repairsReady.sort(function (a, b) { return b.daysWaiting - a.daysWaiting; });
+
+  /* money customers own for store credit, one pass over the sheet, same
+   * arithmetic as the customer profile (customerMoney_). */
+  var credit = Object.create(null);
+  for (var j = 0; j < txRows.length; j++) {
+    var tj = txRows[j];
+    if (String(tj.status) !== 'COMPLETED') continue;
+    var cj = String(tj.customer_id || '');
+    if (!cj) continue;
+    var kj = String(tj.kind || 'sale');
+    var tenders = [];
+    try { tenders = JSON.parse(tj.tenders_json || '[]'); } catch (_) {}
+    if (kj === 'sale') {
+      for (var m = 0; m < tenders.length; m++) {
+        if (String(tenders[m].type || '') === 'store_credit') {
+          credit[cj] = (credit[cj] || 0) - num_(tenders[m].amount);
+        }
+      }
+    } else if (kj === 'refund' || kj === 'tradein') {
+      for (var mm = 0; mm < tenders.length; mm++) {
+        if (String(tenders[mm].type || '') === 'store_credit') {
+          credit[cj] = (credit[cj] || 0) + num_(tenders[mm].amount);
+        }
+      }
+    }
+  }
+  var storeCreditLeft = [];
+  for (var csum in credit) {
+    if (round2_(credit[csum]) > 0) {
+      storeCreditLeft.push({
+        customerId: csum,
+        customer: csum ? (custName[csum] || '') : '',
+        storeCredit: round2_(credit[csum]),
+      });
+    }
+  }
+  storeCreditLeft.sort(function (a, b) { return b.storeCredit - a.storeCredit; });
+
+  return {
+    warrantyExpiring: warrantyExpiring.slice(0, REMINDERS_MAX),
+    repairsReady: repairsReady.slice(0, REMINDERS_MAX),
+    upgradeCandidates: upgradeCandidates.slice(0, REMINDERS_MAX),
+    storeCreditLeft: storeCreditLeft.slice(0, REMINDERS_MAX),
+  };
 }
 
 function serialsTrace_(session, params) {

@@ -5,6 +5,35 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.55.0] — 2026-09-24
+
+### Added
+
+- **Lifecycle reminders** (`/api/reminders`, admin and manager): what the shop
+  should act on, derived from data already captured — no new settings, no
+  schedules, no notifications outside the app.
+  - **Warranty expiring.** Every active warranty ending within the next 30
+    days, with the customer, the device and its expiration date.
+  - **Repairs ready.** Every ticket at *Ready for collection*, with days
+    waiting, the customer and the deposit held.
+  - **Upgrade candidates.** Customers of serialized brand-new devices
+    (`warrantyDays` covering at least a year) sold 24+ months ago, whose
+    warranty has since expired — grouped by customer with what they own.
+  - **Store credit left.** Customers still holding store credit and how much,
+    so a liability isn't forgotten.
+  - Each list is capped at the 25 most pressing entries; every figure reuses
+    the Sales-report money rules and the Warranty screen's status answers.
+- **Reminders panel on the Dashboard.** A single read-only panel for admin
+  and manager, loading when an online staff tab opens the Dashboard, with one
+  tap into the Sales report, Repairs, Warranty lookup and Customers screens.
+  The panel simply hides when the remotes feed is unreachable, so an offline
+  till still opens.
+- **Demo & tests:** the sim seeds two reminder customers and a ready repair
+  (a warranty expiring in weeks, a device sold far past its cover, a deposit-
+  held repair, and a store-credit refund) and asserts list membership, exact
+  customer/device/deposit values, the 25-item cap, and the cashier/admin/
+  manager role guards. All reminder figures share the profile's derivation.
+
 ## [1.54.0] — 2026-09-24
 
 ### Added

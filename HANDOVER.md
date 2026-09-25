@@ -13,10 +13,10 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.54.0** — customer 360 profile: total spent, net of refunds, visits, serialized devices with their warranty cover, open and collected repairs, and the ledger with aging, all behind the admin/manager gate (`2026-09-24`) |
+| Current version | **v1.55.0** — lifecycle reminders: a read-only Dashboard panel for admin/manager showing warranties expiring within 30 days, repairs ready with deposit, customers whose brand-new devices sold 24+ months ago are upgrade candidates, and store credit still outstanding — all derived from existing data (`2026-09-24`) |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
-| Validation bar | `backend-sim` **PASS 1190 / FAIL 0** · client units **PASS 572 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
-| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~6,020 lines) |
+| Validation bar | `backend-sim` **PASS 1205 / FAIL 0** · client units **PASS 572 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~9,444 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
 
@@ -127,6 +127,16 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.55.0** Lifecycle reminders (`/api/reminders`, admin/manager, read-only):
+  one Dashboard **Reminders** panel for the owner or manager opening the day —
+  warranties expiring within 30 days (customer, device, expiry), repairs ready
+  with days waiting and deposit held (one tap to Repairs), customers whose
+  brand-new device sold 24+ months ago is an upgrade candidate (grouped with
+  what they own), and store credit still outstanding. Backend derives all four
+  lists (each capped at 25) from existing Transactions/Repairs rows, reusing
+  the Sales-report money rules and the Warranty expiry math; refunded serials
+  are excluded per sale. Panel shows only for online admin/manager sessions and
+  hides offline rather than hanging a till.
 - **v1.54.0** Customer 360 profile (`/api/customers/profile`, admin/manager):
   everything one customer is on one screen — summary on the Sales-report money
   rules (total spent, net of refunds, visits, average sale, first/last visit,

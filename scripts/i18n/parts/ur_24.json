@@ -1,0 +1,25 @@
+{
+  "Reminders": "یاد دہانیاں",
+  "Warranty expiring": "ضمانت ختم ہونے والی",
+  "Repairs ready": "مرمت تیار",
+  "Upgrade candidates": "اپ گریڈ کے امیدوار",
+  "Store credit left": "بقیہ اسٹور کریڈٹ",
+  "expires {date}": "{date} کو ختم ہوتی ہے",
+  "Nothing to act on.": "کوئی عمل باقی نہیں۔",
+  "{n} days left": {
+    "one": "{n} دن باقی",
+    "other": "{n} دن باقی"
+  },
+  "{n} days waiting": {
+    "one": "{n} دن انتظار",
+    "other": "{n} دن انتظار"
+  },
+  "{n} devices": {
+    "one": "{n} ڈیوائس",
+    "other": "{n} ڈیوائسز"
+  },
+  "{n} reminders": {
+    "one": "{n} یاد دہانی",
+    "other": "{n} یاد دہانیاں"
+  }
+}

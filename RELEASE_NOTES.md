@@ -7,7 +7,41 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.54.0 — customer 360 profile
+## Latest: v1.55.0 — lifecycle reminders
+
+**2026-09-24.**
+
+- **What the shop should act on, surfaced on the Dashboard.** The owner or
+  manager opens the day to one read-only *Reminders* panel with four lists
+  derived from data the shop already captures — nothing new to fill in, no
+  schedules, no outside notifications:
+  - **Warranty expiring** — active warranties ending within the next 30 days,
+    with the customer, device and expiry.
+  - **Repairs ready** — every ticket at *Ready for collection*, days waiting,
+    customer and deposit held, one tap to the Repairs screen.
+  - **Upgrade candidates** — customers of serialized brand-new devices sold 24+
+    months ago with expired warranties, with what they own.
+  - **Store credit left** — customers still holding store credit and how much,
+    so it isn't forgotten as a liability.
+- Each list caps at the 25 most pressing entries and reuses the Sales-report
+  money rules and the Warranty screen's status answers; every row links into
+  the screen where the shop acts on it (Sales report, Repairs, Warranty
+  lookup, Customers).
+- The panel loads only for online admin/manager sessions and simply stays out
+  of the way offline, so a till never hangs on a reminders fetch.
+
+**Validation:** backend-sim **PASS 1205 / FAIL 0** · client units **PASS 572 /
+FAIL 0** · demo **PASS 32 / FAIL 0** · pdf-smoke **NOT RUN** here.
+- The reminders sim section sells a warranty expiring in weeks and a device
+  sold far past its cover, books a repair to *ready* with a deposit held, and
+  refunds a sale to store credit — then asserts each list's membership, exact
+  customer/device/deposit values, the 25-item cap, and the cashier/admin/
+  manager role guards. The Arabic and Urdu dictionaries gained the panel's 12
+  strings (6-form Arabic plurals, 2-form Urdu).
+
+---
+
+## v1.54.0 — customer 360 profile
 
 **2026-09-24.**
 

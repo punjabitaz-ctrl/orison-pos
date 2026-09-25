@@ -14,6 +14,7 @@ import { fmt, esc, toast, beep, openModal, closeModal, skeleton, emptyState, cur
 import { SYNC_EVENT, getDeviceId } from '../sync.js';
 import { inventoryAlerts } from '../alerts.js';
 import { openPayoutDialog } from '../money-dialogs.js';
+import { openWarrantyLookup } from '../warranty.js';
 import { screenHead, sectionHead, statRow, dataTable, rankList, rankRow, roleLabel } from '../components.js';
 import {
   dayKey, shiftDayKey, dayTotals, trend, baselineAverage, hourlyBuckets,
@@ -49,6 +50,7 @@ export const screen = {
     let conflicts = [];
     let shifts = [];
     let report = null;
+    let reminders = null;
 
     function scope() {
       return isManager ? txs : txs.filter((t) => String(t.user_id) === String(user.id));
@@ -76,7 +78,7 @@ export const screen = {
     }
 
     async function load() {
-      const [prods, res, outbox, con, shiftRes, rep] = await Promise.all([
+      const [prods, res, outbox, con, shiftRes, rep, rem] = await Promise.all([
         idb.getAll('products').catch(() => []),
         navigator.onLine
           ? fetchToday().catch((err) => { server = !(err && err.offline); return { ok: false }; })
@@ -94,6 +96,11 @@ export const screen = {
         navigator.onLine && isManager
           ? api.get(`/api/reports?from=${todayKey(29)}&to=${todayKey(0)}`).catch(() => null)
           : Promise.resolve(null),
+        /* the manager's morning list: what is expiring, sitting ready, waiting
+           on an upgrade, or sitting as store credit. */
+        navigator.onLine && isManager
+          ? api.get('/api/reminders').catch(() => null)
+          : Promise.resolve(null),
       ]);
       products = prods;
       txs = (res && res.transactions) || [];
@@ -101,6 +108,7 @@ export const screen = {
       conflicts = (con && con.conflicts) || [];
       shifts = (shiftRes && shiftRes.shifts) || [];
       report = rep;
+      reminders = (rem && rem.data) || null;
       draw();
     }
 
@@ -164,6 +172,8 @@ export const screen = {
             ${trendBadge(gpTrend, 'money', $t('vs 7-day avg'))}
           </div>` : ''}
         </div>
+
+        ${isManager ? remindersHtml(reminders, money) : ''}
 
         <section class="dash-section">
           <h3>${$t('Shift')}</h3>
@@ -311,6 +321,14 @@ export const screen = {
       const expBtn = root.querySelector('#dashExport');
       if (expBtn) expBtn.addEventListener('click', () => exportDay(expBtn));
       root.querySelectorAll('[data-go-history]').forEach((b) => b.addEventListener('click', () => router.show('history')));
+      root.querySelectorAll('[data-rem-go]').forEach((el) => el.addEventListener('click', () => {
+        const go = el.dataset.remGo;
+        const serial = el.dataset.serial || '';
+        if (go === 'repairs') router.show('repairs');
+        else if (go === 'customers') router.show('customers');
+        else if (go === 'salesreport') router.show('salesreport');
+        else if (go === 'warranty') openWarrantyLookup(serial);
+      }));
       const revBtn = root.querySelector('#dashReviewConf');
       if (revBtn) revBtn.addEventListener('click', () => {
         const open = openConflicts(conflicts);
@@ -685,4 +703,81 @@ function reportDays(report) {
     buckets.push({ key, date: d, total: hit ? hit.sales : 0, count: hit ? hit.count : 0 });
   }
   return buckets;
+}
+
+/* Reminders (v1.55.0): one read-only morning list for the manager, drawn from
+   what the sheet already knows. Each row jumps to the screen that owns the
+   decision — a warranty lookup for an expiring cover, the bench for a ready
+   repair, the customer file for an upgrade nudge or leftover credit. */
+function remLink(go, serial = '', cls = 'rem-click') {
+  return `data-rem-go="${esc(go)}"${serial ? ` data-serial="${esc(serial)}"` : ''} class="${cls}"`;
+}
+
+function remDate(iso) {
+  const d = iso ? new Date(iso) : null;
+  return d && !isNaN(d) ? d.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' }) : '—';
+}
+
+function remindersHtml(rem, money) {
+  if (!rem) return '';
+  const we = rem.warrantyExpiring || [];
+  const rr = rem.repairsReady || [];
+  const uc = rem.upgradeCandidates || [];
+  const sc = rem.storeCreditLeft || [];
+  const total = we.length + rr.length + uc.length + sc.length;
+
+  const bn = (rows) => rows.map((w) => `
+      <div class="rank-row" ${remLink('warranty', w.serialNumber)}>
+        <div class="rank-main">
+          <div class="rank-name">${esc(w.device)}${w.serialNumber ? ` <span class="muted">· ${esc(w.serialNumber)}</span>` : ''}</div>
+          <div class="muted">${esc([w.customer, $t('expires {date}', { date: remDate(w.expiresAt) })].filter(Boolean).join(' · '))}</div>
+        </div>
+        <span class="tag tag-warn">${esc($tn('{n} day left', '{n} days left', w.daysLeft))}</span>
+      </div>`).join('');
+
+  const br = (rows) => rows.map((r) => `
+      <div class="rank-row" ${remLink('repairs')}>
+        <div class="rank-main">
+          <div class="rank-name">${esc(r.customer || r.ticketNo)}</div>
+          <div class="muted">${esc([r.device + (r.serialNumber ? ' · ' + r.serialNumber : ''), $tn('{n} day waiting', '{n} days waiting', r.daysWaiting)].filter(Boolean).join(' · '))}</div>
+        </div>
+        <span class="muted">${esc($t('{amount} deposit', { amount: money(r.deposit) }))}</span>
+      </div>`).join('');
+
+  const bu = (rows) => rows.map((u) => `
+      <div class="rank-row" ${remLink('customers')}>
+        <div class="rank-main">
+          <div class="rank-name">${esc(u.customer)}</div>
+          <div class="muted">${esc((u.devices || []).map((d) => d.device).join(', '))}</div>
+        </div>
+        <span class="muted">${esc($tn('{n} device', '{n} devices', (u.devices || []).length))}</span>
+      </div>`).join('');
+
+  const bs = (rows) => rows.map((s) => `
+      <div class="rank-row" ${remLink('customers')}>
+        <div class="rank-main">
+          <div class="rank-name">${esc(s.customer)}</div>
+        </div>
+        <strong>${money(s.storeCredit)}</strong>
+      </div>`).join('');
+
+  const block = (label, body) => (body
+    ? `<h4 class="rem-head">${esc(label)}</h4><div class="rank-list">${body}</div>`
+    : '');
+
+  return `
+    <section class="dash-section">
+      ${sectionHead({ title: $t('Reminders'), aside: total ? $tn('{n} reminder', '{n} reminders', total) : $t('Nothing to act on.') })}
+      ${total === 0 ? '' : `
+      ${block($t('Warranty expiring'), bn(we))}
+      ${block($t('Repairs ready'), br(rr))}
+      ${block($t('Upgrade candidates'), bu(uc))}
+      ${block($t('Store credit left'), bs(sc))}
+      <div class="row dash-actions">
+        <button class="btn btn-ghost btn-sm" data-rem-go="salesreport">${$t('Sales report')}</button>
+        <button class="btn btn-ghost btn-sm" data-rem-go="repairs">${$t('Repairs')}</button>
+        <button class="btn btn-ghost btn-sm" data-rem-go="warranty">${$t('Check warranty')}</button>
+        <button class="btn btn-ghost btn-sm" data-rem-go="customers">${$t('Customers')}</button>
+      </div>`}
+    </section>`;
 }

@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.54.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.55.0.** **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -56,7 +56,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 
 ### Reporting and the business
 
-- **Dashboard**: KPIs with trend chips, today by hour, and top sellers with margin. Cashiers see their own day.
+- **Dashboard**: KPIs with trend chips, today by hour, and top sellers with margin. Cashiers see their own day. **Reminders** (v1.55.0, admin and manager): one read-only panel opens the day with the four things to act on — warranties expiring within 30 days, repairs ready for collection (deposit held, days waiting), customers whose brand-new devices sold 24+ months ago are due an upgrade, and store credit still outstanding — each row a tap away from the Sales report, Repairs, Warranty lookup or Customers screen.
 - **Reports**: gross sales, refunds, cash out by reason, collections, deposits, net revenue, gross profit at the cost captured at sale, and average ticket. Broken down by day, hour, category, staff member (average sale, items per sale, refunds, margin), tender and channel, with CSV export.
 - **Sales report**: filter by period, staff member, category, product, payment, channel and customer; group by day, hour, staff member, category, product, payment, channel or customer; list every sale with its lines, cost and profit. Exports a summary CSV, a line-level CSV, or a printed page. Cashiers see their own sales.
 - **Trade-ins**: buy a used device from a customer for cash or store credit, with the ID check recorded. The device joins stock at what was paid for it and is resold with 30 days of warranty. Cashiers need a manager's approval.
