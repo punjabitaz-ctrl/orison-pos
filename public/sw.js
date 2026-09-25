@@ -5,7 +5,7 @@
    - /api/*: never cached, network only
 */
 
-const VERSION = 'orison-pos-v1.56.0';
+const VERSION = 'orison-pos-v1.57.0';
 
 const SHELL = [
   './',

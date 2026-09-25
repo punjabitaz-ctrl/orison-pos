@@ -65,6 +65,8 @@ export const ACTION_GROUPS = [
     { id: 'payroll.adjust', label: N_('Pay lines adjusted') },
     { id: 'payroll.pay', label: N_('Pay runs paid') },
     { id: 'payroll.void', label: N_('Pay runs voided') },
+    { id: 'opening.set', label: N_('Opening balances set') },
+    { id: 'opening.void', label: N_('Opening balances voided') },
     { id: 'user.pin_reset', label: N_('PIN resets') },
     { id: 'session.revoke_all', label: N_('Sessions revoked') },
     { id: 'device.revoke', label: N_('Terminal revoked') },

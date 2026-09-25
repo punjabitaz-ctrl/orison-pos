@@ -61,7 +61,7 @@ The guide's **Sign in** buttons switch account in one tap. When a cashier needs 
 
 **As the admin (Tariq)**
 1. Settings → Marketplace orders → **Import now**. Then open the guide → *view the demo sheet* to see each row's Status filled in.
-2. Menu → **Accounts**: profit and loss, trial balance and journal, with CSV exports.
+2. Menu → **Accounts**: profit and loss, trial balance and journal, with CSV exports. The shop's **opening balances** are set (what it had in the till, the bank and on the shelf the day it switched) — open them from the banner to see, or void and re-enter them.
 3. Open a customer from **Customers** for their profile: what they have spent, every device they own with its warranty, repairs on the bench and collected, and what they owe.
 4. Menu → **Payroll**: draft a run for last month, adjust someone's line with a reason, and pay it in cash — then look at Reports and Accounts to see the wage bill land. Everyone already has a rate; *Pay rate* on the Time Clock screen sets it. A manager cannot see any of this.
 5. The Audit Log, staff (add a person, reset a PIN), store settings, tax and discount limits.

@@ -90,6 +90,17 @@ check('the screen the waiting job needs is on the order that is coming',
   bench.parts.some((p) => p.sku === 'RP-SCR-IP12' && p.onOrder === 1 && p.shortfall === 0
     && p.tickets[0].status === 'awaiting_parts'), JSON.stringify(bench.parts.find((p) => p.sku === 'RP-SCR-IP12')));
 
+const open = call(rt2, '/api/opening-balances', {}, tokens.admin).data;
+check('the demo shop says what it was already trading with',
+  open.set === true && open.entry.cash === 300 && open.entry.bank === 14500 && open.entry.stockValue > 0,
+  JSON.stringify(open.entry));
+check('so its balance sheet opens with stock and money, not zero',
+  (() => {
+    const b = call(rt2, '/api/accounting', {}, tokens.admin, { from: day(31), to: day(-1) }).data;
+    const eq = b.trialBalance.accounts.find((a) => a.code === '3000');
+    return !!eq && eq.credit > 0 && b.trialBalance.balanced === true;
+  })(), 'expected opening equity in the books');
+
 const pay = call(rt2, '/api/payroll', {}, tokens.admin).data;
 check('the team has pay rates, so a run can be drafted on day one',
   pay && pay.staffWithoutRate === 0, JSON.stringify(pay));

@@ -4504,7 +4504,8 @@ check('statement carries the changer/cashier',
   check('nor can a cashier', req('/api/accounting', {}, { session: aCash }).status === 403);
 
   const A0 = books();
-  check('the chart of accounts is returned', A0.accounts.length === 20 && A0.accounts[0].code === '1000' && A0.accounts[19].code === '6900');
+  check('the chart of accounts is returned', A0.accounts.length === 21 && A0.accounts[0].code === '1000' && A0.accounts[20].code === '6900');
+  check('and an equity account for what the shop opened with', A0.accounts.some((a) => a.code === '3000' && a.type === 'equity'));
   check('and it carries an account for wages', A0.accounts.some((a) => a.code === '6200' && a.type === 'expense'));
 
   const chg = req('/api/admin/products', { name: 'Acct Charger', sku: 'ACC-CHG', category: 'ACC', costPrice: 4, retailPrice: 20, onHand: 10 }, { session: aAdm }).data.id;
@@ -5939,6 +5940,103 @@ check('statement carries the changer/cashier',
   check('and they are not on the next run',
     !req('/api/payroll/detail', {}, { session: pyAdm, params: { id: run2.id } }).data.lines.some((l) => l.userId === salaried.id));
   check('the list reports who still has no rate', req('/api/payroll', {}, { session: pyAdm }).data.staffWithoutRate >= 1);
+}
+{
+  section('opening balances: the books start where the shop did (v1.57.0)');
+
+  const obAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const obMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const near = (a, b) => Math.abs(a - b) < 0.005;
+  const today = new Date().toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+  check('opening balances are the admin\'s alone',
+    req('/api/opening-balances', {}, { session: obMgr }).status === 403
+    && req('/api/opening-balances', { asOf: today, cash: 1 }, { session: obMgr }).status === 403
+    && req('/api/opening-balances', {}, { session: obAdm }).ok === true);
+
+  const state0 = req('/api/opening-balances', {}, { session: obAdm }).data;
+  check('before they are set, the books say so and offer what the shelf is worth',
+    state0.set === false && state0.entry === null && state0.suggestedStockValue > 0 && /^\d{4}-\d{2}-\d{2}$/.test(state0.suggestedAsOf),
+    JSON.stringify([state0.set, state0.suggestedStockValue]));
+  check('the offered stock figure is the one the Stock health screen shows',
+    near(state0.suggestedStockValue, req('/api/inventory/health', {}, { session: obAdm }).data.summary.costValue),
+    JSON.stringify([state0.suggestedStockValue, req('/api/inventory/health', {}, { session: obAdm }).data.summary.costValue]));
+
+  const setOpen = (body, session) => req('/api/opening-balances', body, { session: session || obAdm });
+  check('a day is required', setOpen({ cash: 100 }).status === 400);
+  check('the future is refused', setOpen({ asOf: tomorrow, cash: 100 }).status === 400);
+  check('a negative balance is refused', setOpen({ asOf: today, cash: -1 }).status === 400);
+  check('opening with nothing at all is refused', setOpen({ asOf: today, cash: 0, bank: 0, stockValue: 0 }).status === 400);
+
+  const books0 = req('/api/accounting', {}, { session: obAdm, params: { from: today, to: today } }).data;
+  const repBefore = req('/api/reports', {}, { session: obAdm, params: { from: today, to: today } }).data.summary;
+  const bal = (b, code) => {
+    const row = b.trialBalance.accounts.find((a) => a.code === code);
+    return row ? row.balance : 0;
+  };
+  const opened = setOpen({ asOf: today, cash: 500, bank: 12000, stockValue: 8000, note: 'Counted with the owner' });
+  check('the admin sets what the shop had on day one',
+    opened.ok === true && near(opened.data.total, 20500), JSON.stringify(opened.data));
+  check('twice is refused - it would double everything', setOpen({ asOf: today, cash: 1 }).status === 409);
+
+  const books1 = req('/api/accounting', {}, { session: obAdm, params: { from: today, to: today } }).data;
+  const oe = books1.journal.find((j) => j.kind === 'opening');
+  const line = (j, code) => (j.lines.find((l) => l.code === code) || { debit: 0, credit: 0 });
+  check('it is one entry: cash, bank and stock in, against opening equity',
+    !!oe && near(line(oe, '1000').debit, 500) && near(line(oe, '1020').debit, 12000)
+    && near(line(oe, '1200').debit, 8000) && near(line(oe, '3000').credit, 20500), JSON.stringify(oe));
+  check('and the books still balance', books1.trialBalance.balanced === true);
+  check('the balance sheet now opens with the shop\'s own money, not zero',
+    near(bal(books1, '1000') - bal(books0, '1000'), 500)
+    && near(bal(books1, '1200') - bal(books0, '1200'), 8000), JSON.stringify([bal(books0, '1000'), bal(books1, '1000')]));
+  check('opening equity shows as a movement', !!books1.movements.find((m) => m.code === '3000'));
+
+  /* it is a book entry, not a movement: nothing the shop counts or sells moves */
+  const repAfter = req('/api/reports', {}, { session: obAdm, params: { from: today, to: today } }).data.summary;
+  check('it moves nothing in Reports: not a sale, not cash out, not a collection',
+    near(repAfter.grossSales, repBefore.grossSales) && near(repAfter.collections, repBefore.collections)
+    && near(repAfter.payouts, repBefore.payouts) && near(repAfter.pickups, repBefore.pickups)
+    && near(repAfter.expenses, repBefore.expenses) && near(repAfter.grossProfit, repBefore.grossProfit),
+    JSON.stringify([repBefore.grossSales, repAfter.grossSales, repBefore.grossProfit, repAfter.grossProfit]));
+  const obExport = req('/api/drive/export', { date: today }, { session: obAdm });
+  check('and it is not a row on the day export either',
+    obExport.ok && driveFiles[driveFiles.length - 1].content.indexOf(',opening,') < 0);
+  const obShift = req('/api/shifts/open', { openingFloat: 150 }, { session: obAdm });
+  const obClosed = req('/api/shifts/close', { shiftId: obShift.data.shift.id, denoms: {} }, { session: obAdm }).data.shift;
+  check('and the drawer a shift expects is its float, never the opening cash',
+    near(obClosed.expectedCash, 150), String(obClosed.expectedCash));
+  check('net income is untouched by it',
+    near(books1.pnl.netIncome, books0.pnl.netIncome), JSON.stringify([books0.pnl.netIncome, books1.pnl.netIncome]));
+
+  /* the books are period-scoped: an opening entry belongs to the day it is
+     dated, and to no other period */
+  const before = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+  const older = req('/api/accounting', {}, { session: obAdm, params: { from: before, to: before } }).data;
+  check('a period before the shop opened its books carries no opening entry',
+    !older.journal.some((j) => j.kind === 'opening')
+    && !older.trialBalance.accounts.some((a) => a.code === '3000')
+    && older.trialBalance.balanced === true,
+    JSON.stringify(older.journal.filter((j) => j.kind === 'opening')));
+
+  check('setting them is audited', req('/api/audit', {}, { session: obAdm, params: { action: 'opening.set' } }).data.entries.length === 1);
+
+  /* ---- getting it wrong, and putting it right ---- */
+  check('a void needs a reason', req('/api/opening-balances/void', {}, { session: obAdm }).status === 400);
+  check('a manager cannot void them', req('/api/opening-balances/void', { reason: 'x' }, { session: obMgr }).status === 403);
+  check('the admin voids them', req('/api/opening-balances/void', { reason: 'Counted the safe twice' }, { session: obAdm }).ok === true);
+  const books2 = req('/api/accounting', {}, { session: obAdm, params: { from: today, to: today } }).data;
+  check('and they leave the books entirely', !books2.journal.some((j) => j.kind === 'opening') && books2.trialBalance.balanced === true);
+  check('voiding twice is refused', req('/api/opening-balances/void', { reason: 'again' }, { session: obAdm }).status === 404);
+  check('the void is on record with its reason',
+    req('/api/opening-balances', {}, { session: obAdm }).data.history.some((h) => h.status === 'VOIDED' && h.voidedReason === 'Counted the safe twice'));
+
+  const again = setOpen({ asOf: today, cash: 400, bank: 12000, stockValue: 8000 });
+  check('and they can be entered again', again.ok === true && near(again.data.total, 20400));
+  check('the second entry is the one in the books',
+    near((req('/api/accounting', {}, { session: obAdm, params: { from: today, to: today } }).data.journal
+      .find((j) => j.kind === 'opening').lines.find((l) => l.code === '1000') || {}).debit, 400));
+  req('/api/opening-balances/void', { reason: 'tidy up after the test' }, { session: obAdm });
 }
 {
   section('setup() deploy entry point (v1.35.1)');

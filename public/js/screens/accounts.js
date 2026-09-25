@@ -10,7 +10,7 @@ import { $t, $tn, N_, arrow, dateLocale } from '../lang.js';
 import { idb } from '../db.js';
 import { api } from '../api.js';
 import { screenHead } from '../components.js';
-import { fmt, esc, toast, beep, csvCell, downloadCsv } from '../ui.js';
+import { fmt, esc, toast, beep, csvCell, downloadCsv, openModal, closeModal } from '../ui.js';
 import { PRESETS, rangeFor } from './reports.js';
 
 const ACCOUNT_NAMES = {
@@ -58,6 +58,30 @@ export function accountName(code, fallback) {
   return n ? $t(n) : String(fallback || code);
 }
 
+/* What the books should say about where they started. A shop that was
+   already trading has stock, cash and a bank balance on the day it starts
+   here; until somebody says so, every balance opens at zero and the balance
+   sheet is wrong from the first hour. */
+export function openingNotice(state) {
+  if (!state) return null;
+  if (!state.set) {
+    return {
+      id: 'missing',
+      tone: 'warn',
+      title: N_('The books open at zero'),
+      body: N_('This shop was trading before today. Say what was in the till, in the bank and on the shelf, and the balance sheet will start where the shop did.'),
+      action: N_('Enter opening balances'),
+    };
+  }
+  return {
+    id: 'set',
+    tone: 'ok',
+    title: N_('Opening balances are set'),
+    body: '',
+    action: N_('Review'),
+  };
+}
+
 export const screen = {
   id: 'accounts',
   tab: 'accounts',
@@ -75,6 +99,7 @@ export const screen = {
     let from = '';
     let to = '';
     let data = null;
+    let opening = null;
     let loading = false;
 
     async function load() {
@@ -85,6 +110,7 @@ export const screen = {
         data = await api.get(`/api/accounting?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`);
         from = range.from;
         to = range.to;
+        opening = await api.get('/api/opening-balances').catch(() => null);
       } catch (err) {
         data = null;
         toast((err && !err.offline) ? (err.message || $t('Accounts failed')) : $t('Offline — accounts need the server'), 'warn');
@@ -114,6 +140,22 @@ export const screen = {
         </div>
 
         ${loading ? `<div class="empty"><p>${$t('Loading…')}</p></div>` : !data ? `<div class="empty"><p>${$t('No accounts yet — pick a period above.')}</p></div>` : `
+        ${(() => {
+          const notice = openingNotice(opening);
+          if (!notice) return '';
+          const entry = opening && opening.entry;
+          return `<div class="acct-opening ${notice.id === 'missing' ? 'acct-opening-warn' : ''}">
+            <div>
+              <strong>${esc($t(notice.title))}</strong>
+              ${notice.body ? `<p class="muted">${esc($t(notice.body))}</p>` : ''}
+              ${entry ? `<p class="muted">${esc($t('As of {date} · till {cash} · bank {bank} · stock {stock}', {
+                date: entry.asOf, cash: fmt(entry.cash), bank: fmt(entry.bank), stock: fmt(entry.stockValue),
+              }))}</p>` : ''}
+            </div>
+            <button class="btn btn-sm ${notice.id === 'missing' ? 'btn-primary' : 'btn-ghost'}" id="acOpening">${esc($t(notice.action))}</button>
+          </div>`;
+        })()}
+
         <div class="acct-status">
           <span class="tag ${tb.balanced ? 'tag-ok' : 'tag-bad'}">${tb.balanced ? $t('Books balance') : $t('Out of balance')}</span>
           <span class="muted">${esc($t('Debits {debit} · credits {credit}', { debit: fmt(tb.debit), credit: fmt(tb.credit) }))}</span>
@@ -161,6 +203,7 @@ export const screen = {
         if (!from || !to) { toast($t('Pick both dates'), 'warn'); return; }
         load();
       });
+      root.querySelector('#acOpening')?.addEventListener('click', openingModal);
       root.querySelector('#acJournalCsv')?.addEventListener('click', () => {
         downloadCsv(`orison-journal-${range.from}-${range.to}.csv`, journalCsv(data));
         toast($tn('Journal CSV · {n} entry', 'Journal CSV · {n} entries', data.journal.length), 'ok');
@@ -170,6 +213,90 @@ export const screen = {
         downloadCsv(`orison-trial-balance-${range.from}-${range.to}.csv`, trialCsv(data));
         toast($t('Trial balance CSV saved'), 'ok');
         beep('ok');
+      });
+    }
+
+    function openingModal() {
+      const entry = opening && opening.entry;
+      const suggested = (opening && opening.suggestedStockValue) || 0;
+      const m = openModal(`
+        <h3>${$t('Opening balances')}</h3>
+        ${entry ? `
+          <p class="muted">${esc($t('Set as of {date} by {who}.', { date: entry.asOf, who: entry.createdBy }))}</p>
+          <div class="po-lines-subtotal"><span class="muted">${$t('In the till')}</span><strong>${esc(fmt(entry.cash))}</strong></div>
+          <div class="po-lines-subtotal"><span class="muted">${$t('In the bank')}</span><strong>${esc(fmt(entry.bank))}</strong></div>
+          <div class="po-lines-subtotal"><span class="muted">${$t('Stock at cost')}</span><strong>${esc(fmt(entry.stockValue))}</strong></div>
+          <div class="po-lines-subtotal"><span>${$t('Total')}</span><strong>${esc(fmt(entry.total))}</strong></div>
+          ${entry.note ? `<p class="muted">${esc(entry.note)}</p>` : ''}
+          <p class="muted">${$t('If this is wrong, void it and enter it again. Nothing else in the books changes.')}</p>
+          <label class="field-label">${$t('Reason for voiding')}</label>
+          <input class="field" id="acVoidWhy" placeholder="${$t('Counted the safe twice')}">
+          <div class="modal-actions">
+            <button class="btn btn-ghost" data-close>${$t('Close')}</button>
+            <button class="btn btn-danger" id="acVoidGo">${$t('Void these')}</button>
+          </div>
+        ` : `
+          <p class="muted">${$t('What the shop had on the day it started keeping its books here. This is not a sale and not a drawer movement — it is the balance sheet admitting what was already there.')}</p>
+          <label class="field-label">${$t('As of')}</label>
+          <input class="field" id="acAsOf" type="date" value="${esc((opening && opening.suggestedAsOf) || '')}">
+          <div class="form-grid">
+            <div>
+              <label class="field-label">${$t('In the till')}</label>
+              <input class="field" id="acCash" inputmode="decimal" value="0">
+            </div>
+            <div>
+              <label class="field-label">${$t('In the bank')}</label>
+              <input class="field" id="acBank" inputmode="decimal" value="0">
+            </div>
+          </div>
+          <label class="field-label">${$t('Stock at cost')}</label>
+          <input class="field" id="acStock" inputmode="decimal" value="${esc(String(suggested))}">
+          <p class="muted">${esc($t('Offered from what is on the shelf right now, at cost: {amount}. Change it only if the shop counted something different.', { amount: fmt(suggested) }))}</p>
+          <label class="field-label">${$t('Note')}</label>
+          <input class="field" id="acOpenNote" placeholder="${$t('Counted with the owner')}">
+          <p id="acOpenErr" class="login-err"></p>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" data-close>${$t('Cancel')}</button>
+            <button class="btn btn-primary" id="acOpenGo">${$t('Set them')}</button>
+          </div>
+        `}
+      `);
+
+      m.querySelector('#acOpenGo')?.addEventListener('click', async () => {
+        const go = m.querySelector('#acOpenGo');
+        go.disabled = true;
+        try {
+          await api.post('/api/opening-balances', {
+            asOf: m.querySelector('#acAsOf').value,
+            cash: Number(m.querySelector('#acCash').value) || 0,
+            bank: Number(m.querySelector('#acBank').value) || 0,
+            stockValue: Number(m.querySelector('#acStock').value) || 0,
+            note: m.querySelector('#acOpenNote').value.trim(),
+          });
+          closeModal();
+          toast($t('Opening balances set'), 'ok');
+          beep('ok');
+          await load();
+        } catch (err) {
+          m.querySelector('#acOpenErr').textContent = (err && err.message) || $t('Could not set those');
+          go.disabled = false;
+        }
+      });
+
+      m.querySelector('#acVoidGo')?.addEventListener('click', async () => {
+        const reason = m.querySelector('#acVoidWhy').value.trim();
+        if (!reason) { toast($t('A void needs a reason'), 'warn'); return; }
+        const go = m.querySelector('#acVoidGo');
+        go.disabled = true;
+        try {
+          await api.post('/api/opening-balances/void', { reason });
+          closeModal();
+          toast($t('Opening balances voided'), 'ok');
+          await load();
+        } catch (err) {
+          toast((err && err.message) || $t('Could not void those'), 'err');
+          go.disabled = false;
+        }
       });
     }
 

@@ -77,6 +77,8 @@ function dispatch_(action, session, payload, params) {
     case '/api/shifts':          return shifts_(session, params);
     case '/api/shifts/open':     return shiftOpen_(session, payload);
     case '/api/shifts/close':    return shiftClose_(session, payload);
+    case '/api/opening-balances': return openingBalances_(session, payload, params);
+    case '/api/opening-balances/void': return openingBalancesVoid_(session, payload);
     case '/api/payroll':         return payroll_(session, payload, params);
     case '/api/payroll/detail':  return payRunDetail_(session, params);
     case '/api/payroll/line':    return payRunLine_(session, payload);
@@ -365,6 +367,8 @@ function markAllDevicesRevoked_(uid) {
 
 var META_HEADERS    = ['key', 'value'];
 var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at', 'pay_type', 'pay_rate', 'pay_updated_at'];
+var OPENING_HEADERS = ['id', 'store_id', 'as_of', 'cash', 'bank', 'stock_value', 'note', 'status',
+  'created_by', 'created_at', 'voided_reason'];
 var PAYRUN_HEADERS  = ['id', 'store_id', 'period_from', 'period_to', 'status', 'lines_json', 'gross_total',
   'note', 'created_by', 'created_at', 'paid_at', 'paid_by', 'method', 'reference', 'tx_id', 'voided_reason'];
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
@@ -4297,6 +4301,7 @@ var CHART_OF_ACCOUNTS = [
   { code: '2100', name: 'Customer deposits', type: 'liability' },
   { code: '2200', name: 'Store credit', type: 'liability' },
   { code: '2300', name: 'Accounts payable', type: 'liability' },
+  { code: '3000', name: 'Opening balance equity', type: 'equity' },
   { code: '4000', name: 'Product sales', type: 'revenue' },
   { code: '4010', name: 'Service sales', type: 'revenue' },
   { code: '4100', name: 'Sales returns', type: 'contra_revenue' },
@@ -4505,6 +4510,25 @@ function accounting_(session, params) {
     }
   }
 
+  /* what the shop already had on the day it started using this: one entry,
+     dated as of that day, so the balance sheet does not open at zero for a
+     business that was already trading. */
+  var openings = readRows_('OpeningBalances', OPENING_HEADERS).filter(function (o) {
+    return String(o.status || 'ACTIVE') === 'ACTIVE' && inPeriod(openingIso_(o));
+  });
+  for (var oi = 0; oi < openings.length; oi++) {
+    var ob = openings[oi];
+    var cashC = cents_(ob.cash), bankC = cents_(ob.bank), stockC = cents_(ob.stock_value);
+    var openTotalC = cashC + bankC + stockC;
+    if (!openTotalC) continue;
+    var oe = entry(openingIso_(ob), 'opening', String(ob.as_of || ''),
+      'Opening balances as of ' + String(ob.as_of || ''));
+    if (cashC) post(oe, '1000', cashC);
+    if (bankC) post(oe, '1020', bankC);
+    if (stockC) post(oe, '1200', stockC);
+    post(oe, '3000', -openTotalC);
+  }
+
   /* a stock take's counted difference, one entry per count */
   var takes = readRows_('StockTakes', STOCKTAKE_HEADERS).filter(function (s) { return inPeriod(s.created_at); });
   var bySession = Object.create(null), sessionOrder = [];
@@ -4567,8 +4591,8 @@ function accounting_(session, params) {
     expC += dr(acct.code);
   }
 
-  var movements = ['1000', '1010', '1020', '1030', '1100', '1150', '1200', '2000', '2100', '2200', '2300'].map(function (code) {
-    var liability = code.charAt(0) === '2';
+  var movements = ['1000', '1010', '1020', '1030', '1100', '1150', '1200', '2000', '2100', '2200', '2300', '3000'].map(function (code) {
+    var liability = code.charAt(0) === '2' || code.charAt(0) === '3';
     return { code: code, name: accountName[code], change: (liability ? -dr(code) : dr(code)) / 100 };
   });
 
@@ -8528,6 +8552,174 @@ function timeClock_(session, params) {
   };
 }
 
+
+
+/* ------------------------------------------------------------------ *
+ *  Opening balances (v1.57.0)
+ *
+ *  A shop that switches to this system on a Tuesday already has stock on the
+ *  shelf, notes in the drawer and money in the bank. Without saying so, the
+ *  books open at zero and the balance sheet claims the shop owns nothing -
+ *  which is wrong from the first hour, and wrong in every comparison after.
+ *
+ *  So the admin says it once: what was in the till, what was in the bank, and
+ *  what the stock was worth at cost. The stock figure is offered from what is
+ *  actually on the shelf right now - the same cost basis the Stock health
+ *  screen and the books use - because a number the shop types twice is a
+ *  number that will disagree with itself.
+ *
+ *  It is one entry, dated as of that day, balanced against 3000 Opening
+ *  balance equity. It is not a movement: no drawer, no shift, no sale, no
+ *  Reports figure moves. It is the books admitting what was already there.
+ *
+ *  Entered once. If it was wrong, an admin voids it (with a reason, kept on
+ *  record) and enters it again.
+ *
+ *  What is NOT here, deliberately: what customers owed and what was owed to
+ *  suppliers on that day. Those belong to a named customer and a named
+ *  supplier, not to a lump sum, and they are their own release.
+ * ------------------------------------------------------------------ */
+
+function openingIso_(row) {
+  var asOf = String(row.as_of || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return String(row.created_at || '');
+  return dateOnlyToIso_(asOf, num_(getStore_().tzOffsetMin), false);
+}
+
+function openingActive_() {
+  var store = getStore_();
+  var rows = readRows_('OpeningBalances', OPENING_HEADERS);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].store_id) !== store.id) continue;
+    if (String(rows[i].status || 'ACTIVE') === 'ACTIVE') return rows[i];
+  }
+  return null;
+}
+
+/* What the shelf is worth at cost right now: a serial at what it cost, the
+   rest at the product's cost price. The same basis as the books and the
+   Stock health screen, so the three can never disagree. */
+function openingStockValue_() {
+  var serialCount = serialsAvailable_();
+  var serialCost = Object.create(null);
+  var serialRows = readRows_('Serials', SERIAL_HEADERS);
+  for (var s = 0; s < serialRows.length; s++) {
+    if (String(serialRows[s].status) !== 'IN_STOCK') continue;
+    var spid = String(serialRows[s].product_id);
+    if (num_(serialRows[s].cost) > 0) {
+      serialCost[spid] = (serialCost[spid] || { known: 0, unknown: 0 });
+      serialCost[spid].known += num_(serialRows[s].cost);
+    } else {
+      serialCost[spid] = (serialCost[spid] || { known: 0, unknown: 0 });
+      serialCost[spid].unknown += 1;
+    }
+  }
+  var totalC = 0;
+  var prods = readRows_('Products', PRODUCT_HEADERS);
+  for (var p = 0; p < prods.length; p++) {
+    var prod = prods[p];
+    if (String(prod.item_type) === 'service' || String(prod.active) !== '1') continue;
+    if (String(prod.is_serialized) === '1') {
+      var sc = serialCost[String(prod.id)];
+      if (!sc) continue;
+      totalC += cents_(sc.known) + cents_(sc.unknown * num_(prod.cost_price));
+    } else {
+      var onHand = num_(prod.on_hand);
+      if (onHand <= 0) continue;
+      totalC += cents_(onHand * num_(prod.cost_price));
+    }
+  }
+  return round2_(totalC / 100);
+}
+
+function openingRow_(row) {
+  if (!row) return null;
+  var cash = num_(row.cash), bank = num_(row.bank), stock = num_(row.stock_value);
+  return {
+    id: String(row.id),
+    asOf: String(row.as_of || ''),
+    cash: cash, bank: bank, stockValue: stock,
+    total: round2_(cash + bank + stock),
+    note: String(row.note || ''),
+    status: String(row.status || 'ACTIVE'),
+    voidedReason: String(row.voided_reason || ''),
+    createdAt: String(row.created_at || ''),
+    createdBy: auditName_(String(row.created_by || '')),
+  };
+}
+
+function openingBalances_(session, payload, params) {
+  requireRole_(session, ['admin']);
+  if (!payload || !Object.keys(payload).length) {
+    var active = openingActive_();
+    var store = getStore_();
+    return {
+      set: !!active,
+      entry: openingRow_(active),
+      suggestedStockValue: openingStockValue_(),
+      suggestedAsOf: localDayKey_(new Date().toISOString(), num_(store.tzOffsetMin)),
+      history: readRows_('OpeningBalances', OPENING_HEADERS)
+        .filter(function (r) { return String(r.store_id) === store.id; })
+        .map(openingRow_),
+    };
+  }
+  return openingBalancesSet_(session, payload);
+}
+
+function openingBalancesSet_(session, payload) {
+  var asOf = String(payload.asOf || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) throw statusError_(400, 'Say what day the shop opened its books here');
+  var store = getStore_();
+  var today = localDayKey_(new Date().toISOString(), num_(store.tzOffsetMin));
+  if (asOf > today) throw statusError_(400, 'Opening balances cannot be dated in the future');
+
+  var cash = round2_(num_(payload.cash));
+  var bank = round2_(num_(payload.bank));
+  var stock = payload.stockValue === '' || payload.stockValue == null
+    ? openingStockValue_() : round2_(num_(payload.stockValue));
+  if (cash < 0 || bank < 0 || stock < 0) throw statusError_(400, 'An opening balance cannot be negative');
+  if (!(cash + bank + stock > 0)) throw statusError_(400, 'There is nothing to open with');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    if (openingActive_()) throw statusError_(409, 'Opening balances are already set - void them to enter them again');
+    var now = new Date().toISOString();
+    var id = Utilities.getUuid();
+    appendRows_('OpeningBalances', OPENING_HEADERS, [{
+      id: id, store_id: store.id, as_of: asOf, cash: cash, bank: bank, stock_value: stock,
+      note: String(payload.note || '').slice(0, 200), status: 'ACTIVE',
+      created_by: String(session.uid || ''), created_at: now, voided_reason: '',
+    }]);
+    logAudit_(session, 'opening.set', 'opening', id,
+      'Opening balances as of ' + asOf + ': cash ' + cash + ', bank ' + bank + ', stock ' + stock, payload.deviceId);
+    return { id: id, asOf: asOf, cash: cash, bank: bank, stockValue: stock, total: round2_(cash + bank + stock) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function openingBalancesVoid_(session, payload) {
+  requireRole_(session, ['admin']);
+  payload = payload || {};
+  var reason = String(payload.reason || '').trim().slice(0, 200);
+  if (!reason) throw statusError_(400, 'A void needs a reason');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var active = openingActive_();
+    if (!active) throw statusError_(404, 'There are no opening balances to void');
+    applyPatches_('OpeningBalances', OPENING_HEADERS, 'id', {
+      [String(active.id)]: { status: 'VOIDED', voided_reason: reason },
+    });
+    logAudit_(session, 'opening.void', 'opening', String(active.id),
+      'Opening balances as of ' + String(active.as_of || '') + ' voided: ' + reason, payload.deviceId);
+    return { id: String(active.id), status: 'VOIDED' };
+  } finally {
+    lock.releaseLock();
+  }
+}
 
 /* ------------------------------------------------------------------ *
  *  Payroll (v1.56.0)

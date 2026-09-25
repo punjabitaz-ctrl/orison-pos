@@ -26,7 +26,7 @@ the sale, and in the things a business does that are not selling.
 
 ## Tier 0 — the shop cannot run its books without these
 
-### 1. No opening balances
+### 1. No opening balances — **built in v1.57.0**
 
 A business that is already trading has stock on the shelves, cash in the
 drawer, customers who owe it money and suppliers it owes. Products can be
@@ -38,9 +38,11 @@ Day one therefore starts every account at zero, and the balance sheet says the
 shop owns its stock and owes nobody, which is false from the first hour. Every
 report that compares to "before" is comparing to a void.
 
-**What it takes:** a one-time opening-balances entry (admin only, refuses to
-run twice), posting an opening journal against an Opening balances equity
-account. Small-to-medium, and it must exist before the first real day.
+**Shipped in v1.57.0** for the shop's own position: till, bank and stock at
+cost, posted against 3000 Opening balance equity, voidable, admin only.
+**Still open:** what customers owed and what was owed to suppliers on that day
+— those belong to a named counterparty rather than a lump sum, and are their
+own release.
 
 ### 2. Card money is never reconciled — **closed: the shop takes no cards (owner, 2026-09-24)**
 

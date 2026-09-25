@@ -7,7 +7,38 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.56.0 — payroll
+## Latest: v1.57.0 — the books start where the shop did
+
+**2026-09-24.**
+
+The first of the things a trading business needs that this build did not have.
+
+- **Say what the shop already had** — in the till, in the bank, and on the
+  shelf — on the day it started keeping its books here. Until now every
+  balance opened at zero, so the balance sheet said the shop owned nothing.
+- **Accounts tells you when they are missing**, right above the numbers that
+  are wrong, with the button to fix it.
+- **The stock figure is offered for you**: what is on the shelf right now, at
+  cost, on the same basis the books already use. Type over it only if the shop
+  counted something different.
+- **It changes nothing else.** Not a sale, not a drawer movement, not a line
+  in Reports or on the daily export — the balance sheet simply stops
+  pretending the shop started from nothing.
+- **Got it wrong?** Void it with a reason and enter it again.
+
+**Validation:** backend-sim **PASS 1295 / FAIL 0** · client units **PASS 602 /
+FAIL 0** · demo **PASS 38 / FAIL 0**.
+- Five mutations confirm the tests bite, including one that first slipped
+  through: an opening entry leaking into periods it does not belong to.
+
+### Deploying
+
+**Backend redeploy required.** The `OpeningBalances` tab is created on first
+use. **Set these before the first trading day** — Accounts will prompt for it.
+
+---
+
+## v1.56.0 — payroll
 
 **2026-09-24.**
 

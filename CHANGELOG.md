@@ -5,6 +5,37 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.57.0] — 2026-09-24
+
+### Added
+
+- **Opening balances** (Accounts, **admin only**). A shop that switches to this
+  system on a Tuesday already has stock on the shelf, notes in the drawer and
+  money in the bank. Until now the books opened at zero and the balance sheet
+  claimed the shop owned nothing — wrong from the first hour, and wrong in
+  every comparison afterwards.
+  - The Accounts screen says so plainly when they have not been set, with the
+    way to fix it beside the wrong numbers.
+  - **The stock figure is offered, not asked for**: what is on the shelf right
+    now at cost, on the same basis the books and the Stock health screen use,
+    so the three can never disagree. The admin can override it.
+  - It posts one entry dated as of that day — Dr Cash, Dr Bank transfers,
+    Dr Inventory, Cr **3000 Opening balance equity** (a new account).
+  - **It is not a movement.** No sale, no drawer, no shift, no Reports figure
+    and no line on the day export changes. Net income is untouched.
+  - Entered once. If it was wrong, an admin **voids** it with a reason (kept on
+    record) and enters it again.
+  - `/api/opening-balances` and `/void`, admin only. New `OpeningBalances`
+    sheet. Audited as `opening.set` / `opening.void`.
+- **Demo:** the sample shop now opens with $300 in the till, $14,500 in the
+  bank and its stock at cost, so its balance sheet is a real one.
+
+### Note
+
+The books are period-scoped, as they always have been: an opening entry
+belongs to the period containing its date. A report for a later month shows
+that month's movements, not the opening position.
+
 ## [1.56.0] — 2026-09-24
 
 ### Added

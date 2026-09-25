@@ -191,6 +191,13 @@ export function seedDemo(rt, { now = new Date() } = {}) {
   rt.call('applyPatches_', 'Transactions', rt.get('TX_HEADERS'), 'id', Object.fromEntries(received.map((r) => [r.id, { created_at: fiveWeeks }])));
   req(adm, '/api/suppliers/payment', { supplierId: supplier.id, poId: po1.id, amount: 100, method: 'bank', reference: 'TRF 44810', note: 'Part payment' });
 
+  /* the shop was trading before it started keeping books here: say what it had,
+     so the demo's balance sheet is a real one rather than opening at zero */
+  req(adm, '/api/opening-balances', {
+    asOf: new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10),
+    cash: 300, bank: 14500, note: 'Counted with the owner on the day we switched',
+  });
+
   /* what the team is paid, so a pay run can be drafted straight away */
   const team = req(adm, '/api/admin/users/list', {}).users;
   const rateFor = { admin: ['monthly', 6500], manager: ['monthly', 4200], cashier: ['hourly', 18] };
