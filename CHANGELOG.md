@@ -5,6 +5,52 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.56.0] — 2026-09-24
+
+### Added
+
+- **Payroll** (Menu → Payroll, **admin only**). The time clock already knew who
+  was on the floor and for how long; now it turns into what the team is owed,
+  and into the books.
+  - **A rate per person** (Time Clock → *Pay rate*): by the hour, or a monthly
+    salary. Only an admin can see or set it — a manager runs the floor, not the
+    payroll, and the staff list carries no pay at all for anyone else.
+  - **A pay run** for a period (last month, this month so far, the last seven
+    days, or any dates). Hourly staff are paid the minutes their clock
+    **closed** inside the period; a shift still open is worth nothing yet and
+    the line says so, however many minutes sit on it. Salaried staff are paid
+    their monthly figure. Nobody without a rate is on the run.
+  - **Adjustments** on any line while the run is a draft: a bonus, a deduction,
+    an advance already handed over — each with a reason, kept on the line and
+    audited. A deduction cannot take a line below zero.
+  - **Paying it** records one wages entry — cash from the till, a bank transfer
+    or a cheque (with its reference). Cash comes off the drawer the shift
+    expects; a transfer does not touch it.
+  - **Voiding a run** (with a reason) takes its money back out of the drawer,
+    Reports, the day export and the books, exactly as voiding a supplier
+    payment does. The run stays on record with the reason.
+  - `/api/payroll`, `/detail`, `/line`, `/pay`, `/void`, all admin. New
+    `PayRuns` sheet; `Users` gains `pay_type`, `pay_rate`, `pay_updated_at`.
+    Audited as `payroll.draft` / `payroll.adjust` / `payroll.pay` /
+    `payroll.void`.
+- **The books gained account 6200 Wages**, and the wage bill now shows in
+  Reports (*Wages paid*), the day export (*WAGES PAID*), the drawer, the
+  dashboard net and the P&L as its own line.
+
+### Fixed
+
+- **The P&L hardcoded which expense accounts it summed**, so an account added
+  later would have been silently missing from net income. It now sums every
+  expense account in the chart except cost of goods sold, which is already
+  inside gross profit.
+
+### Deliberately not modelled
+
+Statutory overtime multipliers, end-of-service gratuity, pension and tax
+withholding. Those are jurisdiction rules that change, and a wrong automatic
+number is worse than an honest manual one: they go on the run as an adjustment
+with a reason, where the accountant can see why.
+
 ## [1.55.2] — 2026-09-24
 
 ### Fixed

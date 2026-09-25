@@ -4504,7 +4504,8 @@ check('statement carries the changer/cashier',
   check('nor can a cashier', req('/api/accounting', {}, { session: aCash }).status === 403);
 
   const A0 = books();
-  check('the chart of accounts is returned', A0.accounts.length === 19 && A0.accounts[0].code === '1000' && A0.accounts[18].code === '6900');
+  check('the chart of accounts is returned', A0.accounts.length === 20 && A0.accounts[0].code === '1000' && A0.accounts[19].code === '6900');
+  check('and it carries an account for wages', A0.accounts.some((a) => a.code === '6200' && a.type === 'expense'));
 
   const chg = req('/api/admin/products', { name: 'Acct Charger', sku: 'ACC-CHG', category: 'ACC', costPrice: 4, retailPrice: 20, onHand: 10 }, { session: aAdm }).data.id;
   const setup = req('/api/admin/products', { name: 'Acct Setup', sku: 'ACC-SVC', category: 'ACC', costPrice: 0, retailPrice: 30, onHand: 0, itemType: 'service' }, { session: aAdm }).data.id;
@@ -5783,6 +5784,161 @@ check('statement carries the changer/cashier',
       const after = (req('/api/inventory/health', {}, { session: cMgr }).data.items || []).find((i) => i.sku === 'VAL-W1');
       return after && after.onHand === 3 && near(after.costValue, 135);
     })(), 'expected 3 left at 45 each');
+}
+{
+  section('payroll: hours into wages (v1.56.0)');
+
+  const pyAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const pyMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const pyCash = req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token;
+  const near = (a, b) => Math.abs(a - b) < 0.005;
+  const day = (back) => new Date(Date.now() - back * 86400000).toISOString().slice(0, 10);
+
+  /* ---- what a person is paid ---- */
+  const staff = req('/api/admin/users/list', {}, { session: pyAdm }).data.users;
+  const hourly = staff.find((u) => u.email === 'amara@example.com');
+  const salaried = staff.find((u) => u.email === 'sarah@example.com');
+  check('payroll is the admin\'s alone',
+    req('/api/payroll', {}, { session: pyMgr }).status === 403
+    && req('/api/payroll', {}, { session: pyCash }).status === 403
+    && req('/api/payroll', {}, { session: pyAdm }).ok === true);
+  check('and a manager never sees what anyone is paid',
+    req('/api/admin/users/list', {}, { session: pyMgr }).data.users.every((u) => u.payRate === undefined)
+    && staff.every((u) => u.payRate !== undefined));
+
+  const setPay = (id, body, session) => req('/api/admin/users/patch', Object.assign({ id }, body), { session: session || pyAdm });
+  check('a rate without saying hourly or monthly is refused', setPay(hourly.id, { payRate: 20 }).status === 400);
+  check('an unknown kind of pay is refused', setPay(hourly.id, { payRate: 20, payType: 'daily' }).status === 400);
+  check('a negative rate is refused', setPay(hourly.id, { payRate: -5, payType: 'hourly' }).status === 400);
+  check('a manager cannot set what someone is paid', setPay(hourly.id, { payRate: 20, payType: 'hourly' }, pyMgr).status === 403);
+  check('the admin sets an hourly rate', setPay(hourly.id, { payRate: 20, payType: 'hourly' }).ok === true);
+  check('and a monthly salary', setPay(salaried.id, { payRate: 3000, payType: 'monthly' }).ok === true);
+  check('both come back on the admin\'s staff list',
+    (() => {
+      const after = req('/api/admin/users/list', {}, { session: pyAdm }).data.users;
+      const a = after.find((u) => u.id === hourly.id), s = after.find((u) => u.id === salaried.id);
+      return a.payType === 'hourly' && a.payRate === 20 && s.payType === 'monthly' && s.payRate === 3000;
+    })(), 'expected the rates back');
+
+  /* ---- hours on the clock ---- */
+  const tc = sandbox.readRows_('TimeClock', sandbox.TIMECLOCK_HEADERS);
+  const stamp = (back, hour) => { const d = new Date(Date.now() - back * 86400000); d.setUTCHours(hour, 0, 0, 0); return d.toISOString(); };
+  sandbox.appendRows_('TimeClock', sandbox.TIMECLOCK_HEADERS, [
+    { id: 'py-1', store_id: sandbox.getStore_().id, user_id: hourly.id, device_id: 'till-1',
+      clock_in: stamp(3, 9), clock_out: stamp(3, 17), minutes: 480, note: '', status: 'CLOSED', corrected_by: '' },
+    { id: 'py-2', store_id: sandbox.getStore_().id, user_id: hourly.id, device_id: 'till-1',
+      clock_in: stamp(2, 9), clock_out: stamp(2, 15), minutes: 360, note: '', status: 'CLOSED', corrected_by: '' },
+    /* still on the floor: worth nothing yet, and the line says so */
+    { id: 'py-3', store_id: sandbox.getStore_().id, user_id: hourly.id, device_id: 'till-1',
+      clock_in: stamp(1, 9), clock_out: '', minutes: '', note: '', status: 'OPEN', corrected_by: '' },
+    /* outside the period entirely */
+    { id: 'py-4', store_id: sandbox.getStore_().id, user_id: hourly.id, device_id: 'till-1',
+      clock_in: stamp(40, 9), clock_out: stamp(40, 17), minutes: 480, note: '', status: 'CLOSED', corrected_by: '' },
+  ]);
+
+  /* a correction can leave minutes on a row that is still open: it is the
+     status that says whether the shift ended, not the number */
+  sandbox.applyPatches_('TimeClock', sandbox.TIMECLOCK_HEADERS, 'id', { 'py-3': { minutes: 600 } });
+
+  const run = req('/api/payroll', { periodFrom: day(7), periodTo: day(0), note: 'First run' }, { session: pyAdm });
+  check('the admin drafts a run for the week', run.ok === true && run.data.status === 'DRAFT', JSON.stringify(run.data));
+  check('a period that ends before it starts is refused',
+    req('/api/payroll', { periodFrom: day(0), periodTo: day(7) }, { session: pyAdm }).status === 400);
+  check('the same period twice is refused', req('/api/payroll', { periodFrom: day(7), periodTo: day(0) }, { session: pyAdm }).status === 409);
+
+  const det = () => req('/api/payroll/detail', {}, { session: pyAdm, params: { id: run.data.id } }).data;
+  let d0 = det();
+  const lineFor = (dto, id) => dto.lines.find((l) => l.userId === id) || {};
+  check('an hourly line is the closed minutes in the period, at their rate (14 h × 20)',
+    near(lineFor(d0, hourly.id).hours, 14) && near(lineFor(d0, hourly.id).basePay, 280), JSON.stringify(lineFor(d0, hourly.id)));
+  check('a shift still open is worth nothing yet, however many minutes sit on it, and the line says so',
+    lineFor(d0, hourly.id).openEntries === 1 && near(lineFor(d0, hourly.id).hours, 14) && lineFor(d0, hourly.id).minutes === 840);
+  check('work outside the period is not in it', !near(lineFor(d0, hourly.id).hours, 22));
+  check('a monthly line is the salary, whatever the clock says',
+    near(lineFor(d0, salaried.id).basePay, 3000) && lineFor(d0, salaried.id).payType === 'monthly');
+  check('nobody without a rate is on the run', d0.lines.every((l) => l.rate > 0));
+  check('the run totals its lines', near(d0.grossTotal, 3280), String(d0.grossTotal));
+
+  /* ---- adjustments ---- */
+  const adjust = (body, session) => req('/api/payroll/line', Object.assign({ id: run.data.id }, body), { session: session || pyAdm });
+  check('an adjustment needs a reason', adjust({ userId: hourly.id, adjustment: 50 }).status === 400);
+  check('a manager cannot adjust a line', adjust({ userId: hourly.id, adjustment: 50, note: 'Bonus' }, pyMgr).status === 403);
+  check('somebody not on the run is refused', adjust({ userId: 'nope', adjustment: 5, note: 'x' }).status === 404);
+  check('a deduction cannot take a line below zero', adjust({ userId: hourly.id, adjustment: -400, note: 'Advance' }).status === 400);
+  check('a bonus lands on the line and in the total',
+    adjust({ userId: hourly.id, adjustment: 50, note: 'Saturday cover' }).ok === true
+    && near(lineFor(det(), hourly.id).gross, 330) && near(det().grossTotal, 3330), JSON.stringify(det().grossTotal));
+  check('an advance already handed over comes off',
+    adjust({ userId: salaried.id, adjustment: -500, note: 'Advance paid 3rd' }).ok === true
+    && near(det().grossTotal, 2830));
+  check('the reason is kept with the line', lineFor(det(), salaried.id).adjustmentNote === 'Advance paid 3rd');
+  check('adjustments are audited', req('/api/audit', {}, { session: pyAdm, params: { action: 'payroll.adjust' } }).data.entries.length === 2);
+
+  /* ---- paying it ---- */
+  const pay = (body, session) => req('/api/payroll/pay', Object.assign({ id: run.data.id }, body), { session: session || pyAdm });
+  check('a manager cannot pay a run', pay({ method: 'bank', reference: 'X' }, pyMgr).status === 403);
+  check('the method must be one the books know', pay({ method: 'card' }).status === 400);
+  check('a transfer needs its reference', pay({ method: 'bank' }).status === 400);
+
+  const rep0 = req('/api/reports', {}, { session: pyAdm, params: { from: day(0), to: day(0) } }).data.summary;
+  const books0 = req('/api/accounting', {}, { session: pyAdm, params: { from: day(0), to: day(0) } }).data;
+  const shift = req('/api/shifts/open', { openingFloat: 400 }, { session: pyAdm });
+  const paid = pay({ method: 'cash', note: 'Paid at the counter' });
+  check('the admin pays the run in cash', paid.ok === true && paid.data.status === 'PAID' && near(paid.data.grossTotal, 2830), JSON.stringify(paid.data));
+  check('a paid run cannot be paid again', pay({ method: 'cash' }).status === 409);
+  check('nor adjusted afterwards', adjust({ userId: hourly.id, adjustment: 1, note: 'late' }).status === 409);
+
+  const rep1 = req('/api/reports', {}, { session: pyAdm, params: { from: day(0), to: day(0) } }).data.summary;
+  check('Reports counts wages apart from sales and staff expenses',
+    near(rep1.wages - rep0.wages, 2830) && rep1.wageRuns - rep0.wageRuns === 1
+    && rep1.expenses === rep0.expenses && rep1.grossSales === rep0.grossSales, JSON.stringify([rep0.wages, rep1.wages]));
+  const closed = req('/api/shifts/close', { shiftId: shift.data.shift.id, denoms: {} }, { session: pyAdm }).data.shift;
+  check('cash wages come out of the drawer the shift expects', near(closed.expectedCash, 400 - 2830), String(closed.expectedCash));
+
+  const books1 = req('/api/accounting', {}, { session: pyAdm, params: { from: day(0), to: day(0) } }).data;
+  const wLine = (b, code) => {
+    const j = b.journal.find((x) => x.kind === 'wages');
+    return j ? (j.lines.find((l) => l.code === code) || { debit: 0, credit: 0 }) : { debit: 0, credit: 0 };
+  };
+  check('the books: wages are an expense, paid out of cash',
+    near(wLine(books1, '6200').debit, 2830) && near(wLine(books1, '1000').credit, 2830), JSON.stringify(books1.journal.find((j) => j.kind === 'wages')));
+  check('and they still balance', books1.trialBalance.balanced === true);
+  check('wages are their own line in the P&L', near(books1.pnl.wages - (books0.pnl.wages || 0), 2830), JSON.stringify([books0.pnl.wages, books1.pnl.wages]));
+  check('and net income actually carries them: expenses up by the wage bill, income down by it',
+    near(books1.pnl.expenses - books0.pnl.expenses, 2830)
+    && near(books1.pnl.netIncome - books0.pnl.netIncome, -2830),
+    JSON.stringify([books0.pnl.expenses, books1.pnl.expenses, books0.pnl.netIncome, books1.pnl.netIncome]));
+  check('net income is still gross profit less every expense', near(books1.pnl.netIncome, books1.pnl.grossProfit - books1.pnl.expenses));
+
+  const wagesExport = req('/api/drive/export', { date: day(0) }, { session: pyAdm });
+  check('the day export has a wages line',
+    wagesExport.ok && driveFiles[driveFiles.length - 1].content.indexOf(',,WAGES PAID,,2830') >= 0,
+    driveFiles[driveFiles.length - 1].content.slice(-500));
+  check('a wages row cannot be pushed from a terminal',
+    req('/api/sync/push', { deviceId: 'till-pay', batch: [{ clientTxId: 'pay-fake', kind: 'wages', grandTotal: 5,
+      tenders: [{ type: 'cash', amount: 5 }], items: [], createdAt: new Date().toISOString() }] }, { session: pyAdm })
+      .data.results[0].accepted === false);
+
+  /* ---- voiding ---- */
+  const voidRun = (body, session) => req('/api/payroll/void', Object.assign({ id: run.data.id }, body), { session: session || pyAdm });
+  check('a void needs a reason', voidRun({}).status === 400);
+  check('a manager cannot void a run', voidRun({ reason: 'oops' }, pyMgr).status === 403);
+  check('the admin voids the run', voidRun({ reason: 'Paid twice by mistake' }).ok === true);
+  check('and the money leaves every total',
+    near(req('/api/reports', {}, { session: pyAdm, params: { from: day(0), to: day(0) } }).data.summary.wages - rep0.wages, 0));
+  check('the books drop it too',
+    !req('/api/accounting', {}, { session: pyAdm, params: { from: day(0), to: day(0) } }).data.journal.some((j) => j.kind === 'wages'));
+  check('a voided run cannot be voided again', voidRun({ reason: 'again' }).status === 409);
+  check('the run says why it was voided', det().status === 'VOIDED' && det().voidedReason === 'Paid twice by mistake');
+  check('paying is audited', req('/api/audit', {}, { session: pyAdm, params: { action: 'payroll.pay' } }).data.entries.length === 1);
+  check('voiding is audited', req('/api/audit', {}, { session: pyAdm, params: { action: 'payroll.void' } }).data.entries.length === 1);
+
+  /* ---- clearing a rate takes somebody out of the next run ---- */
+  check('a blank rate clears it', setPay(salaried.id, { payRate: '', payType: '' }).ok === true);
+  const run2 = req('/api/payroll', { periodFrom: day(20), periodTo: day(14) }, { session: pyAdm }).data;
+  check('and they are not on the next run',
+    !req('/api/payroll/detail', {}, { session: pyAdm, params: { id: run2.id } }).data.lines.some((l) => l.userId === salaried.id));
+  check('the list reports who still has no rate', req('/api/payroll', {}, { session: pyAdm }).data.staffWithoutRate >= 1);
 }
 {
   section('setup() deploy entry point (v1.35.1)');

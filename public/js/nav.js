@@ -45,6 +45,7 @@ export const DESTINATIONS = [
   { id: 'accounts', label: N_('Accounts'), screen: 'accounts', roles: ADMIN, group: 'insights' },
   { id: 'audit', label: N_('Audit Log'), screen: 'audit', roles: ADMIN, group: 'insights' },
   { id: 'staff', label: N_('Time Clock'), screen: 'staff', roles: null, group: 'team' },
+  { id: 'payroll', label: N_('Payroll'), screen: 'payroll', roles: ADMIN, group: 'team' },
   { id: 'settings', label: N_('Settings'), screen: 'settings', roles: null, group: 'system' },
 ];
 

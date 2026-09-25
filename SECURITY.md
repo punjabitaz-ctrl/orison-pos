@@ -212,6 +212,10 @@ what each role can actually do on screen, and what they cannot — is in
 | `/api/suppliers` (add), `/api/purchase-orders/cancel`, `/api/suppliers/payment/void` | admin |
 | `/api/suppliers` (list), `/api/suppliers/payables`, `/api/suppliers/statement`, `/api/suppliers/payment` | admin, manager |
 | `/api/repairs/needs` (the bench's own list) | admin, manager, cashier |
+| `/api/payroll`, `/detail`, `/line`, `/pay`, `/void` | **admin only** |
+
+Pay rates are admin-only end to end: `/api/admin/users/list` returns `payType`
+and `payRate` **only** to an admin, and only an admin can set them.
 | `/api/marketplace/settings` (set the sheet) | admin; managers read status only (no link) |
 | `/api/marketplace/import` | admin, manager (the hourly trigger runs as the admin who set the sheet) |
 | `/api/admin/products/bulk-price`, `/api/admin/stock-take` | admin |

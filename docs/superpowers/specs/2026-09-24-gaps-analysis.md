@@ -42,7 +42,7 @@ report that compares to "before" is comparing to a void.
 run twice), posting an opening journal against an Opening balances equity
 account. Small-to-medium, and it must exist before the first real day.
 
-### 2. Card money is never reconciled
+### 2. Card money is never reconciled — **closed: the shop takes no cards (owner, 2026-09-24)**
 
 `card` is a tender label. There is no terminal integration, no settlement
 import, and no way to say "the acquirer paid us this much today". Account
@@ -108,16 +108,16 @@ are a daily event in a phone shop.
 prints one receipt. Medium; the refund engine and the money engine already
 exist, the work is the flow and the receipt.
 
-### 7. Wages are invisible
+### 7. Wages are invisible — **built in v1.56.0**
 
 The time clock records hours, but users have no pay rate and nothing turns
 hours into money. Wages are usually the largest cost after stock, and they are
 nowhere in the books.
 
-**Owner decision:** does payroll live here at all, or in a spreadsheet the
-accountant keeps? If here: pay rates per person, a period wage cost, and a
-wages expense entry. Medium. If not, fold it into #4 as an expense category
-and close this.
+**Owner decided (2026-09-24): payroll lives here.** Shipped in v1.56.0 — a
+rate per person, a pay run from the time clock, adjustments with reasons, and
+payment booked to Wages (6200). Statutory overtime, gratuity and withholding
+are deliberately entered by hand as adjustments.
 
 ### 8. The customer is never told anything
 

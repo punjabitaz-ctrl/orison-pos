@@ -189,14 +189,18 @@ export const screen = {
         <section class="dash-section">
           <h3>${$t('Team')}</h3>
           ${dataTable({
-            head: [{ label: $t('Name') }, { label: $t('Role') }, { label: '' }],
+            head: [{ label: $t('Name') }, { label: $t('Role') }, ...(isAdmin ? [{ label: $t('Pay') }] : []), { label: '' }],
             bodyHtml: team.filter((u) => u.active).map((u) => {
               const self = String(u.id) === String(user.id);
               const canPin = !self && (isAdmin || u.role === 'cashier');
               return `<tr>
                 <td>${esc(u.firstName + ' ' + u.lastName)}<br><span class="muted">${esc(u.email)}</span></td>
                 <td>${esc($t(roleLabel(u.role)))}</td>
+                ${isAdmin ? `<td>${u.payRate > 0
+                  ? esc(u.payType === 'hourly' ? $t('{rate} an hour', { rate: fmt(u.payRate) }) : $t('{rate} a month', { rate: fmt(u.payRate) }))
+                  : `<span class="muted">${$t('no rate set')}</span>`}</td>` : ''}
                 <td class="num"><span class="set-inline">
+                  ${isAdmin ? `<button class="btn btn-sm btn-ghost" data-pay="${esc(u.id)}">${$t('Pay rate')}</button>` : ''}
                   ${self ? '' : `<button class="btn btn-sm btn-ghost" data-unlock="${esc(u.email)}">${$t('Unlock')}</button>`}
                   ${canPin ? `<button class="btn btn-sm" data-pin="${esc(u.email)}" data-name="${esc(u.firstName + ' ' + u.lastName)}">${$t('Reset PIN')}</button>` : ''}
                 </span></td>
@@ -204,6 +208,47 @@ export const screen = {
             }).join(''),
           })}
         </section>`;
+    }
+
+    /* What a person is paid, which only an admin can see or set. Clearing the
+       rate takes them out of the next pay run rather than paying them nothing. */
+    function payDialog(person) {
+      const m = openModal(`
+        <div class="form-modal">
+          <h3>${esc($t('Pay rate for {name}', { name: person.firstName + ' ' + person.lastName }))}</h3>
+          <div class="field"><span>${$t('Paid')}</span>
+            <select id="stPayType">
+              <option value="">${$t('No rate set')}</option>
+              <option value="hourly"${person.payType === 'hourly' ? ' selected' : ''}>${$t('By the hour')}</option>
+              <option value="monthly"${person.payType === 'monthly' ? ' selected' : ''}>${$t('A monthly salary')}</option>
+            </select></div>
+          <div class="field"><span>${$t('Rate')}</span>
+            <input id="stPayRate" inputmode="decimal" value="${esc(person.payRate > 0 ? String(person.payRate) : '')}"></div>
+          <p class="muted">${$t('Only an admin sees this. It is what the next pay run starts from — overtime and anything else goes on the run as an adjustment.')}</p>
+          <p id="stPayErr" class="login-err"></p>
+          <div class="row">
+            <button class="btn btn-ghost" data-cancel type="button">${$t('Cancel')}</button>
+            <button class="btn btn-primary" id="stPayGo" type="button">${$t('Save')}</button>
+          </div>
+        </div>`);
+      m.querySelector('[data-cancel]').addEventListener('click', closeModal);
+      m.querySelector('#stPayGo').addEventListener('click', async () => {
+        const payType = m.querySelector('#stPayType').value;
+        const raw = m.querySelector('#stPayRate').value.trim();
+        const payRate = raw === '' ? '' : Number(raw);
+        if (payRate !== '' && !(payRate >= 0)) { m.querySelector('#stPayErr').textContent = $t('A pay rate cannot be negative'); return; }
+        const go = m.querySelector('#stPayGo');
+        go.disabled = true;
+        try {
+          await api.post('/api/admin/users/patch', { id: person.id, payType: payType || '', payRate: payType ? payRate : '' });
+          closeModal();
+          toast($t('Saved'), 'ok');
+          await load();
+        } catch (err) {
+          m.querySelector('#stPayErr').textContent = (err && err.message) || $t('Could not save that');
+          go.disabled = false;
+        }
+      });
     }
 
     /* Shifts left open by someone who went home: a manager closes them, with a
@@ -282,6 +327,10 @@ export const screen = {
         } catch (err) { toast((err && err.message) || $t('Could not unlock'), 'warn'); }
       }));
       body.querySelectorAll('[data-pin]').forEach((b) => b.addEventListener('click', () => pinDialog(b.dataset.pin, b.dataset.name)));
+      body.querySelectorAll('[data-pay]').forEach((b) => b.addEventListener('click', () => {
+        const person = team.find((u) => String(u.id) === b.dataset.pay);
+        if (person) payDialog(person);
+      }));
       body.querySelectorAll('[data-close-shift]').forEach((b) => b.addEventListener('click', () => closeShiftDialog(b.dataset.closeShift)));
       body.querySelectorAll('[data-fix-punch]').forEach((b) => b.addEventListener('click', () => punchDialog(b.dataset.fixPunch)));
 

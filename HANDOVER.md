@@ -16,7 +16,7 @@ record of truth; every feature is one tagged revision.
 | Current version | **v1.55.2** — a review of the v1.51.0 → v1.55.0 lifecycle sprints from outside them: the serial trace rendered every step as "Step", `/api/reminders` rescanned the whole ledger on every Dashboard load (now cached, refresh button bypasses), and the Stock health valuation is now tied to the 1200 Inventory debit by a test (`2026-09-24`) |
 | Gaps analysis | `docs/superpowers/specs/2026-09-24-gaps-analysis.md` — what a trading shop needs that v1.50.0 does not have, in the order I would build it |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
-| Validation bar | `backend-sim` **PASS 1213 / FAIL 0** · client units **PASS 583 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Validation bar | `backend-sim` **PASS 1267 / FAIL 0** · client units **PASS 597 / FAIL 0** · demo **PASS 36 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~9,444 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -128,6 +128,22 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.56.0** Payroll (owner decision 2026-09-24: payroll belongs in the system).
+  - `PayRuns` sheet; `Users` gains `pay_type` / `pay_rate` / `pay_updated_at`.
+    `payRate_` / `payMinutes_` / `payLineGross_` / `payRunTotal_`; routes
+    `/api/payroll[/detail|/line|/pay|/void]`, **admin only throughout**, and
+    `/api/admin/users/list` hands pay to an admin alone.
+  - Ledger kind `wages` (server only) threaded through the drawer, Reports
+    (`wages` / `wageRuns`), the day export (*WAGES PAID*), the books
+    (Dr 6200, Cr tender) and client stats. Voiding a run VOIDs its row.
+  - Hourly = minutes the clock **closed** in the period; an OPEN entry is worth
+    nothing however many minutes sit on it. Monthly = the salary, flat.
+  - **Fixed:** `pnl.expenses` summed a hardcoded account list, so a new expense
+    account would have gone missing from net income; it now sums the chart.
+  - **Not modelled on purpose:** overtime multipliers, gratuity, pension, tax
+    withholding - entered as adjustments with a reason.
+  - 54 sim checks + 14 client checks, 8 mutations caught (two survived first
+    and were answered with stronger assertions).
 - **v1.55.2** Review of the lifecycle sprints from outside them.
   - **Fixed:** the Dashboard read `rem.data` where `api.get()` returns the
     payload, so the v1.55.0 Reminders panel rendered nothing from the day it
@@ -689,7 +705,7 @@ written by the repair routes.
 
 - `tests/backend-sim.mjs` — the contract. In-memory mock of Apps Script
   (`SpreadsheetApp`/`LockService`/`DriveApp`/`CacheService`/`PropertiesService`)
-  runs `Code.gs` in `node:vm`. **1126 checks**: auth, throttle, FCW serial conflicts,
+  runs `Code.gs` in `node:vm`. **1267 checks**: auth, throttle, FCW serial conflicts,
   refund guards, payouts, customer ledger/aging, shifts, reports/GP/export,
   PO receive math, role gates, the time clock (punch toggle, 409 guards,
   cashier-scoped reads, the `?status=all` shift-roster fix), and the v1.15.0
@@ -699,7 +715,7 @@ written by the repair routes.
   the guards that now read under the lock).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  **459 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  **597 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
   ui `fmt`/`esc`/`debounce`/`csvCell`/`emptyState`/`skeleton`, (v1.15.0)

@@ -191,6 +191,31 @@ export function seedDemo(rt, { now = new Date() } = {}) {
   rt.call('applyPatches_', 'Transactions', rt.get('TX_HEADERS'), 'id', Object.fromEntries(received.map((r) => [r.id, { created_at: fiveWeeks }])));
   req(adm, '/api/suppliers/payment', { supplierId: supplier.id, poId: po1.id, amount: 100, method: 'bank', reference: 'TRF 44810', note: 'Part payment' });
 
+  /* what the team is paid, so a pay run can be drafted straight away */
+  const team = req(adm, '/api/admin/users/list', {}).users;
+  const rateFor = { admin: ['monthly', 6500], manager: ['monthly', 4200], cashier: ['hourly', 18] };
+  for (const person of team) {
+    const rate = rateFor[person.role];
+    if (rate) req(adm, '/api/admin/users/patch', { id: person.id, payType: rate[0], payRate: rate[1] });
+  }
+
+  /* two weeks of shifts on the clock, so a pay run has hours to pay for */
+  const punches = [];
+  for (let back = 14; back >= 1; back -= 1) {
+    const at = new Date(now.getTime() - back * 86400000);
+    if (at.getDay() === 0) continue;                     /* the shop is shut on Sundays */
+    for (const who of ['amara', 'diego']) {
+      const start = new Date(at); start.setHours(who === 'amara' ? 9 : 13, 0, 0, 0);
+      const end = new Date(start.getTime() + (who === 'amara' ? 7.5 : 6) * 3600000);
+      punches.push({
+        id: `tc-${who}-${back}`, store_id: rt.call('getStore_').id, user_id: ids[who], device_id: 'till-1',
+        clock_in: start.toISOString(), clock_out: end.toISOString(),
+        minutes: Math.round((end - start) / 60000), note: '', status: 'CLOSED', corrected_by: '',
+      });
+    }
+  }
+  rt.call('appendRows_', 'TimeClock', rt.get('TIMECLOCK_HEADERS'), punches);
+
   /* the counter today: a till shift open, repairs on the bench, a trade-in */
   req(session.amara, '/api/shifts/open', { openingFloat: 200, note: 'Morning float' });
   const glass = req(session.amara, '/api/repairs', { customerId: cust.maya, customerName: 'Maya Patel', customerPhone: '(732) 555-0187',

@@ -32,6 +32,7 @@ const ACCOUNT_NAMES = {
   5100: N_('Inventory shrinkage'),
   6000: N_('Paid out'),
   6100: N_('Staff expenses'),
+  6200: N_('Wages'),
   6900: N_('Rounding'),
 };
 
@@ -192,6 +193,7 @@ function pnlTable(p) {
     ${row($t('Inventory shrinkage'), -p.shrinkage)}
     ${row($t('Paid out'), -p.paidOut)}
     ${row($t('Staff expenses'), -p.staffExpenses)}
+    ${row($t('Wages'), -(p.wages || 0))}
     ${p.rounding ? row($t('Rounding'), -p.rounding) : ''}
   </tbody><tfoot>${row($t('Net income'), p.netIncome)}</tfoot></table></div>`;
 }
@@ -249,7 +251,7 @@ export function trialCsv(data) {
   lines.push('');
   lines.push('Profit and loss');
   const p = data.pnl;
-  for (const [k, v] of [['product_sales', p.productSales], ['service_sales', p.serviceSales], ['sales_returns', p.returns], ['net_sales', p.netSales], ['cost_of_goods_sold', p.cogs], ['gross_profit', p.grossProfit], ['inventory_shrinkage', p.shrinkage], ['paid_out', p.paidOut], ['staff_expenses', p.staffExpenses], ['rounding', p.rounding], ['net_income', p.netIncome]]) {
+  for (const [k, v] of [['product_sales', p.productSales], ['service_sales', p.serviceSales], ['sales_returns', p.returns], ['net_sales', p.netSales], ['cost_of_goods_sold', p.cogs], ['gross_profit', p.grossProfit], ['inventory_shrinkage', p.shrinkage], ['paid_out', p.paidOut], ['staff_expenses', p.staffExpenses], ['wages', p.wages || 0], ['rounding', p.rounding], ['net_income', p.netIncome]]) {
     lines.push([k, n(v)].join(','));
   }
   return lines.join('\n');

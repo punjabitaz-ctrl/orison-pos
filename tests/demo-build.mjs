@@ -90,6 +90,19 @@ check('the screen the waiting job needs is on the order that is coming',
   bench.parts.some((p) => p.sku === 'RP-SCR-IP12' && p.onOrder === 1 && p.shortfall === 0
     && p.tickets[0].status === 'awaiting_parts'), JSON.stringify(bench.parts.find((p) => p.sku === 'RP-SCR-IP12')));
 
+const pay = call(rt2, '/api/payroll', {}, tokens.admin).data;
+check('the team has pay rates, so a run can be drafted on day one',
+  pay && pay.staffWithoutRate === 0, JSON.stringify(pay));
+const draft = call(rt2, '/api/payroll', { periodFrom: day(30), periodTo: day(1) }, tokens.admin);
+check('a pay run drafts from the demo clock, with everyone on it',
+  draft.ok && draft.data.people === 4 && draft.data.grossTotal > 0, JSON.stringify(draft.data));
+const draftLines = call(rt2, '/api/payroll/detail', {}, tokens.admin, { id: draft.data.id }).data.lines;
+check('the hourly staff have real hours on the clock to be paid for',
+  draftLines.filter((l) => l.payType === 'hourly').every((l) => l.hours > 20 && l.basePay > 0),
+  JSON.stringify(draftLines.map((l) => [l.name, l.payType, l.hours, l.basePay])));
+check("payroll is the admin's alone, even in the demo",
+  call(rt2, '/api/payroll', {}, tokens.manager).status === 403);
+
 const shifts = call(rt2, '/api/shifts', {}, tokens.manager).data;
 check('a till shift is open for today', JSON.stringify(shifts).indexOf('OPEN') >= 0);
 

@@ -77,6 +77,11 @@ function dispatch_(action, session, payload, params) {
     case '/api/shifts':          return shifts_(session, params);
     case '/api/shifts/open':     return shiftOpen_(session, payload);
     case '/api/shifts/close':    return shiftClose_(session, payload);
+    case '/api/payroll':         return payroll_(session, payload, params);
+    case '/api/payroll/detail':  return payRunDetail_(session, params);
+    case '/api/payroll/line':    return payRunLine_(session, payload);
+    case '/api/payroll/pay':     return payRunPay_(session, payload);
+    case '/api/payroll/void':    return payRunVoid_(session, payload);
     case '/api/timeclock':       return timeClock_(session, params);
     case '/api/timeclock/punch': return timeClockPunch_(session, payload);
     case '/api/timeclock/correct': return timeClockCorrect_(session, payload);
@@ -359,7 +364,9 @@ function markAllDevicesRevoked_(uid) {
  * ------------------------------------------------------------------ */
 
 var META_HEADERS    = ['key', 'value'];
-var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at'];
+var USER_HEADERS    = ['id', 'store_id', 'first_name', 'last_name', 'email', 'pin_salt', 'pin_hash', 'role', 'active', 'created_at', 'pay_type', 'pay_rate', 'pay_updated_at'];
+var PAYRUN_HEADERS  = ['id', 'store_id', 'period_from', 'period_to', 'status', 'lines_json', 'gross_total',
+  'note', 'created_by', 'created_at', 'paid_at', 'paid_by', 'method', 'reference', 'tx_id', 'voided_reason'];
 var DEVICE_HEADERS  = ['id', 'user_id', 'device_id', 'first_seen', 'last_seen', 'revoked'];
 var PRODUCT_HEADERS = ['id', 'sku', 'upc', 'name', 'category', 'cost_price', 'retail_price', 'is_serialized', 'on_hand', 'item_type', 'locked', 'reorder_point', 'last_sold_at', 'active', 'updated_at', 'taxable', 'warranty_days'];
 var SERIAL_HEADERS  = ['id', 'product_id', 'serial_number', 'status', 'tx_id', 'updated_at', 'cost', 'source', 'created_at'];
@@ -2567,7 +2574,7 @@ function indexAccepted_(batchSeen, deviceId, clientKey, tx, newTxRows) {
 var CASH_OUT_KINDS = { payout: 'Paid out', pickup: 'Cash pick-up', expense: 'Staff expense' };
 
 /* Ledger kinds that only the server writes. Never accepted from a device. */
-var SERVER_ONLY_KINDS = { deposit: 1, deposit_refund: 1, tradein: 1, supplier_payment: 1 };
+var SERVER_ONLY_KINDS = { deposit: 1, deposit_refund: 1, tradein: 1, supplier_payment: 1, wages: 1 };
 
 function hasDepositTender_(tenders) {
   if (!Array.isArray(tenders)) return false;
@@ -3994,7 +4001,7 @@ function reports_(session, params) {
   var byCustomerTx = Object.create(null);
   var byChannel = Object.create(null);
   var byHour = Object.create(null);
-  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0, discounts: 0, approvedDiscounts: 0, tradeIns: 0, tradeInCount: 0, supplierPayments: 0, supplierPaymentCount: 0 };
+  var summary = { grossSales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, collections: 0, salesCount: 0, units: 0, tax: 0, grossProfit: 0, depositsIn: 0, depositsApplied: 0, depositsRefunded: 0, discounts: 0, approvedDiscounts: 0, tradeIns: 0, tradeInCount: 0, supplierPayments: 0, supplierPaymentCount: 0, wages: 0, wageRuns: 0 };
 
   function costOf_(t) {
     var items = itobjs_(t.items_json);
@@ -4145,6 +4152,16 @@ function reports_(session, params) {
         dje.amount -= num_(tenders[dj].amount);
         dje.count += 1;
       }
+    } else if (kind === 'wages') {
+      /* paying the team: an expense of its own, never a sale and never cash out
+         of the till unless it was actually paid in cash */
+      summary.wages += num_(t.grand_total);
+      summary.wageRuns += 1;
+      for (var wg = 0; wg < tenders.length; wg++) {
+        var wge = byTender[String(tenders[wg].type || 'cash')] || (byTender[String(tenders[wg].type || 'cash')] = { amount: 0, count: 0 });
+        wge.amount -= num_(tenders[wg].amount);
+        wge.count += 1;
+      }
     } else if (kind === 'supplier_payment') {
       /* settling what the shop owes a supplier: money out, never an expense or a sale */
       summary.supplierPayments += num_(t.grand_total);
@@ -4231,6 +4248,8 @@ function reports_(session, params) {
       tradeInCount: summary.tradeInCount,
       supplierPayments: round2_(summary.supplierPayments),
       supplierPaymentCount: summary.supplierPaymentCount,
+      wages: round2_(summary.wages),
+      wageRuns: summary.wageRuns,
       netRevenue: summary.grossSales - summary.refunds - summary.payouts - summary.pickups - summary.expenses,
       salesCount: summary.salesCount,
       units: summary.units,
@@ -4285,6 +4304,7 @@ var CHART_OF_ACCOUNTS = [
   { code: '5100', name: 'Inventory shrinkage', type: 'expense' },
   { code: '6000', name: 'Paid out', type: 'expense' },
   { code: '6100', name: 'Staff expenses', type: 'expense' },
+  { code: '6200', name: 'Wages', type: 'expense' },
   { code: '6900', name: 'Rounding', type: 'expense' },
 ];
 
@@ -4463,6 +4483,11 @@ function accounting_(session, params) {
       e = entry(t.created_at, 'supplier_payment', String(t.external_ref || ref), 'Paid ' + String(t.counterparty || 'supplier'));
       post(e, '2300', grossC);
       tenders(e, t, -1, grossC);
+    } else if (kind === 'wages') {
+      /* the pay run is the expense; the tender is where the money came from */
+      e = entry(t.created_at, 'wages', String(t.external_ref || ref), String(t.counterparty || 'Wages'));
+      post(e, '6200', grossC);
+      tenders(e, t, -1, grossC);
     } else if (kind === 'tradein') {
       e = entry(t.created_at, 'tradein', ref, 'Trade-in bought from ' + String(t.counterparty || ''));
       post(e, '1200', grossC);
@@ -4531,8 +4556,16 @@ function accounting_(session, params) {
   var netSalesC = productC + serviceC - returnsC;
   var cogsC = dr('5000');
   var gpC = netSalesC - cogsC;
-  var shrinkC = dr('5100'), paidC = dr('6000'), staffC = dr('6100'), roundC = dr('6900');
-  var expC = shrinkC + paidC + staffC + roundC;
+  var shrinkC = dr('5100'), paidC = dr('6000'), staffC = dr('6100'), wagesC = dr('6200'), roundC = dr('6900');
+  /* every expense account except cost of goods sold, which is already inside
+     gross profit. Summed from the chart rather than a list, so an account
+     added later cannot go quietly missing from net income. */
+  var expC = 0;
+  for (var xa = 0; xa < CHART_OF_ACCOUNTS.length; xa++) {
+    var acct = CHART_OF_ACCOUNTS[xa];
+    if (acct.type !== 'expense' || acct.code === '5000') continue;
+    expC += dr(acct.code);
+  }
 
   var movements = ['1000', '1010', '1020', '1030', '1100', '1150', '1200', '2000', '2100', '2200', '2300'].map(function (code) {
     var liability = code.charAt(0) === '2';
@@ -4552,6 +4585,7 @@ function accounting_(session, params) {
       shrinkage: shrinkC / 100,
       paidOut: paidC / 100,
       staffExpenses: staffC / 100,
+      wages: wagesC / 100,
       rounding: roundC / 100,
       expenses: expC / 100,
       netIncome: (gpC - expC) / 100,
@@ -8236,8 +8270,8 @@ function shiftExpectedCash_(shift, allTxRows) {
         for (var dq = 0; dq < tenders.length; dq++) {
           if (String(tenders[dq].type || '') === 'cash') expected += num_(tenders[dq].amount);
         }
-      } else if (kind === 'supplier_payment') {
-        /* a supplier paid in cash from the till */
+      } else if (kind === 'supplier_payment' || kind === 'wages') {
+        /* a supplier - or the team - paid in cash from the till */
         for (var sq = 0; sq < tenders.length; sq++) {
           if (String(tenders[sq].type || '') === 'cash') expected -= num_(tenders[sq].amount);
         }
@@ -8494,6 +8528,305 @@ function timeClock_(session, params) {
   };
 }
 
+
+/* ------------------------------------------------------------------ *
+ *  Payroll (v1.56.0)
+ *
+ *  The time clock already knows who was on the floor and for how long. This
+ *  turns that into what they are owed, and into the biggest expense the shop
+ *  has after stock.
+ *
+ *  A person carries a rate: `hourly`, paid for the minutes the clock closed
+ *  in the period, or `monthly`, paid the same figure every run. A run is a
+ *  draft until it is paid: the admin can adjust any line (a bonus, a
+ *  deduction, an advance already handed over) with a reason, and every change
+ *  is audited. Paying it writes one server-only `wages` row - cash from the
+ *  till, a bank transfer or a cheque - which the drawer, Reports, the day
+ *  export and the books all account for. Voiding a paid run voids that row
+ *  too, so the money comes back exactly the way a voided supplier payment
+ *  does.
+ *
+ *  Deliberately NOT modelled: statutory overtime multipliers, end-of-service
+ *  gratuity, pension or tax withholding. Those are jurisdiction rules that
+ *  change, and a wrong automatic number is worse than an honest manual one:
+ *  the shop enters them as an adjustment with a note, and the accountant sees
+ *  the reason on the line.
+ *
+ *  Admin only, throughout. What a colleague earns is not a manager's business.
+ * ------------------------------------------------------------------ */
+
+var PAY_TYPES = { hourly: 'Hourly', monthly: 'Monthly' };
+var PAY_METHODS_WAGES = { cash: 'Cash', bank: 'Bank transfer', cheque: 'Cheque' };
+var PAYRUN_TERMINAL = { PAID: 1, VOIDED: 1 };
+
+function payRate_(userRow) {
+  var type = String(userRow.pay_type || '');
+  if (!Object.prototype.hasOwnProperty.call(PAY_TYPES, type)) return null;
+  var rate = num_(userRow.pay_rate);
+  if (!(rate > 0)) return null;
+  return { type: type, rate: round2_(rate) };
+}
+
+/* Minutes the clock actually closed inside the period. An entry still open is
+   counted as nothing and flagged: nobody should be paid for a shift that has
+   not ended, and the admin needs to know a line is short for that reason. */
+function payMinutes_(rows, userId, fromIso, toIso) {
+  var minutes = 0, open = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (String(r.user_id) !== String(userId)) continue;
+    var at = String(r.clock_in || '');
+    if (at < fromIso || at > toIso) continue;
+    if (String(r.status) === 'OPEN') { open += 1; continue; }
+    minutes += num_(r.minutes);
+  }
+  return { minutes: minutes, openEntries: open };
+}
+
+function payLineGross_(line) {
+  return round2_(num_(line.basePay) + num_(line.adjustment));
+}
+
+function payRunTotal_(lines) {
+  var total = 0;
+  for (var i = 0; i < lines.length; i++) total += num_(lines[i].gross);
+  return round2_(total);
+}
+
+function payRunRow_(row) {
+  var lines = itobjs_(row.lines_json);
+  return {
+    id: String(row.id),
+    periodFrom: String(row.period_from || ''),
+    periodTo: String(row.period_to || ''),
+    status: String(row.status || 'DRAFT'),
+    grossTotal: num_(row.gross_total),
+    people: lines.length,
+    note: String(row.note || ''),
+    createdAt: String(row.created_at || ''),
+    createdBy: auditName_(String(row.created_by || '')),
+    paidAt: String(row.paid_at || ''),
+    paidBy: row.paid_by ? auditName_(String(row.paid_by)) : '',
+    method: String(row.method || ''),
+    reference: String(row.reference || ''),
+    voidedReason: String(row.voided_reason || ''),
+  };
+}
+
+function payRunFind_(id) {
+  var rows = readRows_('PayRuns', PAYRUN_HEADERS);
+  for (var i = 0; i < rows.length; i++) if (String(rows[i].id) === String(id)) return rows[i];
+  return null;
+}
+
+/* The list, or a new draft for a period. */
+function payroll_(session, payload, params) {
+  requireRole_(session, ['admin']);
+  if (!payload || !Object.keys(payload).length) {
+    var store = getStore_();
+    var rows = readRows_('PayRuns', PAYRUN_HEADERS).filter(function (r) { return String(r.store_id) === store.id; });
+    rows.sort(function (a, b) { return String(b.period_from).localeCompare(String(a.period_from)); });
+    var users = readRows_('Users', USER_HEADERS);
+    var unpaid = 0;
+    for (var u = 0; u < users.length; u++) {
+      if (String(users[u].active) !== '1') continue;
+      if (!payRate_(users[u])) unpaid += 1;
+    }
+    return { runs: rows.map(payRunRow_), staffWithoutRate: unpaid };
+  }
+  return payRunCreate_(session, payload);
+}
+
+function payRunCreate_(session, payload) {
+  var from = String(payload.periodFrom || '').slice(0, 10);
+  var to = String(payload.periodTo || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw statusError_(400, 'A pay period needs a start and an end date');
+  if (from > to) throw statusError_(400, 'The period ends before it starts');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var store = getStore_();
+    var existing = readRows_('PayRuns', PAYRUN_HEADERS);
+    for (var e = 0; e < existing.length; e++) {
+      if (String(existing[e].store_id) !== store.id) continue;
+      if (String(existing[e].status) === 'VOIDED') continue;
+      if (String(existing[e].period_from) === from && String(existing[e].period_to) === to) {
+        throw statusError_(409, 'That period already has a pay run');
+      }
+    }
+
+    var tzMin = num_(store.tzOffsetMin);
+    var fromIso = dateOnlyToIso_(from, tzMin, false);
+    var toIso = dateOnlyToIso_(to, tzMin, true);
+    var clock = readRows_('TimeClock', TIMECLOCK_HEADERS);
+    var users = readRows_('Users', USER_HEADERS);
+    var lines = [];
+    for (var i = 0; i < users.length; i++) {
+      var user = users[i];
+      if (String(user.active) !== '1') continue;
+      var pay = payRate_(user);
+      if (!pay) continue;
+      var worked = payMinutes_(clock, user.id, fromIso, toIso);
+      var hours = Math.round(worked.minutes / 60 * 100) / 100;
+      var basePay = pay.type === 'hourly' ? round2_(hours * pay.rate) : pay.rate;
+      lines.push({
+        userId: String(user.id),
+        name: (String(user.first_name || '') + ' ' + String(user.last_name || '')).trim(),
+        payType: pay.type,
+        rate: pay.rate,
+        minutes: worked.minutes,
+        hours: hours,
+        openEntries: worked.openEntries,
+        basePay: basePay,
+        adjustment: 0,
+        adjustmentNote: '',
+        gross: basePay,
+      });
+    }
+    if (!lines.length) throw statusError_(409, 'Nobody has a pay rate yet - set one on the staff screen first');
+    lines.sort(function (a, b) { return a.name.localeCompare(b.name); });
+
+    var now = new Date().toISOString();
+    var id = Utilities.getUuid();
+    var gross = payRunTotal_(lines);
+    appendRows_('PayRuns', PAYRUN_HEADERS, [{
+      id: id, store_id: store.id, period_from: from, period_to: to, status: 'DRAFT',
+      lines_json: JSON.stringify(lines), gross_total: gross, note: String(payload.note || '').slice(0, 200),
+      created_by: String(session.uid || ''), created_at: now,
+      paid_at: '', paid_by: '', method: '', reference: '', tx_id: '', voided_reason: '',
+    }]);
+    logAudit_(session, 'payroll.draft', 'payrun', id,
+      'Pay run drafted for ' + from + ' to ' + to + ': ' + lines.length + ' person(s), ' + gross, payload.deviceId);
+    return { id: id, periodFrom: from, periodTo: to, status: 'DRAFT', grossTotal: gross, people: lines.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function payRunDetail_(session, params) {
+  requireRole_(session, ['admin']);
+  var row = payRunFind_(String((params && params.id) || ''));
+  if (!row) throw statusError_(404, 'Pay run not found');
+  var dto = payRunRow_(row);
+  dto.lines = itobjs_(row.lines_json);
+  return dto;
+}
+
+/* A bonus, a deduction, an advance already handed over: one number and a
+   reason, on one person's line. */
+function payRunLine_(session, payload) {
+  requireRole_(session, ['admin']);
+  payload = payload || {};
+  var id = String(payload.id || '');
+  var userId = String(payload.userId || '');
+  var adjustment = round2_(num_(payload.adjustment));
+  var note = String(payload.note || '').trim().slice(0, 140);
+  if (adjustment !== 0 && !note) throw statusError_(400, 'An adjustment needs a reason');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = payRunFind_(id);
+    if (!row) throw statusError_(404, 'Pay run not found');
+    if (PAYRUN_TERMINAL[String(row.status)]) throw statusError_(409, 'That pay run is closed');
+    var lines = itobjs_(row.lines_json);
+    var hit = null;
+    for (var i = 0; i < lines.length; i++) if (String(lines[i].userId) === userId) { hit = lines[i]; break; }
+    if (!hit) throw statusError_(404, 'Nobody by that name on this run');
+    if (round2_(num_(hit.basePay) + adjustment) < 0) throw statusError_(400, 'That takes the line below zero');
+
+    hit.adjustment = adjustment;
+    hit.adjustmentNote = note;
+    hit.gross = payLineGross_(hit);
+    var gross = payRunTotal_(lines);
+    var stamp = new Date().toISOString();
+    applyPatches_('PayRuns', PAYRUN_HEADERS, 'id', {
+      [id]: { lines_json: JSON.stringify(lines), gross_total: gross },
+    });
+    logAudit_(session, 'payroll.adjust', 'payrun', id,
+      String(hit.name) + ': ' + (adjustment >= 0 ? '+' : '') + adjustment + (note ? ' (' + note + ')' : '')
+      + ', line now ' + hit.gross, payload.deviceId);
+    return { id: id, grossTotal: gross, lines: lines, updatedAt: stamp };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function payRunPay_(session, payload) {
+  requireRole_(session, ['admin']);
+  payload = payload || {};
+  var id = String(payload.id || '');
+  var method = String(payload.method || '');
+  var reference = String(payload.reference || '').trim().slice(0, 60);
+  if (!Object.prototype.hasOwnProperty.call(PAY_METHODS_WAGES, method)) throw statusError_(400, 'Pay by cash, bank transfer or cheque');
+  if (method !== 'cash' && !reference) throw statusError_(400, 'A bank transfer or cheque needs its reference');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = payRunFind_(id);
+    if (!row) throw statusError_(404, 'Pay run not found');
+    if (String(row.status) !== 'DRAFT') throw statusError_(409, 'Only a draft pay run can be paid');
+    var lines = itobjs_(row.lines_json);
+    var gross = payRunTotal_(lines);
+    if (!(gross > 0)) throw statusError_(400, 'There is nothing to pay on this run');
+
+    var now = new Date().toISOString();
+    var txId = Utilities.getUuid();
+    var label = 'Wages ' + String(row.period_from) + ' to ' + String(row.period_to);
+    appendRows_('Transactions', TX_HEADERS, [{
+      id: txId, store_id: getStore_().id, user_id: String(session.uid || ''), device_id: 'server',
+      client_tx_id: 'pay-' + txId.slice(0, 8), kind: 'wages', original_client_tx: '',
+      counterparty: label, grand_total: gross, status: 'COMPLETED',
+      tenders_json: JSON.stringify([{ type: method, amount: gross }]), items_json: '[]',
+      note: String(payload.note || label).slice(0, 200), created_at: now,
+      subtotal: '', tax_amount: '', discount_pct: '', customer_id: '',
+      receipt_no: '', channel: 'in_store', external_ref: reference, supplier_id: '', po_id: '',
+    }]);
+    applyPatches_('PayRuns', PAYRUN_HEADERS, 'id', {
+      [id]: { status: 'PAID', gross_total: gross, paid_at: now, paid_by: String(session.uid || ''),
+        method: method, reference: reference, tx_id: txId },
+    });
+    logAudit_(session, 'payroll.pay', 'payrun', id,
+      label + ': ' + gross + ' to ' + lines.length + ' person(s) by ' + PAY_METHODS_WAGES[method]
+      + (reference ? ' (' + reference + ')' : ''), payload.deviceId);
+    return { id: id, status: 'PAID', grossTotal: gross, transactionId: txId, method: method };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* Voiding a run takes its money back out of every total, the same way a
+   voided supplier payment does: the wages row is marked VOIDED and stays on
+   record with the reason. */
+function payRunVoid_(session, payload) {
+  requireRole_(session, ['admin']);
+  payload = payload || {};
+  var id = String(payload.id || '');
+  var reason = String(payload.reason || '').trim().slice(0, 200);
+  if (!reason) throw statusError_(400, 'A void needs a reason');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw statusError_(503, 'Storage busy, retry');
+  try {
+    var row = payRunFind_(id);
+    if (!row) throw statusError_(404, 'Pay run not found');
+    if (String(row.status) === 'VOIDED') throw statusError_(409, 'That pay run is already voided');
+    var patch = { status: 'VOIDED', voided_reason: reason };
+    var txId = String(row.tx_id || '');
+    if (txId) {
+      applyPatches_('Transactions', TX_HEADERS, 'id', { [txId]: { status: 'VOIDED', note: 'VOIDED: ' + reason } });
+    }
+    applyPatches_('PayRuns', PAYRUN_HEADERS, 'id', { [id]: patch });
+    logAudit_(session, 'payroll.void', 'payrun', id,
+      'Pay run ' + String(row.period_from) + ' to ' + String(row.period_to) + ' voided: ' + reason, payload.deviceId);
+    return { id: id, status: 'VOIDED' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 /* Punch in or out — the caller's own clock, toggled. Read + write happen under
  * the script lock so a double-tap can't open two entries or close one twice. */
 function timeClockPunch_(session, payload) {
@@ -8747,9 +9080,11 @@ function adminUsers_(session, payload) {
 function adminUsersList_(session) {
   /* managers see the team so they can let a locked-out cashier back in */
   requireRole_(session, ['admin', 'manager']);
+  /* pay goes out only to an admin: a manager runs the floor, not the payroll */
+  var withPay = String(session && session.role) === 'admin';
   return {
     users: readRows_('Users', USER_HEADERS).map(function (u) {
-      return {
+      var dto = {
         id: u.id,
         firstName: u.first_name,
         lastName: u.last_name,
@@ -8757,6 +9092,11 @@ function adminUsersList_(session) {
         role: u.role,
         active: String(u.active) === '1',
       };
+      if (withPay) {
+        dto.payType = String(u.pay_type || '');
+        dto.payRate = num_(u.pay_rate);
+      }
+      return dto;
     }),
   };
 }
@@ -8811,6 +9151,20 @@ function adminUserPatch_(session, payload) {
         }
       }
       patch.email = em;
+    }
+  }
+  /* what they are paid. Blank clears the rate, which takes them out of the
+     next pay run rather than paying them nothing. */
+  if (payload.payType !== undefined || payload.payRate !== undefined) {
+    var payType = String(payload.payType == null ? (found.pay_type || '') : payload.payType);
+    if (payType && !Object.prototype.hasOwnProperty.call(PAY_TYPES, payType)) throw statusError_(400, 'Pay is hourly or monthly');
+    var payRate = payload.payRate === '' || payload.payRate == null ? 0 : round2_(num_(payload.payRate));
+    if (payRate < 0) throw statusError_(400, 'A pay rate cannot be negative');
+    if (payRate > 0 && !payType) throw statusError_(400, 'Say whether that rate is hourly or monthly');
+    if (String(found.pay_type || '') !== (payRate > 0 ? payType : '') || num_(found.pay_rate) !== payRate) {
+      patch.pay_type = payRate > 0 ? payType : '';
+      patch.pay_rate = payRate > 0 ? payRate : '';
+      patch.pay_updated_at = new Date().toISOString();
     }
   }
   if (!Object.keys(patch).length) return { ok: true, changed: false };
@@ -9263,7 +9617,7 @@ function driveExport_(session, payload, params) {
   var csv = 'created_at,id,kind,counterparty,cashier,grand_total,tax,items,tenders,note' + (isStore ? ',cost,gross_profit' : '') + '\n';
   var sales = 0, refunds = 0, payouts = 0, pickups = 0, expenses = 0, collections = 0, taxTotal = 0, costTotalDay = 0, gpDay = 0;
   var cashDrawer = 0, cardTotal = 0;
-  var depositsIn = 0, depositsApplied = 0, depositsRefunded = 0, tradeIns = 0, supplierPaid = 0;
+  var depositsIn = 0, depositsApplied = 0, depositsRefunded = 0, tradeIns = 0, supplierPaid = 0, wagesPaid = 0;
   for (var j = 0; j < dayRows.length; j++) {
     var t = dayRows[j];
     var k = String(t.kind || 'sale');
@@ -9277,6 +9631,7 @@ function driveExport_(session, payload, params) {
     else if (k === 'deposit_refund') depositsRefunded += v;
     else if (k === 'tradein') tradeIns += v;
     else if (k === 'supplier_payment') supplierPaid += v;
+    else if (k === 'wages') wagesPaid += v;
     else if (k !== 'purchase') sales += v;
 
     /* What the drawer should actually hold is a TENDER question, not a kind
@@ -9289,7 +9644,7 @@ function driveExport_(session, payload, params) {
       if (dty === 'card') cardTotal += (k === 'refund' || k === 'deposit_refund' ? -dta : dta);
       if (dty === 'deposit' && k === 'sale') depositsApplied += dta;
       if (dty !== 'cash') continue;
-      if (k === 'refund' || k === 'deposit_refund' || k === 'tradein' || k === 'supplier_payment') cashDrawer -= dta;
+      if (k === 'refund' || k === 'deposit_refund' || k === 'tradein' || k === 'supplier_payment' || k === 'wages') cashDrawer -= dta;
       else if (k === 'sale' || k === 'payment' || k === 'deposit') cashDrawer += dta;
     }
     if (isCashOutKind_(k)) cashDrawer -= v;
@@ -9347,6 +9702,7 @@ function driveExport_(session, payload, params) {
   csv += ',,DEPOSITS REFUNDED,,' + String(round2_(depositsRefunded)) + ',\n';
   csv += ',,TRADE-INS BOUGHT,,' + String(round2_(tradeIns)) + ',\n';
   csv += ',,SUPPLIERS PAID,,' + String(round2_(supplierPaid)) + ',\n';
+  csv += ',,WAGES PAID,,' + String(round2_(wagesPaid)) + ',\n';
   csv += ',,CARD,,' + String(round2_(cardTotal)) + ',\n';
   csv += ',,CASH IN DRAWER,,' + String(round2_(cashDrawer)) + ',\n';
   csv += ',,NET CASH,,' + String(net) + ',\n';

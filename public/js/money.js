@@ -67,6 +67,7 @@ export function kindInfo(kind) {
     deposit_refund: { label: N_('Deposit refund'), cls: 'k-payout', sign: -1 },
     tradein: { label: N_('Trade-in'), cls: 'k-payout', sign: -1 },
     supplier_payment: { label: N_('Supplier payment'), cls: 'k-payout', sign: -1 },
+    wages: { label: N_('Wages'), cls: 'k-payout', sign: -1 },
   };
   return map[kind || 'sale'] || map.sale;
 }

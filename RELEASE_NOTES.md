@@ -7,7 +7,51 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.55.2 — a review of the lifecycle sprints, from outside them
+## Latest: v1.56.0 — payroll
+
+**2026-09-24.**
+
+The time clock knew the hours. Now the shop can pay them, and the books show
+what is usually its largest cost after stock.
+
+- **Set what each person is paid** — by the hour or a monthly salary — on the
+  Time Clock screen. **Only an admin can see or set it.** A manager sees the
+  team, never the pay.
+- **Draft a pay run** for last month, this month so far, the last seven days,
+  or any two dates. Hourly staff come out at the hours their clock actually
+  closed in the period; a shift still open is worth nothing yet, and the line
+  says so rather than quietly short-paying somebody.
+- **Adjust a line** before paying: a bonus, a deduction, an advance already
+  handed over — always with a reason, which stays on the line.
+- **Pay it** in cash from the till, by bank transfer or by cheque. Cash comes
+  off the drawer count; a transfer does not touch it. **Void a run** entered
+  twice and its money leaves every total.
+- **Wages appear where money is counted:** Reports, the daily export, the
+  drawer, and the P&L as their own line — so net income is finally net of the
+  wage bill.
+
+**What it does not try to do:** statutory overtime, end-of-service gratuity,
+pension or tax withholding. Those rules differ by country and change; the shop
+enters them as an adjustment with a reason rather than trusting a number this
+app guessed.
+
+**Validation:** backend-sim **PASS 1267 / FAIL 0** · client units **PASS 597 /
+FAIL 0** · demo **PASS 36 / FAIL 0**.
+- Eight mutations confirm the tests bite, including two that first slipped
+  through and were answered with stronger checks: an open shift being paid
+  anyway, and wages going missing from net income.
+- **Fixed on the way:** the P&L summed a hardcoded list of expense accounts, so
+  the new wages account would have been invisible in net income. It now sums
+  every expense account in the chart.
+
+### Deploying
+
+**Backend redeploy required.** The `PayRuns` tab and the three new `Users`
+columns are created on first use. Set each person's rate before the first run.
+
+---
+
+## v1.55.2 — a review of the lifecycle sprints, from outside them
 
 **2026-09-24.**
 

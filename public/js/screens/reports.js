@@ -134,6 +134,7 @@ export const screen = {
           </p>
           ${sum.tradeInCount ? `<p class="muted rep-sub">${esc($t('Trade-ins bought: {amount} · {n} devices', { amount: money(sum.tradeIns), n: sum.tradeInCount }))}</p>` : ''}
           ${sum.supplierPaymentCount ? `<p class="muted rep-sub">${esc($t('Suppliers paid: {amount} · {n} payments', { amount: money(sum.supplierPayments), n: sum.supplierPaymentCount }))}</p>` : ''}
+          ${sum.wageRuns ? `<p class="muted rep-sub">${esc($t('Wages paid: {amount} · {n} runs', { amount: money(sum.wages), n: sum.wageRuns }))}</p>` : ''}
         </section>
 
         ${(data.byHour || []).length ? `
@@ -301,6 +302,7 @@ function exportCsv(data, range) {
   lines.push(['collections', money(s.collections)].join(','));
   lines.push(['trade_ins_bought', money(s.tradeIns || 0)].join(','));
   lines.push(['suppliers_paid', money(s.supplierPayments || 0)].join(','));
+  lines.push(['wages_paid', money(s.wages || 0)].join(','));
   lines.push(['net_revenue', money(s.netRevenue)].join(','));
   lines.push(['sales_count', String(s.salesCount)].join(','));
   lines.push(['units', String(s.units)].join(','));

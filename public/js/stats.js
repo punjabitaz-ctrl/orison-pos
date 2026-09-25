@@ -41,7 +41,7 @@ export function signedNet(tx) {
   const k = kindOf(tx);
   if (DEPOSIT_KINDS.includes(k)) return 0;
   /* a trade-in is the shop buying stock: money out */
-  return (k === 'refund' || k === 'tradein' || k === 'supplier_payment' || CASH_OUT.includes(k)) ? -v : v;
+  return (k === 'refund' || k === 'tradein' || k === 'supplier_payment' || k === 'wages' || CASH_OUT.includes(k)) ? -v : v;
 }
 
 export function unitsOf(tx) {
@@ -49,7 +49,7 @@ export function unitsOf(tx) {
 }
 
 export function dayTotals(txs, key) {
-  const out = { key, net: 0, sales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, cashOut: 0, collections: 0, deposits: 0, depositRefunds: 0, tradeIns: 0, supplierPayments: 0, count: 0, units: 0, gp: 0, tickets: 0 };
+  const out = { key, net: 0, sales: 0, refunds: 0, payouts: 0, pickups: 0, expenses: 0, cashOut: 0, collections: 0, deposits: 0, depositRefunds: 0, tradeIns: 0, supplierPayments: 0, wages: 0, count: 0, units: 0, gp: 0, tickets: 0 };
   for (const t of txs || []) {
     if (dayKey(t.createdAt) !== key) continue;
     const k = kindOf(t);
@@ -66,6 +66,7 @@ export function dayTotals(txs, key) {
     else if (k === 'deposit_refund') out.depositRefunds += v;
     else if (k === 'tradein') out.tradeIns += v;
     else if (k === 'supplier_payment') out.supplierPayments += v;
+    else if (k === 'wages') out.wages += v;
     out.net += signedNet(t);
   }
   out.avgTicket = out.tickets ? out.sales / out.tickets : 0;

@@ -42,6 +42,7 @@ A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electr
 - **Suppliers and purchase orders**: draft → ordered → partial/received, or cancelled. Receiving posts weighted-average cost and takes serials unit by unit.
 - **Parts a job is waiting for**: a repair ticket records the parts it needs and where each one is (on the shelf, on order with its due date, or unordered); Purchases shows the whole bench grouped by part and raises an order for the shortfall; receiving names the jobs it frees. Nothing is reserved from the shop floor.
 - **What a delivery costs and owes**: an order's discount is part of the cost of the stock (weighted average, and per serial); its tax is owed to the supplier but reclaimed rather than capitalised; a part delivery carries its share of both, and the deliveries add up to the order's own total.
+- **Payroll** (admin only): a rate per person (hourly or monthly salary), a pay run built from the time clock for any period, adjustments with reasons, and payment in cash, by transfer or by cheque — booked to Wages and counted in the drawer, Reports, the export and the P&L.
 - **Paying suppliers**: what each supplier is owed and how much is overdue by their terms, a statement per supplier, and payments by bank transfer, cheque or cash from the till, per order or on account. Voidable by an admin, and booked to Accounts payable.
 - **Price history**: every cost and retail change, with who made it, when, and why.
 - **Inventory tools**:
@@ -166,9 +167,9 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 ## Development
 
 ```bash
-npm test              # backend logic vs an in-memory Apps Script mock (1213 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (583 checks)
-npm run test:demo     # the demo: emulator, sample shop, site build (32 checks)
+npm test              # backend logic vs an in-memory Apps Script mock (1267 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (597 checks)
+npm run test:demo     # the demo: emulator, sample shop, site build (36 checks)
 npm run build:demo    # build the demo site into dist/demo-site
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)
 npm run test:pdf      # receipt PDF/share smoke test in a headless browser
