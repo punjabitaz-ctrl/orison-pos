@@ -54,12 +54,16 @@ The guide's **Sign in** buttons switch account in one tap. When a cashier needs 
 4. Receive the purchase order that is on its way. It is on 5% trade terms with tax on the invoice, so the dialog shows the stock and the tax separately and what the delivery will be owed — and the receipt names the bench job it frees. Open that ticket and **Fit it**.
 5. Pay **Swift Supplies**, who are owed $110, all of it overdue: tap the supplier, see their statement, and **Record payment** by bank transfer or cheque.
 6. Take a payment from Liberty Phone Repair (Customers).
-7. Open the **Sales Report** for the last 30 days: group by staff member, tap one person, open a sale to see its lines, and export the Sales CSV. Then look at Reports, where every breakdown has a *Details* link, and the trade-in register.
+7. Open **Stock Health** (Menu → Stock & customers): what the shelf is worth at cost and at retail, which lines are slow or dead, and — on the velocity tab — what is selling through fastest. Export either as CSV.
+8. Open **Serial Trace** and search an IMEI from a sale (try `353` or a serial on a sold phone): its whole life, from intake to sale to repair.
+9. The Dashboard's **Reminders** panel: warranties about to expire, repairs sitting ready for collection, upgrade candidates and unspent store credit.
+10. Open the **Sales Report** for the last 30 days: group by staff member, tap one person, open a sale to see its lines, and export the Sales CSV. Then look at Reports, where every breakdown has a *Details* link, and the trade-in register.
 
 **As the admin (Tariq)**
 1. Settings → Marketplace orders → **Import now**. Then open the guide → *view the demo sheet* to see each row's Status filled in.
 2. Menu → **Accounts**: profit and loss, trial balance and journal, with CSV exports.
-3. The Audit Log, staff (add a person, reset a PIN), store settings, tax and discount limits.
+3. Open a customer from **Customers** for their profile: what they have spent, every device they own with its warranty, repairs on the bench and collected, and what they owe.
+4. The Audit Log, staff (add a person, reset a PIN), store settings, tax and discount limits.
 
 **Anyone:** switch the language to العربية or اردو on the sign-in screen.
 

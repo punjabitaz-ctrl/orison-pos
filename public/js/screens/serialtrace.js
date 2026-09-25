@@ -15,8 +15,9 @@ import { screenHead, sectionHead, dataTable } from '../components.js';
 import { statusLabel } from './repairs.js';
 import { fmt, esc, toast } from '../ui.js';
 
-export function stepLabel(s) {
-  switch (s.kind) {
+export function stepLabel(step) {
+  const kind = typeof step === 'string' ? step : (step && step.kind);
+  switch (kind) {
     case 'intake': return N_('Intake');
     case 'sale': return N_('Sale');
     case 'restock': return N_('Refunded & restocked');

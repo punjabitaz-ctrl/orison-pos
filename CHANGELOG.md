@@ -5,6 +5,50 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.55.2] — 2026-09-24
+
+### Fixed
+
+- **Every step on a serial's trace read "Step".** The timeline's chip passed a
+  kind where the label function expected a whole step, so *Intake*, *Sale*,
+  *Refunded & restocked*, *Repair* and *Trade-in bought back* all fell through
+  to the generic word. The label now takes either, and a client test holds
+  both call shapes.
+- **The Reminders panel never appeared at all.** The Dashboard read `.data`
+  off a payload that `api.get()` had already unwrapped, so the panel was
+  always empty and hid itself — v1.55.0's headline feature has been invisible
+  since it shipped, while every server-side test for it passed. Found by
+  opening the demo, not by reading the code.
+- **A clickable reminder row carried two `class` attributes**, so the second
+  one — the pointer affordance — was dropped by the parser and the rows did
+  not look clickable.
+- **The Dashboard re-read the whole ledger on every load.** `/api/reminders`
+  scans every transaction, customer and repair, and the Dashboard asks for it
+  each time a manager or admin opens the home screen. It is now cached for two
+  minutes per store; the refresh button asks for `fresh=1` and rebuilds, so
+  the reminder list is never stale when somebody actually checks it. A payload
+  too large for the cache is served uncached rather than failing.
+
+### Added
+
+- Client tests for the two screens that had none: the reminders panel (it
+  renders a payload, hides itself on nothing, and writes one class attribute)
+  and the serial trace's step labels.
+
+- **The shelf's value is now tied to the books by a test.** A delivery
+  received at a discount is valued on the Stock health screen at exactly what
+  the books debited to Inventory for it, and selling one takes its own cost
+  off — not its list price.
+
+### Changed
+
+- **`.gitattributes`:** git stores LF whatever the checkout does. Four files
+  committed from a Windows checkout during v1.51.0 → v1.55.0 had flipped to
+  CRLF, which made `style.css` show 3,446 changed lines for a two-line edit.
+- Docs that had fallen behind the code are current again: the `AGENTS.md`
+  baseline, the check counts in `README.md` and `backend/README.md`, and the
+  demo guide, which said nothing about the five lifecycle screens.
+
 ## [1.55.1] — 2026-09-24
 
 ### Fixed

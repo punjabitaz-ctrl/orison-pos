@@ -77,7 +77,8 @@ export const screen = {
       return { transactions: out };
     }
 
-    async function load() {
+    async function load(opts) {
+      const forceFresh = !!(opts && opts.fresh);
       const [prods, res, outbox, con, shiftRes, rep, rem] = await Promise.all([
         idb.getAll('products').catch(() => []),
         navigator.onLine
@@ -99,7 +100,7 @@ export const screen = {
         /* the manager's morning list: what is expiring, sitting ready, waiting
            on an upgrade, or sitting as store credit. */
         navigator.onLine && isManager
-          ? api.get('/api/reminders').catch(() => null)
+          ? api.get('/api/reminders' + (forceFresh ? '?fresh=1' : '')).catch(() => null)
           : Promise.resolve(null),
       ]);
       products = prods;
@@ -108,7 +109,7 @@ export const screen = {
       conflicts = (con && con.conflicts) || [];
       shifts = (shiftRes && shiftRes.shifts) || [];
       report = rep;
-      reminders = (rem && rem.data) || null;
+      reminders = rem || null;
       draw();
     }
 
@@ -301,7 +302,7 @@ export const screen = {
 
         ${!server ? `<p class="muted" style="padding:0 16px 4px">${$t('Offline — showing last synced data.')}</p>` : ''}`;
 
-      root.querySelector('#dashRefresh').addEventListener('click', load);
+      root.querySelector('#dashRefresh').addEventListener('click', () => load({ fresh: true }));
       const sellBtn = root.querySelector('#dashSell');
       if (sellBtn) sellBtn.addEventListener('click', () => router.show('register'));
       const histBtn = root.querySelector('#dashHistory');
@@ -709,8 +710,8 @@ function reportDays(report) {
    what the sheet already knows. Each row jumps to the screen that owns the
    decision — a warranty lookup for an expiring cover, the bench for a ready
    repair, the customer file for an upgrade nudge or leftover credit. */
-function remLink(go, serial = '', cls = 'rem-click') {
-  return `data-rem-go="${esc(go)}"${serial ? ` data-serial="${esc(serial)}"` : ''} class="${cls}"`;
+function remLink(go, serial = '') {
+  return `data-rem-go="${esc(go)}"${serial ? ` data-serial="${esc(serial)}"` : ''}`;
 }
 
 function remDate(iso) {
@@ -718,7 +719,7 @@ function remDate(iso) {
   return d && !isNaN(d) ? d.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' }) : '—';
 }
 
-function remindersHtml(rem, money) {
+export function remindersHtml(rem, money) {
   if (!rem) return '';
   const we = rem.warrantyExpiring || [];
   const rr = rem.repairsReady || [];
@@ -727,7 +728,7 @@ function remindersHtml(rem, money) {
   const total = we.length + rr.length + uc.length + sc.length;
 
   const bn = (rows) => rows.map((w) => `
-      <div class="rank-row" ${remLink('warranty', w.serialNumber)}>
+      <div class="rank-row rem-click" ${remLink('warranty', w.serialNumber)}>
         <div class="rank-main">
           <div class="rank-name">${esc(w.device)}${w.serialNumber ? ` <span class="muted">· ${esc(w.serialNumber)}</span>` : ''}</div>
           <div class="muted">${esc([w.customer, $t('expires {date}', { date: remDate(w.expiresAt) })].filter(Boolean).join(' · '))}</div>
@@ -736,7 +737,7 @@ function remindersHtml(rem, money) {
       </div>`).join('');
 
   const br = (rows) => rows.map((r) => `
-      <div class="rank-row" ${remLink('repairs')}>
+      <div class="rank-row rem-click" ${remLink('repairs')}>
         <div class="rank-main">
           <div class="rank-name">${esc(r.customer || r.ticketNo)}</div>
           <div class="muted">${esc([r.device + (r.serialNumber ? ' · ' + r.serialNumber : ''), $tn('{n} day waiting', '{n} days waiting', r.daysWaiting)].filter(Boolean).join(' · '))}</div>
@@ -745,7 +746,7 @@ function remindersHtml(rem, money) {
       </div>`).join('');
 
   const bu = (rows) => rows.map((u) => `
-      <div class="rank-row" ${remLink('customers')}>
+      <div class="rank-row rem-click" ${remLink('customers')}>
         <div class="rank-main">
           <div class="rank-name">${esc(u.customer)}</div>
           <div class="muted">${esc((u.devices || []).map((d) => d.device).join(', '))}</div>
@@ -754,7 +755,7 @@ function remindersHtml(rem, money) {
       </div>`).join('');
 
   const bs = (rows) => rows.map((s) => `
-      <div class="rank-row" ${remLink('customers')}>
+      <div class="rank-row rem-click" ${remLink('customers')}>
         <div class="rank-main">
           <div class="rank-name">${esc(s.customer)}</div>
         </div>

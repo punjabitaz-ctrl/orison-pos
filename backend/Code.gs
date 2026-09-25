@@ -6587,8 +6587,36 @@ function warrantyLookup_(session, params) {
 var REMINDERS_MAX = 25;
 var UPGRADE_WINDOW_MS = 24 * 30 * DAY_MS; /* 24 months, 30-day months */
 
+/* The Dashboard asks for this on every load, and working it out reads the
+   whole ledger, every customer and every repair. Nothing here moves faster
+   than a day - a warranty expiring, a repair sitting ready, store credit
+   unspent - so a couple of minutes of staleness costs nothing, and a busy
+   shop stops re-scanning the ledger every time somebody glances at the home
+   screen. The refresh button asks for `fresh`, which skips the cache, and a
+   payload too large for CacheService is simply served uncached. */
+var REMINDERS_CACHE_KEY = 'reminders_v1_';
+var REMINDERS_CACHE_TTL = 120;
+var CACHE_VALUE_MAX = 90000;
+
 function reminders_(session, params) {
   requireRole_(session, ['admin', 'manager']);
+  var key = REMINDERS_CACHE_KEY + getStore_().id;
+  var fresh = String((params && params.fresh) || '') === '1';
+  if (!fresh) {
+    var cached = cache_().get(key);
+    if (cached) {
+      try { return JSON.parse(cached); } catch (_) { /* fall through and rebuild */ }
+    }
+  }
+  var built = remindersBuild_();
+  try {
+    var json = JSON.stringify(built);
+    if (json.length <= CACHE_VALUE_MAX) cache_().put(key, json, REMINDERS_CACHE_TTL);
+  } catch (_) { /* a cache that will not take it is not an error */ }
+  return built;
+}
+
+function remindersBuild_() {
   var now = Date.now();
   var txRows = readRows_('Transactions', TX_HEADERS);
   var custs = readRows_('Customers', CUSTOMERS_HEADERS);

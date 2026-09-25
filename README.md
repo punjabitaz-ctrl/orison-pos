@@ -2,7 +2,7 @@
 
 A self-hosted, offline-first, mobile-first point-of-sale PWA for **Orison Electronics**. It replaces per-seat Base44 POS costs with a zero-cost stack and a web app cashiers install on their own phones, tablets or desktops. It works fully offline: sales are queued locally and sync when a connection returns.
 
-**Current version: v1.55.1** (review pass on v1.51.0 → v1.55.0: no security issues; the serial trace no longer renders VOIDED transactions as real steps and the profile's average sale divides by sales only, plus client hardening — full detail in [`RELEASE_NOTES.md`](RELEASE_NOTES.md#latest-v1551--review-pass-on-the-lifecycle-sprints)). **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+**Current version: v1.55.2** (a review of the v1.51.0 → v1.55.0 lifecycle sprints from outside them: the serial trace named every step "Step", the Dashboard re-read the whole ledger on every load, and the shelf's value is now tied to the books by a test). **Try the demo:** https://punjabitaz-ctrl.github.io/orison-pos/ (sign-ins and a test guide in [`docs/DEMO.md`](docs/DEMO.md)). Full history in [`CHANGELOG.md`](CHANGELOG.md); what each release means for the shop in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Features
 
@@ -166,8 +166,8 @@ The app is a static PWA, so any HTTPS host works. For a subdomain behind Google 
 ## Development
 
 ```bash
-npm test              # backend logic vs an in-memory Apps Script mock (1126 checks)
-npm run test:client   # client unit tests via node:test + fake-indexeddb (557 checks)
+npm test              # backend logic vs an in-memory Apps Script mock (1213 checks)
+npm run test:client   # client unit tests via node:test + fake-indexeddb (583 checks)
 npm run test:demo     # the demo: emulator, sample shop, site build (32 checks)
 npm run build:demo    # build the demo site into dist/demo-site
 npm run test:e2e      # headless E2E against a live, freshly seeded backend (skips without one)

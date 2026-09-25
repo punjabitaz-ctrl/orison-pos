@@ -82,7 +82,7 @@ npm run test:client               # client unit tests, incl. the translation-cat
 node tests/demo-build.mjs         # the demo: Code.gs on the in-browser emulator, sample shop, site build
 ```
 
-Baseline at v1.50.0: backend-sim **1126 / 0**, client **557 / 0**, demo **32 / 0**.
+Baseline at v1.55.2: backend-sim **1213 / 0**, client **583 / 0**, demo **32 / 0**.
 
 - The backend sim is **time-of-day sensitive**: its sections ask the server for
   "today" as a UTC date while the server buckets by the store's local day, so a

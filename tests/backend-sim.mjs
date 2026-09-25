@@ -5728,6 +5728,63 @@ check('statement carries the changer/cashier',
     JSON.stringify(sc));
 }
 {
+  section('the dashboard list is cached, and the shelf agrees with the books (v1.55.2)');
+
+  const cAdm = req('/api/login', { email: 'tariq@example.com', pin: CREDS['tariq@example.com'] }).data.token;
+  const cMgr = req('/api/login', { email: 'sarah@example.com', pin: CREDS['sarah@example.com'] }).data.token;
+  const near = (a, b) => Math.abs(a - b) < 0.005;
+
+  /* ---- reminders: the home screen stops re-reading the whole ledger ---- */
+  const readyCount = () => req('/api/reminders', {}, { session: cMgr }).data.repairsReady.length;
+  const before = readyCount();
+  const late = req('/api/repairs', { customerName: 'Cache Tester', customerPhone: '07700 900321',
+    deviceMake: 'Nokia', deviceModel: '3310', reportedFault: 'Nothing, it is indestructible' }, { session: cMgr }).data;
+  req('/api/repairs/labour', { id: late.id, add: { description: 'Look at it', amount: 10 } }, { session: cMgr });
+  req('/api/repairs/status', { id: late.id, status: 'ready', note: 'Collect any time' }, { session: cMgr });
+
+  check('a second look is served from the cache, not a fresh scan of the ledger',
+    readyCount() === before, JSON.stringify([before, readyCount()]));
+  const freshData = req('/api/reminders', {}, { session: cMgr, params: { fresh: '1' } }).data;
+  check('and the refresh button asks for the truth',
+    freshData.repairsReady.length === before + 1
+    && freshData.repairsReady.some((r) => r.customer === 'Cache Tester'),
+    JSON.stringify(freshData.repairsReady.map((r) => r.customer)));
+  check('the rebuilt answer replaces what was cached', readyCount() === before + 1);
+  check('a cashier still cannot read the reminders',
+    req('/api/reminders', {}, { session: req('/api/login', { email: 'amara@example.com', pin: '135791' }).data.token }).status === 403);
+
+  /* ---- what the shelf is worth is what the books said it cost ---- */
+  const vSup = req('/api/suppliers', { name: 'Valuation Supply' }, { session: cAdm }).data.id;
+  const vProd = req('/api/admin/products', { name: 'Valuation Widget', sku: 'VAL-W1', category: 'VAL',
+    costPrice: 0, retailPrice: 120, onHand: 0 }, { session: cAdm }).data.id;
+  const vPo = req('/api/purchase-orders', { supplierId: vSup, status: 'ORDERED',
+    lines: [{ productId: vProd, quantity: 4, unitCost: 50 }], discountPct: 10 }, { session: cMgr }).data;
+  const vRec = req('/api/purchase-orders/receive', { id: vPo.id, lines: [{ productId: vProd, quantity: 4 }] }, { session: cMgr }).data;
+  check('four arrive at 50 less 10%, so the delivery is 180 of stock', near(vRec.goodsValue, 180), JSON.stringify(vRec));
+
+  const vDay = new Date().toISOString().slice(0, 10);
+  const vBooks = req('/api/accounting', {}, { session: cAdm, params: { from: vDay, to: vDay } }).data;
+  const vEntry = vBooks.journal.filter((j) => j.kind === 'purchase' && j.memo.indexOf(vPo.poNumber) >= 0)[0];
+  const vDebit = vEntry ? (vEntry.lines.find((l) => l.code === '1200') || {}).debit : null;
+  const vHealth = req('/api/inventory/health', {}, { session: cMgr }).data;
+  const vItem = (vHealth.items || []).find((i) => i.sku === 'VAL-W1');
+  check('the books debited stock with exactly that', near(vDebit, 180), JSON.stringify([vDebit, vRec.goodsValue]));
+  check('and the shelf is worth exactly what the books were told it cost',
+    vItem && near(vItem.costValue, vDebit) && vItem.onHand === 4,
+    JSON.stringify([vItem && vItem.costValue, vDebit]));
+  check('one unit sold takes its own cost off the shelf, not the list price',
+    (() => {
+      req('/api/sync/push', { deviceId: 'till-val', batch: [{
+        clientTxId: 'val-sale-1', userId: sandbox.readRows_('Users', sandbox.USER_HEADERS)[0].id,
+        grandTotal: 120, subtotal: 120, discountPct: 0, tenders: [{ type: 'cash', amount: 120 }],
+        createdAt: new Date().toISOString(),
+        items: [{ productId: vProd, name: 'Valuation Widget', quantity: 1, unitPrice: 120 }],
+      }] }, { session: cMgr });
+      const after = (req('/api/inventory/health', {}, { session: cMgr }).data.items || []).find((i) => i.sku === 'VAL-W1');
+      return after && after.onHand === 3 && near(after.costValue, 135);
+    })(), 'expected 3 left at 45 each');
+}
+{
   section('setup() deploy entry point (v1.35.1)');
 
   const usersBefore = sandbox.readRows_('Users', sandbox.USER_HEADERS).length;

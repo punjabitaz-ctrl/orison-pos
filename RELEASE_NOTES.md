@@ -7,7 +7,48 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.55.1 — review pass on the lifecycle sprints
+## Latest: v1.55.2 — a review of the lifecycle sprints, from outside them
+
+**2026-09-24.**
+
+A second pair of eyes over v1.51.0 → v1.55.0. The features are sound; three
+things needed fixing and the docs needed catching up.
+
+- **Fixed: every step on a serial's trace said "Step"** instead of *Intake*,
+  *Sale*, *Repair* or *Trade-in bought back*. The chip passed a kind where the
+  label wanted a whole step, and the mismatch failed quietly.
+- **Fixed: the Reminders panel had never once appeared.** v1.55.0's headline
+  feature read one level too deep into the server's answer, so the Dashboard
+  quietly rendered nothing. Every server test for it passed; opening the demo
+  is what found it.
+- **Fixed: the Dashboard re-read the entire ledger every time it opened.** The
+  reminders list is now cached for two minutes, and the refresh button asks
+  for the truth. On a shop with a year of history this is the difference
+  between a home screen that opens and one that crawls.
+- **Added: a test that ties the shelf to the books.** Stock received at a
+  discount is worth, on the Stock health screen, exactly what the books
+  debited to Inventory — and selling one takes its own cost off, not its list
+  price. Two numbers that must agree, now held together.
+- **Housekeeping:** one line ending in the repository, the check counts in the
+  docs made true again, and the demo guide now tells the team about the five
+  lifecycle screens it never mentioned.
+
+**Validation:** backend-sim **PASS 1213 / FAIL 0** · client units **PASS 583 /
+FAIL 0** · demo **PASS 32 / FAIL 0**.
+- Four mutations confirm the new tests bite: the cache never read, the refresh
+  flag ignored, the shelf valued at retail, and the trace label reading a
+  string as an object.
+- Checked in the browser as the manager: the Reminders panel lists 14 things
+  to act on and survives a refresh, and a traded-in IMEI's timeline reads
+  *Intake* and *Trade-in bought back* rather than *Step*, *Step*.
+
+### Deploying
+
+**Backend redeploy required** for the reminders cache. Nothing to run.
+
+---
+
+## v1.55.1 — review pass on the lifecycle sprints
 
 **2026-09-24.**
 

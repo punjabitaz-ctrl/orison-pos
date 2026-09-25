@@ -13,10 +13,10 @@ record of truth; every feature is one tagged revision.
 |---|---|
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
-| Current version | **v1.55.1** — review pass on the lifecycle sprints: a cross-sprint audit of v1.51.0 → v1.55.0 found no security issues and corrected two figures (the serial trace no longer renders VOIDED transactions as real steps; the profile's average sale divides by sales only), plus client hardening (trace search races its debounce no longer, repair statuses localize, malformed dates fall back cleanly). v1.55.0 shipped the lifecycle reminders Dashboard panel (`2026-09-24`) |
+| Current version | **v1.55.2** — a review of the v1.51.0 → v1.55.0 lifecycle sprints from outside them: the serial trace rendered every step as "Step", `/api/reminders` rescanned the whole ledger on every Dashboard load (now cached, refresh button bypasses), and the Stock health valuation is now tied to the 1200 Inventory debit by a test (`2026-09-24`) |
 | Gaps analysis | `docs/superpowers/specs/2026-09-24-gaps-analysis.md` — what a trading shop needs that v1.50.0 does not have, in the order I would build it |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
-| Validation bar | `backend-sim` **PASS 1205 / FAIL 0** · client units **PASS 572 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Validation bar | `backend-sim` **PASS 1213 / FAIL 0** · client units **PASS 583 / FAIL 0** · demo **PASS 32 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~9,444 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -128,6 +128,22 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.55.2** Review of the lifecycle sprints from outside them.
+  - **Fixed:** the Dashboard read `rem.data` where `api.get()` returns the
+    payload, so the v1.55.0 Reminders panel rendered nothing from the day it
+    shipped. `remindersHtml` is now exported and held by
+    `tests/client-dashboard-reminders.mjs`; `remLink()` no longer writes a
+    second `class` attribute onto a row that already has one.
+  - **Fixed:** `stepLabel()` read `.kind` off a string, so every chip on the
+    serial trace rendered "Step". It now takes a step or a kind, held by
+    `tests/client-serialtrace.mjs`.
+  - **Fixed:** `/api/reminders` rescanned the whole ledger on every Dashboard
+    load. Cached per store for 120 s (`REMINDERS_CACHE_TTL`); the refresh
+    button passes `fresh=1`; an oversized payload is served uncached.
+  - **Added:** a sim section tying `/api/inventory/health` `costValue` to the
+    1200 Inventory debit for the same delivery, and to captured cost on sale.
+  - `.gitattributes` (`text=auto`) after four files flipped to CRLF; docs
+    counts and `docs/DEMO.md` brought back in step.
 - **v1.55.1** Review pass before the merge to `main`: two figures corrected and
   client hardening. The serial trace excludes VOIDED transactions (a void no
   longer renders as a real step); the Customer 360 profile's `averageSale`
