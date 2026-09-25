@@ -14,9 +14,10 @@ record of truth; every feature is one tagged revision.
 | Project | Offline-first, mobile-first point-of-sale PWA for **Orison Electronics** |
 | Repo | `github.com/punjabitaz-ctrl/orison-pos` (`main`, all releases tagged) |
 | Current version | **v1.55.2** — a review of the v1.51.0 → v1.55.0 lifecycle sprints from outside them: the serial trace rendered every step as "Step", `/api/reminders` rescanned the whole ledger on every Dashboard load (now cached, refresh button bypasses), and the Stock health valuation is now tied to the 1200 Inventory debit by a test (`2026-09-24`) |
+| Tier 1 program | `docs/superpowers/plans/2026-09-25-tier-1-program.md` — exchanges, supplier returns, customer notifications, a tax-return period; four sprints, v1.61.0 → v1.64.0 |
 | Gaps analysis | `docs/superpowers/specs/2026-09-24-gaps-analysis.md` — what a trading shop needs that v1.50.0 does not have, in the order I would build it |
 | Session handoff | `docs/superpowers/handoffs/2026-09-17-session-handoff.md` — how v1.42.0 → v1.48.0 were built, the workflows, and the traps |
-| Validation bar | `backend-sim` **PASS 1346 / FAIL 0** · client units **PASS 633 / FAIL 0** · demo **PASS 41 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
+| Validation bar | `backend-sim` **PASS 1346 / FAIL 0** · client units **PASS 639 / FAIL 0** · demo **PASS 41 / FAIL 0** · `node --check` clean · **pdf-smoke UNRUN** — see §6 |
 | Backend | Single-file Google Apps Script Web App on Sheets + Drive (`backend/Code.gs`, ~9,444 lines) |
 | Frontend | Vanilla ES modules PWA, no build step (`public/`), service-worker cached shell + a second-screen `display.html` |
 | Node | ≥ 20 (dev/test only) |
@@ -128,6 +129,14 @@ Script Web App gated by APP_TOKEN (see `DEPLOY.md`).
   `screen-checkout` class, cleaned up on leave); detail/edit sheets slide in
   from the right. **Fixed:** alerts `tab-badge` toggled a non-existent `.show`
   class so it never rendered — now toggles `.hidden`.
+- **v1.60.0** PDF beside every CSV.
+  - `public/js/pdf-export.js`: `pdfHtml()` (pure, tested, escapes everything)
+    and `exportPdf()` on top of the existing `printSheet` — **no library**, no
+    build step, and it renders Arabic/Urdu, unlike the receipt's Courier PDF.
+  - On the books (P&L + trial balance on one sheet), reports, stock health,
+    running costs, a pay run, customers, purchases, repairs, products.
+  - **CSV and PDF differ deliberately:** CSV keeps English headers and every row
+    including voided ones; PDF is translated, laid out and omits voided lines.
 - **v1.59.0** Export CSV from every screen.
   - `public/js/csv.js`: `csvText` / `csvName` / `exportCsv`, on top of the
     existing `csvCell` (which is what stops a formula-shaped cell running).
@@ -751,7 +760,7 @@ written by the repair routes.
   the guards that now read under the lock).
 - `tests/client-*.mjs` — pure-Node client unit tests (`node:test` +
   `fake-indexeddb`, browser-globs shim in `tests/helpers/setup-globals.mjs`).
-  **633 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
+  **639 checks**: money math (`round2`/`cents`/`clampPct`/`saleTotals`/`kindInfo`),
   refund/payout builders against an IDB-backed mock, outbox enqueue/push/
   VOIDED-rollback/offline paths, db CRUD + indexes, alerts classification/buckets,
   ui `fmt`/`esc`/`debounce`/`csvCell`/`emptyState`/`skeleton`, (v1.15.0)

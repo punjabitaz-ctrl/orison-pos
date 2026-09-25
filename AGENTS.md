@@ -82,12 +82,15 @@ npm run test:client               # client unit tests, incl. the translation-cat
 node tests/demo-build.mjs         # the demo: Code.gs on the in-browser emulator, sample shop, site build
 ```
 
-Baseline at v1.59.0: backend-sim **1346 / 0**, client **633 / 0**, demo **41 / 0**.
+Baseline at v1.60.0: backend-sim **1346 / 0**, client **639 / 0**, demo **41 / 0**.
 
 - **Every export goes through `public/js/csv.js`.** A new screen that shows
   data gets an *Export CSV* button using `exportCsv()`, a pure `xxxCsv()`
   builder beside the screen so it can be tested, and **English column
   headers** — a CSV is for a spreadsheet, not for reading.
+- **PDF goes through `public/js/pdf-export.js`** and the print sheet, never a
+  library: no build step, and the CSP forbids one. A PDF is for a person, so
+  its headings *are* translated and voided lines are left out.
 
 - The backend sim is **time-of-day sensitive**: its sections ask the server for
   "today" as a UTC date while the server buckets by the store's local day, so a

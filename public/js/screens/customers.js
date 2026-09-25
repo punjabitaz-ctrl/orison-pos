@@ -11,6 +11,7 @@ import { api } from '../api.js';
 import { screenHead } from '../components.js';
 import { fmt, esc, openModal, closeModal, toast, beep, csvRows, downloadCsv, currencySymbol } from '../ui.js';
 import { exportCsv } from '../csv.js';
+import { exportPdf } from '../pdf-export.js';
 import { createCollection, kindInfo } from '../money.js';
 
 export const screen = {
@@ -58,7 +59,7 @@ export const screen = {
         ${screenHead({
           title: $t('Customers'),
           subHtml: `${esc($tn('{n} with activity', '{n} with activity', list.length))} · ${$t('total outstanding')} <strong class="gp">${fmt(totalOut)}</strong>`,
-          actions: `<span class="btn-row"><button class="btn btn-ghost btn-sm" id="custCsv" type="button">${$t('Export CSV')}</button><button class="icon-btn" id="custRefresh" aria-label="${$t('Refresh')}">⟳</button></span>`,
+          actions: `<span class="btn-row"><button class="btn btn-ghost btn-sm" id="custCsv" type="button">${$t('Export CSV')}</button><button class="btn btn-ghost btn-sm" id="custPdf" type="button">${$t('PDF')}</button><button class="icon-btn" id="custRefresh" aria-label="${$t('Refresh')}">⟳</button></span>`,
         })}
         <div class="cust-toolbar">
           <input id="custQ" class="field" placeholder="${$t('Search name, phone, email…')}" autocomplete="off">
@@ -81,6 +82,15 @@ export const screen = {
 
       root.querySelector('#custRefresh').addEventListener('click', loadReceivables);
       root.querySelector('#custCsv')?.addEventListener('click', () => exportCsv('customers', receivablesCsvRows()));
+      root.querySelector('#custPdf')?.addEventListener('click', () => {
+        const n = (v) => (v == null ? '' : String(v));
+        exportPdf('customers', {
+          title: $t('Customer balances'),
+          columns: [$t('Customer'), $t('Phone'), $t('Balance'), $t('Store credit')],
+          numericFrom: 2,
+          rows: (list || []).map((c) => [c.name, c.phone, n(c.balance), n(c.storeCredit)]),
+        });
+      });
 
       const q = root.querySelector('#custQ');
       let t = null;

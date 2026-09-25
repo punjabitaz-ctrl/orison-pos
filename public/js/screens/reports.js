@@ -10,6 +10,7 @@ import { idb } from '../db.js';
 import { api } from '../api.js';
 import { screenHead, rankList } from '../components.js';
 import { fmt, esc, toast, beep, csvCell, downloadCsv } from '../ui.js';
+import { exportPdf } from '../pdf-export.js';
 
 const DAYS = [N_('Sun'), N_('Mon'), N_('Tue'), N_('Wed'), N_('Thu'), N_('Fri'), N_('Sat')];
 
@@ -102,7 +103,7 @@ export const screen = {
         ${screenHead({
           title: $t('Reports'),
           sub: sum ? `${range.from} ${arrow()} ${range.to} · ${$tn('{n} day', '{n} days', data.period.days)}` : $t('Manager analytics'),
-          actions: data ? `<div class="sr-actions"><button class="btn btn-ghost btn-sm" id="repSales">${esc($t('Sales report'))}</button><button class="icon-btn" id="repExport" aria-label="${$t('Export CSV')}">⤓</button></div>` : '',
+          actions: data ? `<div class="sr-actions"><button class="btn btn-ghost btn-sm" id="repSales">${esc($t('Sales report'))}</button><button class="icon-btn" id="repExport" aria-label="${$t('Export CSV')}">⤓</button><button class="btn btn-ghost btn-sm" id="repPdf">${$t('PDF')}</button></div>` : '',
         })}
 
         <div class="rep-chips">
@@ -195,6 +196,30 @@ export const screen = {
       };
       root.querySelector('#repSales')?.addEventListener('click', () => openSales('day'));
       root.querySelectorAll('[data-detail]').forEach((b) => b.addEventListener('click', () => openSales(b.dataset.detail)));
+      root.querySelector('#repPdf')?.addEventListener('click', () => {
+        const s = data.summary;
+        exportPdf('report', {
+          title: $t('Reports'),
+          range,
+          columns: [$t('Line'), $t('Amount')],
+          numericFrom: 1,
+          rows: [
+            [$t('Gross sales'), fmt(s.grossSales)],
+            [$t('Refunds'), fmt(-s.refunds)],
+            [$t('Tax'), fmt(s.tax)],
+            [$t('Gross profit'), fmt(s.grossProfit)],
+            [$t('Paid out'), fmt(-s.payouts)],
+            [$t('Staff expenses'), fmt(-s.expenses)],
+            [$t('Cash pick-ups'), fmt(-s.pickups)],
+            [$t('Collections'), fmt(s.collections)],
+            ...(s.wageRuns ? [[$t('Wages'), fmt(-s.wages)]] : []),
+            ...(s.runningCostCount ? [[$t('Running costs'), fmt(-s.runningCosts)]] : []),
+            ...(s.supplierPaymentCount ? [[$t('Suppliers paid'), fmt(-s.supplierPayments)]] : []),
+            ...(s.bankedCount ? [[$t('Banked'), fmt(s.banked)]] : []),
+          ],
+          meta: $t('{n} sales', { n: s.salesCount }),
+        });
+      });
       const exp = root.querySelector('#repExport');
       if (exp) exp.addEventListener('click', () => exportCsv(data, range));
     }

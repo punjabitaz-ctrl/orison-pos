@@ -5,6 +5,25 @@ All notable changes to Orison POS are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.60.0] — 2026-09-25
+
+### Added
+
+- **PDF beside every CSV.** The books (profit and loss **and** trial balance
+  on one sheet), Reports, Stock health, Running costs, a pay run, Customers,
+  Purchases, Repairs and Products all print to PDF.
+- **No PDF library, and none needed.** The app has no build step and a CSP
+  that will not admit one. PDF goes through the existing print sheet — a clean
+  window with print styles — which every browser can save as a PDF. That route
+  also renders **Arabic and Urdu correctly**, which the receipt's own built-in
+  PDF writer (Courier, ASCII only) cannot do, and pages long tables by itself.
+- **The two exports are for different readers, and read differently:**
+  - **CSV** is for a spreadsheet: English column headers, every row, every
+    voided line, raw numbers.
+  - **PDF** is for a person — an accountant, a landlord, the owner's file: it
+    is translated, laid out, carries the shop name, the period and when it was
+    taken, and leaves voided lines out.
+
 ## [1.59.0] — 2026-09-25
 
 ### Added

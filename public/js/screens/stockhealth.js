@@ -15,6 +15,7 @@ import { idb } from '../db.js';
 import { api } from '../api.js';
 import { screenHead, sectionHead, dataTable } from '../components.js';
 import { fmt, esc, toast, beep, csvCell, downloadCsv } from '../ui.js';
+import { exportPdf } from '../pdf-export.js';
 
 export const WINDOWS = [
   { days: 30, label: N_('30 days') },
@@ -264,7 +265,7 @@ export const screen = {
         ${screenHead({
           title: $t('Stock Health'),
           sub,
-          actions: data ? `<button class="btn btn-ghost btn-sm" id="shExport">${esc($t('Export CSV'))}</button>` : '',
+          actions: data ? `<button class="btn btn-ghost btn-sm" id="shExport">${esc($t('Export CSV'))}</button><button class="btn btn-ghost btn-sm" id="shPdf">${esc($t('PDF'))}</button>` : '',
         })}
 
         ${data ? `
@@ -304,6 +305,25 @@ export const screen = {
         `}`;
 
       root.querySelector('#shExport')?.addEventListener('click', () => exportCsv(data));
+      root.querySelector('#shPdf')?.addEventListener('click', () => {
+        exportPdf('stock-health', {
+          title: $t('Stock health'),
+          extra: [{
+            title: $t('What the shelf is worth'),
+            columns: [$t('Line'), $t('Amount')],
+            numericFrom: 1,
+            rows: [
+              [$t('Products'), String(data.summary.products)],
+              [$t('Units'), String(data.summary.units)],
+              [$t('At cost'), fmt(data.summary.costValue)],
+              [$t('At retail'), fmt(data.summary.retailValue)],
+            ],
+          }],
+          columns: [$t('SKU'), $t('Name'), $t('On hand'), $t('At cost'), $t('Movement')],
+          numericFrom: 2,
+          rows: (data.items || []).slice(0, 400).map((i) => [i.sku, i.name, String(i.onHand), fmt(i.costValue), $t(movementLabel(i).label)]),
+        });
+      });
       root.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => {
         view = b.dataset.view;
         days = defaultDays();

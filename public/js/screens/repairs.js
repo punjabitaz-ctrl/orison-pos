@@ -21,6 +21,7 @@ import { api } from '../api.js';
 import { idb } from '../db.js';
 import { fmt, esc, toast, beep, skeleton, emptyState, openModal, closeModal } from '../ui.js';
 import { exportCsv } from '../csv.js';
+import { exportPdf } from '../pdf-export.js';
 import { screenHead, sectionHead, dataTable } from '../components.js';
 import { receiptDoc } from '../receipt-doc.js';
 import { receiptContext } from '../receipt-labels.js';
@@ -117,7 +118,7 @@ export const screen = {
       ${screenHead({
     title: $t('Repairs'),
     sub: $t('Devices in for repair'),
-    actions: `<span class="btn-row"><button class="btn btn-ghost btn-sm" id="rpCsv" type="button">${$t('Export CSV')}</button><button class="btn btn-ghost" id="rpWarranty" type="button">${$t('Check warranty')}</button><button class="btn" id="rpNew" type="button">${$t('Book in a repair')}</button></span>`,
+    actions: `<span class="btn-row"><button class="btn btn-ghost btn-sm" id="rpCsv" type="button">${$t('Export CSV')}</button><button class="btn btn-ghost btn-sm" id="rpPdf" type="button">${$t('PDF')}</button><button class="btn btn-ghost" id="rpWarranty" type="button">${$t('Check warranty')}</button><button class="btn" id="rpNew" type="button">${$t('Book in a repair')}</button></span>`,
   })}
       <div class="seg seg-sm rp-filters" id="rpFilters"></div>
       <div class="field"><input id="rpSearch" type="search" placeholder="${$t('Ticket number, customer, phone or IMEI…')}" autocomplete="off" spellcheck="false"></div>
@@ -771,6 +772,7 @@ export const screen = {
     root.querySelector('#rpNew').addEventListener('click', intakeDialog);
     root.querySelector('#rpWarranty').addEventListener('click', () => openWarrantyLookup(''));
     root.querySelector('#rpCsv')?.addEventListener('click', () => exportCsv('repairs', { title: 'Repairs', ...repairsCsv(rows) }));
+    root.querySelector('#rpPdf')?.addEventListener('click', () => exportPdf('repairs', { title: $t('Repairs'), ...repairsCsv(rows), numericFrom: 9 }));
     let timer = null;
     search.addEventListener('input', () => {
       clearTimeout(timer);

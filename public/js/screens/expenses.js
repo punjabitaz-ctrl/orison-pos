@@ -12,6 +12,7 @@ import { idb } from '../db.js';
 import { screenHead, sectionHead, dataTable } from '../components.js';
 import { fmt, esc, toast, beep, openModal, closeModal, csvCell, downloadCsv } from '../ui.js';
 import { PRESETS, rangeFor } from './reports.js';
+import { exportPdf } from '../pdf-export.js';
 
 export const EXPENSE_METHODS = [
   { id: 'cash', label: N_('Cash from the till') },
@@ -100,7 +101,7 @@ export const screen = {
           title: $t('Running costs'),
           sub: $t('Rent, power, the phone bill — what it costs to keep the doors open'),
           actions: `<div class="scr-actions">
-            ${data ? `<button class="btn btn-sm btn-ghost" id="exCsv">${$t('Export CSV')}</button>` : ''}
+            ${data ? `<button class="btn btn-sm btn-ghost" id="exCsv">${$t('Export CSV')}</button><button class="btn btn-sm btn-ghost" id="exPdf">${$t('PDF')}</button>` : ''}
             <button class="btn btn-sm btn-primary" id="exNew">${$t('Record a cost')}</button>
           </div>`,
         })}
@@ -160,6 +161,24 @@ export const screen = {
       root.querySelector('#exNew')?.addEventListener('click', recordModal);
       root.querySelector('#exCsv')?.addEventListener('click', () => {
         downloadCsv(`orison-running-costs-${range.from}-to-${range.to}.csv`, expensesCsv(data, range));
+      });
+      root.querySelector('#exPdf')?.addEventListener('click', () => {
+        const n = (v) => (v == null ? '' : String(v));
+        exportPdf('running-costs', {
+          title: $t('Running costs'),
+          range,
+          extra: [{
+            title: $t('Where it went'),
+            columns: [$t('Category'), $t('Total')],
+            numericFrom: 1,
+            rows: data.categories.filter((c) => c.total > 0).map((c) => [$t(c.label), fmt(c.total)]),
+          }],
+          columns: [$t('What'), $t('Paid to'), $t('How it was paid'), $t('Reference'), $t('Amount')],
+          numericFrom: 4,
+          rows: data.expenses.filter((e) => e.status !== 'VOIDED')
+            .map((e) => [$t(e.categoryLabel), e.payee, methodLabel(e.method), e.reference, fmt(e.amount)]),
+          meta: $t('Total {amount}', { amount: fmt(data.total) }),
+        });
       });
       root.querySelectorAll('[data-void]').forEach((b) => b.addEventListener('click', () => voidModal(b.dataset.void)));
     }

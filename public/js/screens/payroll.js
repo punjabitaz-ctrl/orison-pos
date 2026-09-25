@@ -14,6 +14,7 @@ import { idb } from '../db.js';
 import { screenHead, sectionHead } from '../components.js';
 import { fmt, esc, toast, beep, openModal, closeModal } from '../ui.js';
 import { exportCsv } from '../csv.js';
+import { exportPdf } from '../pdf-export.js';
 
 export const PAY_METHODS = [
   { id: 'cash', label: N_('Cash from the till') },
@@ -243,6 +244,7 @@ export const screen = {
         <div class="modal-actions">
           <button class="btn btn-ghost" data-close>${$t('Close')}</button>
           <button class="btn btn-ghost" id="pyCsv">${$t('Export CSV')}</button>
+          <button class="btn btn-ghost" id="pyPdf">${$t('PDF')}</button>
           ${run.status === 'DRAFT' ? `<button class="btn btn-primary" id="pyPay">${$t('Pay this run')}</button>` : ''}
           ${run.status !== 'VOIDED' ? `<button class="btn btn-danger-ghost" id="pyVoid">${$t('Void')}</button>` : ''}
         </div>`}
@@ -255,6 +257,19 @@ export const screen = {
       }));
       m.querySelector('#pyCsv')?.addEventListener('click', () => {
         exportCsv('pay-run', { ...payRunCsv(run), range: { from: run.periodFrom, to: run.periodTo } });
+      });
+      m.querySelector('#pyPdf')?.addEventListener('click', () => {
+        exportPdf('pay-run', {
+          title: $t('Payroll'),
+          range: { from: run.periodFrom, to: run.periodTo },
+          columns: [$t('Name'), $t('Rate'), $t('Hours'), $t('Base pay'), $t('Adjustment'), $t('Reason'), $t('Total')],
+          numericFrom: 1,
+          rows: run.lines.map((l) => [l.name,
+            l.payType === 'hourly' ? fmt(l.rate) : $t('monthly {rate}', { rate: fmt(l.rate) }),
+            l.payType === 'hourly' ? String(l.hours) : '—',
+            fmt(l.basePay), l.adjustment ? fmt(l.adjustment) : '', l.adjustmentNote, fmt(l.gross)]),
+          meta: $t('{n} people · {amount}', { n: run.lines.length, amount: fmt(run.grossTotal) }),
+        });
       });
       const payBtn = m.querySelector('#pyPay');
       if (payBtn) payBtn.addEventListener('click', () => payModal(run));

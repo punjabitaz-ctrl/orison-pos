@@ -12,6 +12,7 @@ import { api } from '../api.js';
 import { screenHead } from '../components.js';
 import { fmt, esc, toast, beep, csvCell, downloadCsv, openModal, closeModal } from '../ui.js';
 import { PRESETS, rangeFor } from './reports.js';
+import { exportPdf } from '../pdf-export.js';
 
 const ACCOUNT_NAMES = {
   1000: N_('Cash'),
@@ -172,6 +173,7 @@ export const screen = {
           <span class="acct-exports">
             <button class="btn btn-ghost btn-sm" id="acJournalCsv">${$t('Journal CSV')}</button>
             <button class="btn btn-ghost btn-sm" id="acTrialCsv">${$t('Trial balance CSV')}</button>
+            <button class="btn btn-ghost btn-sm" id="acPdf">${$t('PDF')}</button>
           </span>
         </div>
 
@@ -214,6 +216,36 @@ export const screen = {
         load();
       });
       root.querySelector('#acOpening')?.addEventListener('click', openingModal);
+      /* the one an accountant, a landlord or a bank actually gets handed */
+      root.querySelector('#acPdf')?.addEventListener('click', () => {
+        const p = data.pnl;
+        const money = (v) => fmt(v);
+        const pnlRows = [
+          [$t('Product sales'), money(p.productSales)],
+          [$t('Service sales'), money(p.serviceSales)],
+          [$t('Less sales returns'), money(-p.returns)],
+          [$t('Net sales'), money(p.netSales)],
+          [$t('Less cost of goods sold'), money(-p.cogs)],
+          [$t('Gross profit'), money(p.grossProfit)],
+          ...(p.expenseLines || []).map((l) => [$t(ACCOUNT_NAMES[l.code] || l.name), money(-l.amount)]),
+          [$t('Net income'), money(p.netIncome)],
+        ];
+        exportPdf('books', {
+          title: $t('Profit and loss'),
+          range: { from: data.period.from.slice(0, 10), to: data.period.to.slice(0, 10) },
+          columns: [$t('Line'), $t('Amount')],
+          numericFrom: 1,
+          rows: pnlRows,
+          extra: [{
+            title: $t('Trial balance'),
+            columns: [$t('Code'), $t('Account'), $t('Debit'), $t('Credit')],
+            numericFrom: 2,
+            rows: data.trialBalance.accounts.map((a) => [a.code, $t(ACCOUNT_NAMES[a.code] || a.name), money(a.debit), money(a.credit)])
+              .concat([['', $t('Total'), money(data.trialBalance.debit), money(data.trialBalance.credit)]]),
+          }],
+          meta: data.trialBalance.balanced ? $t('Books balance') : $t('Out of balance'),
+        });
+      });
       root.querySelector('#acJournalCsv')?.addEventListener('click', () => {
         downloadCsv(`orison-journal-${range.from}-${range.to}.csv`, journalCsv(data));
         toast($tn('Journal CSV · {n} entry', 'Journal CSV · {n} entries', data.journal.length), 'ok');

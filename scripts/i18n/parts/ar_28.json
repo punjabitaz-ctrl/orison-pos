@@ -1,0 +1,17 @@
+{
+"Adjustment": "التعديل",
+"At cost": "بالتكلفة",
+"At retail": "بسعر البيع",
+"Base pay": "الأجر الأساسي",
+"Collections": "التحصيلات",
+"Customer balances": "أرصدة العملاء",
+"Gross sales": "إجمالي المبيعات",
+"Line": "البند",
+"Nothing to show for this period.": "لا شيء لعرضه في هذه الفترة.",
+"Stock health": "حالة المخزون",
+"Taken {date}": "أُخذت في {date}",
+"Total {amount}": "الإجمالي {amount}",
+"What the shelf is worth": "قيمة ما على الرفوف",
+"{n} people · {amount}": "{n} شخص · {amount}",
+"{n} sales": "{n} عملية بيع"
+}

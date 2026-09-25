@@ -13,6 +13,7 @@ import { api } from '../api.js';
 import { screenHead } from '../components.js';
 import { fmt, esc, toast, beep, openModal, closeModal } from '../ui.js';
 import { exportCsv } from '../csv.js';
+import { exportPdf } from '../pdf-export.js';
 
 const STATUS_META = {
   DRAFT: { label: N_('Draft'), cls: 'draft' },
@@ -172,6 +173,7 @@ export const screen = {
           actions: `<div class="scr-actions">
             ${isAdmin ? `<button class="btn btn-sm" id="poAddSupplier">${$t('+ Supplier')}</button>` : ''}
             <button class="btn btn-sm btn-ghost" id="poCsv">${$t('Export CSV')}</button>
+            <button class="btn btn-sm btn-ghost" id="poPdf">${$t('PDF')}</button>
             <button class="btn btn-sm btn-primary" id="poNew">${$t('New PO')}</button>
           </div>`,
         })}
@@ -250,6 +252,9 @@ export const screen = {
       root.querySelector('#poCsv')?.addEventListener('click', () => {
         const built = purchasesCsv({ payables, orders });
         exportCsv('purchases', { title: 'Purchases', ...built });
+      });
+      root.querySelector('#poPdf')?.addEventListener('click', () => {
+        exportPdf('purchases', { title: $t('Purchases'), ...purchasesCsv({ payables, orders }), numericFrom: 5 });
       });
       const benchBtn = root.querySelector('#poBenchOrder');
       if (benchBtn) benchBtn.addEventListener('click', () => newPoModal(false, benchOrderLines(bench)));

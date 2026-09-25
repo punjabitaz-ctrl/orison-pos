@@ -7,7 +7,41 @@ line-by-line detail for every version.
 
 ---
 
-## Latest: v1.59.0 — export anything you can see
+## Latest: v1.60.0 — and a PDF of it
+
+**2026-09-25.**
+
+Every export that made a spreadsheet last release now also makes a sheet you
+can hand to somebody.
+
+- **PDF on the books** — the profit and loss and the trial balance on one
+  sheet, with the period and whether the books balance. That is the page an
+  accountant, a landlord or a bank actually asks for.
+- **PDF on** Reports, Stock health, Running costs, a pay run, Customers,
+  Purchases, Repairs and Products.
+- **It reads like a document, not a data dump**: translated headings, the shop
+  name, the period, when it was taken, money right-aligned, and voided lines
+  left out. The CSV still carries everything, in English, for the spreadsheet.
+- **It prints Arabic and Urdu properly** — it goes through the app's print
+  sheet rather than the receipt's built-in Courier PDF writer, which is
+  ASCII-only, so a customer's name survives.
+
+**Validation:** backend-sim **PASS 1346 / FAIL 0** · client units **PASS 639 /
+FAIL 0** · demo **PASS 41 / FAIL 0**.
+- Checked in the browser: the books PDF renders the full trial balance
+  (debits $27,359.32 = credits), the P&L down to net income, and *Books
+  balance* at the foot.
+- A test holds the one thing that could go wrong quietly: a customer name
+  containing markup is escaped, not rendered, on the printed sheet.
+
+### Deploying
+
+**No backend change.** If the browser blocks the print window, the shop is
+told to allow pop-ups — same as the label sheets.
+
+---
+
+## v1.59.0 — export anything you can see
 
 **2026-09-25.**
 

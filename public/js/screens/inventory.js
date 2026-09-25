@@ -9,6 +9,7 @@ import { idb } from '../db.js';
 import { api } from '../api.js';
 import { fmt, esc, toast, beep, debounce, openModal, closeModal, openSheet, closeSheet, currencySymbol } from '../ui.js';
 import { exportCsv } from '../csv.js';
+import { exportPdf } from '../pdf-export.js';
 import { warrantyOptionsHtml } from '../warranty.js';
 import { bulkPriceModal, stockTakeModal, labelsModal, reorderModal } from './inventory-tools.js';
 import { pull, mergeProductLocal, SYNC_EVENT, getSyncState } from '../sync.js';
@@ -47,7 +48,7 @@ export const screen = {
       ${screenHead({
         title: $t('Products'),
         sub: `${$tn('{n} item', '{n} items', this._products.length)}${isAdmin ? ' · ' + $t('admin') : ''}`,
-        actions: `<div class="btn-row"><button class="btn btn-ghost btn-sm" id="invCsv">${$t('Export CSV')}</button>${isAdmin ? `<button class="btn btn-ghost btn-sm" id="toolsBtn">${$t('Tools')}</button><button class="btn btn-ghost btn-sm" id="newProdBtn">${$t('+ New')}</button>` : ''}</div>`,
+        actions: `<div class="btn-row"><button class="btn btn-ghost btn-sm" id="invCsv">${$t('Export CSV')}</button><button class="btn btn-ghost btn-sm" id="invPdf">${$t('PDF')}</button>${isAdmin ? `<button class="btn btn-ghost btn-sm" id="toolsBtn">${$t('Tools')}</button><button class="btn btn-ghost btn-sm" id="newProdBtn">${$t('+ New')}</button>` : ''}</div>`,
       })}
       <div class="search-row">
         <div class="search-box">
@@ -115,6 +116,15 @@ export const screen = {
           columns: ['sku', 'name', 'category', 'type', 'serialized', 'on_hand', 'cost_price', 'retail_price', 'taxable', 'reorder_point', 'warranty_days', 'last_sold'],
           rows: (this._products || []).map((p) => [p.sku, p.name, p.category, p.itemType, p.isSerialized ? 'yes' : 'no',
             n(p.onHand), n(p.costPrice), n(p.retailPrice), p.taxable === false ? 'no' : 'yes', n(p.reorderPoint), n(p.warrantyDays), p.lastSoldAt]),
+        });
+      });
+      root.querySelector('#invPdf')?.addEventListener('click', () => {
+        const n = (v) => (v == null ? '' : String(v));
+        exportPdf('products', {
+          title: $t('Products'),
+          columns: [$t('SKU'), $t('Name'), $t('Category'), $t('On hand'), $t('Cost'), $t('Price')],
+          numericFrom: 3,
+          rows: (this._products || []).map((p) => [p.sku, p.name, p.category, n(p.onHand), n(p.costPrice), n(p.retailPrice)]),
         });
       });
       root.querySelector('#newProdBtn').addEventListener('click', newProductModal);

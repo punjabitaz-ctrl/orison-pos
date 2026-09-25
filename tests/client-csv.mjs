@@ -61,3 +61,31 @@ test('the screen builders produce what a spreadsheet needs', async (t) => {
     assert.equal(built.extra[0].rows[0][1], '3280');
   });
 });
+
+/* ---- PDF: the same data, laid out for a person rather than a spreadsheet ---- */
+const { pdfHtml } = await import('../public/js/pdf-export.js');
+
+test('pdfHtml() - the printable sheet', async (t) => {
+  await t.test('columns and rows become a table', () => {
+    const html = pdfHtml({ columns: ['Name', 'Amount'], rows: [['Rent', '3500']] });
+    assert.match(html, /<th[^>]*>Name<\/th>/);
+    assert.match(html, /<td[^>]*>Rent<\/td>/);
+  });
+  await t.test('numericFrom right-aligns the money columns', () => {
+    const html = pdfHtml({ columns: ['Name', 'Amount'], rows: [['Rent', '3500']], numericFrom: 1 });
+    assert.match(html, /<td class="num">3500<\/td>/);
+    assert.match(html, /<td class="">Rent<\/td>/);
+  });
+  await t.test('an extra block comes before the main table, with its own heading', () => {
+    const html = pdfHtml({ title: 'Orders', columns: ['a'], rows: [['1']], extra: [{ title: 'Owed', columns: ['b'], rows: [['2']] }] });
+    assert.ok(html.indexOf('Owed') < html.indexOf('Orders'), html);
+  });
+  await t.test('a customer name cannot inject markup into the sheet', () => {
+    const html = pdfHtml({ columns: ['Name'], rows: [['<img src=x onerror=alert(1)>']] });
+    assert.ok(!/<img/.test(html), html);
+    assert.match(html, /&lt;img/);
+  });
+  await t.test('nothing to show says so rather than printing an empty page', () => {
+    assert.match(pdfHtml({ columns: ['a'], rows: [] }), /Nothing to show/);
+  });
+});
